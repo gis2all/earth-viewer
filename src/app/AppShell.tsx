@@ -6,6 +6,8 @@ import { useAppStore } from '../state/store'
 export function AppShell() {
   const theme = useAppStore((s) => s.theme)
   const toggleTheme = useAppStore((s) => s.toggleTheme)
+  const collapsed = useAppStore((s) => s.collapsed)
+  const toggleCollapsed = useAppStore((s) => s.toggleCollapsed)
 
   return (
     <div className="app">
@@ -31,6 +33,9 @@ export function AppShell() {
       <div className="workspace">
         <LayerPanel />
         <main className="globe-wrap">
+          {collapsed && (
+            <button className="expand-btn" onClick={toggleCollapsed} title="展开面板">›</button>
+          )}
           <GlobeViewer />
           <Timeline />
         </main>
