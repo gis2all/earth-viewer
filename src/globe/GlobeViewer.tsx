@@ -93,19 +93,19 @@ export function GlobeViewer() {
           },
         })
       }
-      // 缓动缩放（moveForward 沿视线推进，diff>0 拉近）
+      // 缓动缩放（moveForward 沿视线推进，diff>0 拉近；稍慢让瓦片跟得上）
       const h = c.positionCartographic.height
       const diff = h - targetH
       if (Math.abs(diff) > 1) {
-        c.moveForward(diff * 0.3)
+        c.moveForward(diff * 0.25)
       }
-      // 缩放中 → 粗瓦片；停止滚动 0.5s 后才恢复精细（迟滞，避免来回抖）
+      // 缩放中 → 中等细节（sse 8，清晰度优先）；停止 0.25s 后恢复精细
       if (Math.abs(diff) > h * 0.005) {
         settledFrames = 0
-        v.scene.globe.maximumScreenSpaceError = 64
+        v.scene.globe.maximumScreenSpaceError = 8
       } else {
         settledFrames++
-        if (settledFrames > 30) {
+        if (settledFrames > 15) {
           v.scene.globe.maximumScreenSpaceError = 2
         }
       }
