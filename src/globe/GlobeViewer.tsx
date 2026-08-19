@@ -29,7 +29,14 @@ export function GlobeViewer() {
       infoBox: false,
     })
     viewerRef.current = v
-    ;(window as unknown as { __evViewer: Cesium.Viewer }).__evViewer = v
+    ;(window as unknown as { __evViewer: Cesium.Viewer; __Cesium: typeof Cesium }).__evViewer = v
+    ;(window as unknown as { __Cesium: typeof Cesium }).__Cesium = Cesium
+
+    // 相机控制：左键旋转 / 右键倾斜 / 滚轮缩放（Google Earth 习惯）
+    const scc = v.scene.screenSpaceCameraController
+    scc.tiltEventTypes = Cesium.CameraEventType.RIGHT_DRAG
+    scc.zoomEventTypes = [Cesium.CameraEventType.WHEEL, Cesium.CameraEventType.PINCH]
+
     return () => {
       v.destroy()
       viewerRef.current = null
