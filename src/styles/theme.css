@@ -46,7 +46,7 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .boards{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .board{position:relative;display:flex;flex-direction:column;border:1px solid var(--line);background:var(--panel-2);text-align:left;transition:border-color .15s,background .15s}
 .board:hover{border-color:var(--line-2);background:var(--panel-3)}
-.board .thumb{width:100%;display:block}
+.board .thumb{width:100%;display:block;aspect-ratio:88/52;object-fit:cover}
 .board-name{font-size:12px;font-weight:500;padding:8px 10px;color:var(--fg)}
 .board.on{border-color:var(--accent);background:var(--accent-soft)}
 

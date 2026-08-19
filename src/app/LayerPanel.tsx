@@ -1,6 +1,5 @@
 import { useAppStore } from '../state/store'
 import { catalog, GROUP_LABELS, THEMATIC_GROUPS } from '../layers/catalog'
-import { LayerThumb } from '../layers/thumbs'
 
 export function LayerPanel() {
   const collapsed = useAppStore((s) => s.collapsed)
@@ -25,7 +24,7 @@ export function LayerPanel() {
           onClick={() => onClick(l)}
           title={l.desc}
         >
-          <LayerThumb kind={l.thumb} />
+          <img className="thumb" src={'/covers/' + l.id + '.png'} alt={l.name} />
           <span className="board-name">{l.name}</span>
         </button>
       ))}
