@@ -33,26 +33,28 @@ export function LayerPanel() {
   )
 
   return (
-    <aside className={'panel' + (collapsed ? ' collapsed' : '')}>
-      <button className="fold" onClick={toggleCollapsed} title={collapsed ? '展开' : '收起'}>
+    <>
+      <aside className={'panel' + (collapsed ? ' collapsed' : '')}>
+        <div className="panel-inner">
+          <section className="group">
+            <div className="group-head"><span className="group-name">{GROUP_LABELS.base}</span></div>
+            {renderBoards(bases, (l) => activeBase === l.id, (l) => setBase(l.id))}
+          </section>
+          {THEMATIC_GROUPS.map((g) => {
+            const layers = catalog.filter((l) => l.group === g)
+            if (layers.length === 0) return null
+            return (
+              <section className="group" key={g}>
+                <div className="group-head"><span className="group-name">{GROUP_LABELS[g]}</span></div>
+                {renderBoards(layers, (l) => activeOverlays.includes(l.id), (l) => toggleOverlay(l.id))}
+              </section>
+            )
+          })}
+        </div>
+      </aside>
+      <button className="fold" onClick={toggleCollapsed} title={collapsed ? '展开面板' : '收起面板'}>
         {collapsed ? '›' : '‹'}
       </button>
-      <div className="panel-inner">
-        <section className="group">
-          <div className="group-head"><span className="group-name">{GROUP_LABELS.base}</span></div>
-          {renderBoards(bases, (l) => activeBase === l.id, (l) => setBase(l.id))}
-        </section>
-        {THEMATIC_GROUPS.map((g) => {
-          const layers = catalog.filter((l) => l.group === g)
-          if (layers.length === 0) return null
-          return (
-            <section className="group" key={g}>
-              <div className="group-head"><span className="group-name">{GROUP_LABELS[g]}</span></div>
-              {renderBoards(layers, (l) => activeOverlays.includes(l.id), (l) => toggleOverlay(l.id))}
-            </section>
-          )
-        })}
-      </div>
-    </aside>
+    </>
   )
 }
