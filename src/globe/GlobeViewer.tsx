@@ -149,17 +149,30 @@ export function GlobeViewer() {
     }
   }, [activeBase])
 
-  // 叠加图层：行政边界 3D 凸起
+  // 叠加图层：边界凸起 / 人口分级设色 / 地震点
   useEffect(() => {
     const v = viewerRef.current
     if (!v) return
-    const want = activeOverlays.includes('boundary')
-    let existing: Cesium.DataSource | undefined
-    for (let i = 0; i < v.dataSources.length; i++) {
-      const d = v.dataSources.get(i)
-      if (d.name === 'countries') existing = d
+    const want = {
+      boundary: activeOverlays.includes('boundary'),
+      population: activeOverlays.includes('population'),
+      quakes: activeOverlays.includes('quakes'),
     }
-    if (want && !existing) {
+    // 移除已关闭的
+    for (let i = v.dataSources.length - 1; i >= 0; i--) {
+      const d = v.dataSources.get(i)
+      if (d.name && d.name in want && !want[d.name as keyof typeof want]) {
+        v.dataSources.remove(d, true)
+      }
+    }
+    const has = (name: string) => {
+      for (let i = 0; i < v.dataSources.length; i++) {
+        if (v.dataSources.get(i).name === name) return true
+      }
+      return false
+    }
+    // 行政边界：3D 凸起
+    if (want.boundary && !has('countries')) {
       Cesium.GeoJsonDataSource.load('/data/countries.geojson').then((loaded) => {
         loaded.name = 'countries'
         for (const e of loaded.entities.values) {
@@ -178,11 +191,63 @@ export function GlobeViewer() {
             p.outlineColor = Cesium.Color.fromCssColorString('rgba(206,212,231,0.75)')
           }
         }
-        if (v.isDestroyed()) return
-        v.dataSources.add(loaded)
+        if (!v.isDestroyed()) v.dataSources.add(loaded)
       })
-    } else if (!want && existing) {
-      v.dataSources.remove(existing, true)
+    }
+    // 人口密度：按各国真实人口分级设色
+    if (want.population && !has('population')) {
+      Cesium.GeoJsonDataSource.load('/data/countries.geojson').then((loaded) => {
+        loaded.name = 'population'
+        for (const e of loaded.entities.values) {
+          const p = e.polygon as unknown as {
+            height: number
+            material: unknown
+            outline: boolean
+            outlineColor: unknown
+          } | undefined
+          if (p) {
+            const raw = (e.properties as unknown as Record<string, unknown> | undefined)?.POP_EST
+            const pop = Number(raw) || 10000
+            const t = Math.min(1, Math.log10(pop + 1) / 9)
+            p.height = 0
+            p.material = Cesium.Color.fromHsl(0.62 - t * 0.42, 0.75, 0.13 + t * 0.42, 0.85)
+            p.outline = true
+            p.outlineColor = Cesium.Color.WHITE.withAlpha(0.22)
+          }
+        }
+        if (!v.isDestroyed()) v.dataSources.add(loaded)
+      })
+    }
+    // 地震：USGS 近 7 天真实震点（按震级着色/大小）
+    if (want.quakes && !has('quakes')) {
+      Cesium.GeoJsonDataSource.load(
+        'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_week.geojson',
+        { clampToGround: true }
+      ).then((loaded) => {
+        loaded.name = 'quakes'
+        for (const e of loaded.entities.values) {
+          const p = e.point as unknown as {
+            pixelSize: number
+            color: unknown
+            outlineColor: unknown
+            outlineWidth: number
+          } | undefined
+          if (p) {
+            const raw = (e.properties as unknown as Record<string, unknown> | undefined)?.mag
+            const mag = Number(raw) || 2.5
+            p.pixelSize = Math.min(18, 6 + (mag - 2.5) * 3)
+            p.color =
+              mag >= 5.5
+                ? Cesium.Color.fromCssColorString('#ef5d67')
+                : mag >= 4.5
+                  ? Cesium.Color.fromCssColorString('#f0b06a')
+                  : Cesium.Color.fromCssColorString('#6e79d6')
+            p.outlineColor = Cesium.Color.WHITE.withAlpha(0.6)
+            p.outlineWidth = 1
+          }
+        }
+        if (!v.isDestroyed()) v.dataSources.add(loaded)
+      })
     }
   }, [activeOverlays])
 
