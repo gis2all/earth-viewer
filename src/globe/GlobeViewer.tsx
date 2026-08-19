@@ -68,17 +68,18 @@ export function GlobeViewer() {
     scc.minimumZoomDistance = MIN_ZOOM
     scc.maximumZoomDistance = MAX_ZOOM
 
-    // 平滑缩放：滚轮只更新目标高度，每帧向目标缓动
+    // 平滑缩放：滚轮只更新目标高度，每帧向目标缓动（更快响应）
     let targetH = v.camera.positionCartographic.height
+    let settledFrames = 0
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
       const h = v.camera.positionCartographic.height
-      const factor = e.deltaY > 0 ? 1.15 : 0.87
+      const factor = e.deltaY > 0 ? 1.25 : 0.8
       targetH = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, h * factor))
     }
     v.scene.canvas.addEventListener('wheel', onWheel, { passive: false })
 
-    // 每帧：pitch 钳制 + 缓动缩放 + 缩放中降瓦片细节
+    // 每帧：pitch 钳制 + 缓动缩放 + 缩放中粗瓦片（带迟滞防抖动）
     const onCameraFrame = () => {
       const c = v.camera
       // 倾斜钳制
@@ -96,17 +97,24 @@ export function GlobeViewer() {
       const h = c.positionCartographic.height
       const diff = h - targetH
       if (Math.abs(diff) > 1) {
-        c.moveForward(diff * 0.15)
+        c.moveForward(diff * 0.3)
       }
-      // 缩放中：降低瓦片细节优先保证流畅；静止：恢复精细
-      const zooming = Math.abs(diff) > h * 0.01
-      v.scene.globe.maximumScreenSpaceError = zooming ? 16 : 2
+      // 缩放中 → 粗瓦片；停止滚动 0.5s 后才恢复精细（迟滞，避免来回抖）
+      if (Math.abs(diff) > h * 0.005) {
+        settledFrames = 0
+        v.scene.globe.maximumScreenSpaceError = 64
+      } else {
+        settledFrames++
+        if (settledFrames > 30) {
+          v.scene.globe.maximumScreenSpaceError = 2
+        }
+      }
     }
     v.scene.postUpdate.addEventListener(onCameraFrame)
 
-    // 瓦片缓存与预加载优化
+    // 瓦片缓存优化；缩放期间不预加载相邻瓦片（减少请求抖动）
     v.scene.globe.tileCacheSize = 200
-    v.scene.globe.preloadSiblings = true
+    v.scene.globe.preloadSiblings = false
 
     return () => {
       v.scene.canvas.removeEventListener('wheel', onWheel)
