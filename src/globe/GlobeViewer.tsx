@@ -64,13 +64,24 @@ export function GlobeViewer() {
     // 相机控制：左键旋转 / 右键倾斜 / 滚轮缩放（Google Earth 习惯）
     const scc = v.scene.screenSpaceCameraController
     scc.tiltEventTypes = Cesium.CameraEventType.RIGHT_DRAG
-    scc.zoomEventTypes = [Cesium.CameraEventType.WHEEL, Cesium.CameraEventType.PINCH]
+    scc.zoomEventTypes = [Cesium.CameraEventType.PINCH]
     scc.minimumZoomDistance = MIN_ZOOM
     scc.maximumZoomDistance = MAX_ZOOM
 
-    // 倾斜角度钳制：pitch ∈ [MIN_PITCH, MAX_PITCH]
-    const clampPitch = () => {
+    // 平滑缩放：滚轮只更新目标高度，每帧向目标缓动
+    let targetH = v.camera.positionCartographic.height
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      const h = v.camera.positionCartographic.height
+      const factor = e.deltaY > 0 ? 1.15 : 0.87
+      targetH = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, h * factor))
+    }
+    v.scene.canvas.addEventListener('wheel', onWheel, { passive: false })
+
+    // 每帧：pitch 钳制 + 缓动缩放 + 缩放中降瓦片细节
+    const onCameraFrame = () => {
       const c = v.camera
+      // 倾斜钳制
       if (c.pitch < MIN_PITCH || c.pitch > MAX_PITCH) {
         c.setView({
           destination: c.position,
@@ -81,11 +92,25 @@ export function GlobeViewer() {
           },
         })
       }
+      // 缓动缩放（moveForward 沿视线推进，diff>0 拉近）
+      const h = c.positionCartographic.height
+      const diff = h - targetH
+      if (Math.abs(diff) > 1) {
+        c.moveForward(diff * 0.15)
+      }
+      // 缩放中：降低瓦片细节优先保证流畅；静止：恢复精细
+      const zooming = Math.abs(diff) > h * 0.01
+      v.scene.globe.maximumScreenSpaceError = zooming ? 16 : 2
     }
-    v.scene.postUpdate.addEventListener(clampPitch)
+    v.scene.postUpdate.addEventListener(onCameraFrame)
+
+    // 瓦片缓存与预加载优化
+    v.scene.globe.tileCacheSize = 200
+    v.scene.globe.preloadSiblings = true
 
     return () => {
-      v.scene.postUpdate.removeEventListener(clampPitch)
+      v.scene.canvas.removeEventListener('wheel', onWheel)
+      v.scene.postUpdate.removeEventListener(onCameraFrame)
       handler.destroy()
       unregisterViewer()
       v.destroy()
