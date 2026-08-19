@@ -1,4 +1,4 @@
-export type LayerGroup = 'terrain' | 'human' | 'environment' | 'weather' | 'geology'
+export type LayerGroup = 'base' | 'terrain' | 'human' | 'environment' | 'weather' | 'geology'
 export type LayerCategory = 'base' | 'overlay'
 export type LayerType = 'terrain' | 'imagery' | 'geojson' | 'raster' | 'timeseries'
 
