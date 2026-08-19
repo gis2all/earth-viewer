@@ -4,6 +4,9 @@ import { useAppStore } from '../state/store'
 import { catalog } from '../layers/catalog'
 import { baseLayerFor } from './providers'
 
+const TERRAIN_URL =
+  'https://elevation3d.arcgis.com/arcgis/rest/services/WorldElevation3D/Terrain3D/ImageServer'
+
 export function GlobeViewer() {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewerRef = useRef<Cesium.Viewer | null>(null)
@@ -51,6 +54,27 @@ export function GlobeViewer() {
     while (layers.length > 0) layers.remove(layers.get(0))
     const def = catalog.find((l) => l.id === activeBase)
     layers.add(baseLayerFor(def))
+  }, [activeBase])
+
+  // 真实地形：地形底图 → ArcGIS 高程 + 光照阴影；其它 → 平面
+  useEffect(() => {
+    const v = viewerRef.current
+    if (!v) return
+    const want = activeBase === 'terrain'
+    let cancelled = false
+    if (want) {
+      Cesium.ArcGISTiledElevationTerrainProvider.fromUrl(TERRAIN_URL).then((p) => {
+        if (cancelled || v.isDestroyed()) return
+        v.terrainProvider = p
+        v.scene.globe.enableLighting = true
+      })
+    } else {
+      v.terrainProvider = new Cesium.EllipsoidTerrainProvider()
+      v.scene.globe.enableLighting = false
+    }
+    return () => {
+      cancelled = true
+    }
   }, [activeBase])
 
   // 叠加图层：行政边界 3D 凸起

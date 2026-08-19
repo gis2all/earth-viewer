@@ -2,10 +2,12 @@ import * as Cesium from 'cesium'
 import type { LayerDef } from '../layers/types'
 
 const GIBS_BLUE =
-  'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/BlueMarble_ShadedRelief_Bathymetry/default/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpg'
+  'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/BlueMarble_NextGeneration/default/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpg'
 const GIBS_NIGHT =
   'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png'
 const OSM = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
+const TERRAIN_IMG =
+  'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/BlueMarble_ShadedRelief_Bathymetry/default/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpg'
 
 /** 每次返回全新的 ImageryLayer（避免实例复用触发 Cesium DeveloperError） */
 export function baseLayerFor(base: LayerDef | undefined): Cesium.ImageryLayer {
@@ -15,6 +17,8 @@ export function baseLayerFor(base: LayerDef | undefined): Cesium.ImageryLayer {
       ? GIBS_BLUE
       : base.id === 'night'
         ? GIBS_NIGHT
-        : OSM
+        : base.id === 'terrain'
+          ? TERRAIN_IMG
+          : OSM
   return new Cesium.ImageryLayer(new Cesium.UrlTemplateImageryProvider({ url }))
 }
