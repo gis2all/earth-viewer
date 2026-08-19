@@ -3,6 +3,7 @@ import * as Cesium from 'cesium'
 import { useAppStore } from '../state/store'
 import { catalog } from '../layers/catalog'
 import { baseLayerFor } from './providers'
+import { registerViewer, unregisterViewer, orientView } from './cameraApi'
 
 const TERRAIN_URL =
   'https://elevation3d.arcgis.com/arcgis/rest/services/WorldElevation3D/Terrain3D/ImageServer'
@@ -11,7 +12,7 @@ const TERRAIN_URL =
 const MIN_ZOOM = 50000 // 最近 50km，防止穿地
 const MAX_ZOOM = 25000000 // 最远 2.5 万 km，球不至于缩成小点
 const MIN_PITCH = Cesium.Math.toRadians(-89.9) // 不能翻过正下方
-const MAX_PITCH = Cesium.Math.toRadians(30) // 允许稍微看到一点天空
+const MAX_PITCH = Cesium.Math.toRadians(0) // 最多贴地平线，不翻到天空侧
 
 export function GlobeViewer() {
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -38,8 +39,13 @@ export function GlobeViewer() {
       infoBox: false,
     })
     viewerRef.current = v
+    registerViewer(v)
     ;(window as unknown as { __evViewer: Cesium.Viewer; __Cesium: typeof Cesium }).__evViewer = v
     ;(window as unknown as { __Cesium: typeof Cesium }).__Cesium = Cesium
+
+    // 双击地球 → 回正
+    const handler = new Cesium.ScreenSpaceEventHandler(v.scene.canvas)
+    handler.setInputAction(() => orientView(), Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK)
 
     // 相机控制：左键旋转 / 右键倾斜 / 滚轮缩放（Google Earth 习惯）
     const scc = v.scene.screenSpaceCameraController
@@ -66,6 +72,8 @@ export function GlobeViewer() {
 
     return () => {
       v.scene.postUpdate.removeEventListener(clampPitch)
+      handler.destroy()
+      unregisterViewer()
       v.destroy()
       viewerRef.current = null
     }
