@@ -7,6 +7,12 @@ import { baseLayerFor } from './providers'
 const TERRAIN_URL =
   'https://elevation3d.arcgis.com/arcgis/rest/services/WorldElevation3D/Terrain3D/ImageServer'
 
+// 相机限制
+const MIN_ZOOM = 50000 // 最近 50km，防止穿地
+const MAX_ZOOM = 25000000 // 最远 2.5 万 km，球不至于缩成小点
+const MIN_PITCH = Cesium.Math.toRadians(-89.9) // 不能翻过正下方
+const MAX_PITCH = Cesium.Math.toRadians(30) // 允许稍微看到一点天空
+
 export function GlobeViewer() {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewerRef = useRef<Cesium.Viewer | null>(null)
@@ -39,8 +45,27 @@ export function GlobeViewer() {
     const scc = v.scene.screenSpaceCameraController
     scc.tiltEventTypes = Cesium.CameraEventType.RIGHT_DRAG
     scc.zoomEventTypes = [Cesium.CameraEventType.WHEEL, Cesium.CameraEventType.PINCH]
+    scc.minimumZoomDistance = MIN_ZOOM
+    scc.maximumZoomDistance = MAX_ZOOM
+
+    // 倾斜角度钳制：pitch ∈ [MIN_PITCH, MAX_PITCH]
+    const clampPitch = () => {
+      const c = v.camera
+      if (c.pitch < MIN_PITCH || c.pitch > MAX_PITCH) {
+        c.setView({
+          destination: c.position,
+          orientation: {
+            heading: c.heading,
+            pitch: Math.max(MIN_PITCH, Math.min(MAX_PITCH, c.pitch)),
+            roll: c.roll,
+          },
+        })
+      }
+    }
+    v.scene.postUpdate.addEventListener(clampPitch)
 
     return () => {
+      v.scene.postUpdate.removeEventListener(clampPitch)
       v.destroy()
       viewerRef.current = null
     }
