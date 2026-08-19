@@ -20,12 +20,12 @@ export function resetView() {
   })
 }
 
-/** 回正：保持位置，视角拉回垂直俯视、朝北 */
+/** 回正：保持位置，动画飞回垂直俯视、朝北（与复位一致的 flyTo） */
 export function orientView() {
   const v = viewer
   if (!v) return
   const c = v.camera
-  c.setView({
+  c.flyTo({
     destination: c.position,
     orientation: { heading: 0, pitch: Cesium.Math.toRadians(-90), roll: 0 },
   })

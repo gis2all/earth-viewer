@@ -3,7 +3,7 @@ import * as Cesium from 'cesium'
 import { useAppStore } from '../state/store'
 import { catalog } from '../layers/catalog'
 import { baseLayerFor } from './providers'
-import { registerViewer, unregisterViewer, orientView } from './cameraApi'
+import { registerViewer, unregisterViewer } from './cameraApi'
 
 const TERRAIN_URL =
   'https://elevation3d.arcgis.com/arcgis/rest/services/WorldElevation3D/Terrain3D/ImageServer'
@@ -43,9 +43,23 @@ export function GlobeViewer() {
     ;(window as unknown as { __evViewer: Cesium.Viewer; __Cesium: typeof Cesium }).__evViewer = v
     ;(window as unknown as { __Cesium: typeof Cesium }).__Cesium = Cesium
 
-    // 双击地球 → 回正
+    // 双击地球 → 向点击点 zoom in（保持当前朝向）
     const handler = new Cesium.ScreenSpaceEventHandler(v.scene.canvas)
-    handler.setInputAction(() => orientView(), Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK)
+    handler.setInputAction((movement: { position: Cesium.Cartesian2 }) => {
+      const picked = v.camera.pickEllipsoid(movement.position, v.scene.globe.ellipsoid)
+      if (!picked) return
+      const carto = v.scene.globe.ellipsoid.cartesianToCartographic(picked)
+      const curH = v.camera.positionCartographic.height
+      const targetH = Math.max(MIN_ZOOM * 2, curH * 0.5)
+      v.camera.flyTo({
+        destination: Cesium.Cartesian3.fromDegrees(
+          Cesium.Math.toDegrees(carto.longitude),
+          Cesium.Math.toDegrees(carto.latitude),
+          targetH
+        ),
+        orientation: { heading: v.camera.heading, pitch: v.camera.pitch, roll: 0 },
+      })
+    }, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK)
 
     // 相机控制：左键旋转 / 右键倾斜 / 滚轮缩放（Google Earth 习惯）
     const scc = v.scene.screenSpaceCameraController
