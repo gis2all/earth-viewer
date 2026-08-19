@@ -30,8 +30,8 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .icon-btn{width:32px;height:32px;display:grid;place-items:center;color:var(--muted);border:1px solid transparent;transition:background .15s,color .15s,border-color .15s}
 .icon-btn:hover{background:var(--panel-2);color:var(--fg);border-color:var(--line)}
 
-.workspace{flex:1;display:flex;min-height:0;position:relative}
-.panel{width:288px;flex:0 0 auto;display:flex;flex-direction:column;background:var(--panel);border-right:1px solid var(--line);overflow:hidden;transition:width .22s ease;position:relative}
+.workspace{flex:1;position:relative;min-height:0}
+.panel{position:absolute;top:0;left:0;bottom:0;width:288px;display:flex;flex-direction:column;background:var(--panel);border-right:1px solid var(--line);overflow:hidden;transition:width .22s ease;z-index:20}
 .panel.collapsed{width:0;border-right:none}
 .panel-inner{width:288px;flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:20px;min-height:0}
 .side-head{height:46px;flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;padding:0 10px 0 16px;border-bottom:1px solid var(--line);min-width:0}
@@ -50,7 +50,7 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .board-name{font-size:12px;font-weight:500;padding:8px 10px;color:var(--fg)}
 .board.on{border-color:var(--accent);background:var(--accent-soft)}
 
-.globe-wrap{flex:1;position:relative;min-width:0;background:var(--bg)}
+.globe-wrap{position:absolute;top:0;left:0;right:0;bottom:0;background:var(--bg)}
 .expand-btn{position:absolute;top:10px;left:10px;width:32px;height:32px;display:grid;place-items:center;background:var(--panel);border:1px solid var(--line);color:var(--muted);z-index:30;font-size:14px;transition:background .15s,color .15s,border-color .15s}
 .expand-btn:hover{color:var(--fg);background:var(--panel-2);border-color:var(--line-2)}
 
