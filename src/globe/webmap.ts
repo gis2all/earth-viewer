@@ -22,9 +22,9 @@ function layerKind(l: WebLayer): string {
   return l.type || l.layerType || ''
 }
 
-/** 通过本地代理拉取 Web Map JSON */
-export async function fetchWebmap(itemId: string): Promise<Record<string, unknown>> {
-  const r = await fetch(`/sharing/rest/content/items/${itemId}/data?f=json`)
+/** 通过本地代理拉取 Web Map JSON（支持 AbortSignal 取消） */
+export async function fetchWebmap(itemId: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  const r = await fetch(`/sharing/rest/content/items/${itemId}/data?f=json`, { signal })
   if (!r.ok) throw new Error('获取 Web Map 失败')
   return r.json()
 }
@@ -86,6 +86,17 @@ export async function providerForWebLayer(layer: WebLayer): Promise<Cesium.Image
   if (/MapServer|ImageServer/i.test(t) && url) {
     return providerForTiledMap(url)
   }
+  // WMS：用 WebMapServiceImageryProvider，需图层名（webmap 里可能是 layerName 或 layers 数组）
+  if (/WMSLayer|WMS/i.test(t) && url) {
+    const l = layer as { layerName?: string; layers?: unknown }
+    let name = l.layerName
+    if (!name && Array.isArray(l.layers) && l.layers.length > 0) {
+      name = (l.layers[0] as { name?: string }).name
+    }
+    if (!name && typeof l.layers === 'string') name = l.layers
+    if (!name) return null
+    return new Cesium.WebMapServiceImageryProvider({ url, layers: name })
+  }
   if (t === 'OpenStreetMap') {
     return new Cesium.UrlTemplateImageryProvider({
       url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
@@ -105,12 +116,94 @@ export function isGeoJsonLayer(layer: WebLayer): boolean {
   return /GeoJSONLayer/i.test(layerKind(layer))
 }
 
-/** 要素服务 → GeoJSON */
-export async function fetchFeatureGeoJSON(url: string): Promise<unknown> {
+export function isKmlLayer(layer: WebLayer): boolean {
+  return /KMLLayer|KML/i.test(layerKind(layer))
+}
+
+/** 要素服务 → GeoJSON（按 resultOffset 分页拉取，上限 limit 防止超大服务拖垮页面） */
+export async function fetchFeatureGeoJSON(url: string, limit = 5000): Promise<unknown> {
   const base = url.replace(/\/?$/, '')
-  const r = await fetch(`${base}/query?where=1%3D1&f=geojson&outFields=*&maxRecordCount=2000`)
-  if (!r.ok) throw new Error('要素服务查询失败')
-  return r.json()
+  // 探测服务单页上限（maxRecordCount）
+  let pageSize = 2000
+  try {
+    const meta = await fetch(`${base}?f=json`)
+    if (meta.ok) {
+      const m = (await meta.json()) as { maxRecordCount?: number }
+      if (typeof m.maxRecordCount === 'number' && m.maxRecordCount > 0 && m.maxRecordCount <= 4000) {
+        pageSize = m.maxRecordCount
+      }
+    }
+  } catch {
+    // 探测失败则用默认页大小
+  }
+  const features: unknown[] = []
+  let offset = 0
+  let guard = 0
+  while (offset < limit && guard < 50) {
+    guard++
+    const r = await fetch(
+      `${base}/query?where=1%3D1&f=geojson&outFields=*&resultOffset=${offset}&resultRecordCount=${pageSize}`
+    )
+    if (!r.ok) throw new Error('要素服务查询失败')
+    const gj = (await r.json()) as { features?: unknown[] }
+    const feats = gj.features ?? []
+    features.push(...feats)
+    // 拉完或服务不支持分页（返回数量不变）则停止
+    if (feats.length < pageSize || feats.length === 0) break
+    offset += feats.length
+    if (offset >= limit) break
+  }
+  return { type: 'FeatureCollection', features }
+}
+
+export interface FeatureStyle {
+  markerColor?: Cesium.Color
+  markerSize?: number
+  stroke?: Cesium.Color
+  strokeWidth?: number
+  fill?: Cesium.Color
+}
+
+/** 从要素服务 metadata 读取 SimpleRenderer 符号，映射为 Cesium GeoJSON 样式（其余渲染器返回 null） */
+export async function fetchFeatureStyle(url: string): Promise<FeatureStyle | null> {
+  const base = url.replace(/\/?$/, '')
+  try {
+    const r = await fetch(`${base}?f=json`)
+    if (!r.ok) return null
+    const j = (await r.json()) as {
+      drawingInfo?: { renderer?: { type?: string; symbol?: Record<string, unknown> } }
+    }
+    const renderer = j.drawingInfo?.renderer
+    if (!renderer || renderer.type !== 'simple') return null
+    const sym = renderer.symbol as {
+      type?: string
+      color?: number[]
+      size?: number
+      width?: number
+      outline?: { color?: number[]; width?: number }
+    }
+    if (!sym) return null
+    const toColor = (c?: number[]): Cesium.Color | undefined =>
+      c && c.length >= 3
+        ? Cesium.Color.fromBytes(Math.round(c[0]), Math.round(c[1]), Math.round(c[2]), c.length >= 4 ? Math.round(c[3]) : 255)
+        : undefined
+    if (sym.type === 'esriSMS') {
+      return { markerColor: toColor(sym.color), markerSize: sym.size }
+    }
+    if (sym.type === 'esriSLS') {
+      return { stroke: toColor(sym.color), strokeWidth: sym.width }
+    }
+    if (sym.type === 'esriSFS') {
+      return {
+        fill: toColor(sym.color),
+        stroke: sym.outline ? toColor(sym.outline.color) : undefined,
+        strokeWidth: sym.outline?.width,
+      }
+    }
+    return null
+  } catch {
+    return null
+  }
 }
 
 /** 从 Web Map 提取可用的底图 Provider */

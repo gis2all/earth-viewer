@@ -48,10 +48,11 @@ export function classifyLayer(l: WebLayer, role: LayerRole): LayerAssessment {
   if (!url) {
     return { ...base, support: 'none', reason: '图层缺少可加载的服务地址' }
   }
-  // MapServer / ImageServer 瓦片、Feature / GeoJSON 矢量：完整支持
+  // MapServer / ImageServer 瓦片、Feature / GeoJSON 矢量、WMS / KML：完整支持
+  // 注意：ArcGIS webmap 里 WMS/KML 图层的 type 是 "WMS"/"KML"（也可能 "WMSLayer"/"KMLLayer"）
   const supported =
     /\/MapServer\/?$|\/ImageServer\/?$/i.test(url) ||
-    /FeatureLayer|FeatureServer|GeoJSONLayer/i.test(kind)
+    /FeatureLayer|FeatureServer|GeoJSONLayer|WMSLayer|KMLLayer|^(WMS|KML)$/i.test(kind)
   if (!supported) {
     return { ...base, support: 'none', reason: '图层类型暂不支持：' + (kind || url) }
   }

@@ -8,6 +8,8 @@ import {
   isFeatureLayer,
   isGeoJsonLayer,
   fetchFeatureGeoJSON,
+  fetchFeatureStyle,
+  isKmlLayer,
   WORLD_IMAGERY_TILES,
   WORLD_LABELS_TILES,
   WORLD_IMAGERY_WGS84_TILES,
@@ -282,10 +284,19 @@ export function GlobeViewer() {
           layers.add(il)
         } else if (op.url) {
           if (isFeatureLayer(op)) {
-            fetchFeatureGeoJSON(op.url)
-              .then((gj) => {
+            // 并行拉取要素数据与符号样式（SimpleRenderer → Cesium 样式）
+            Promise.all([fetchFeatureGeoJSON(op.url), fetchFeatureStyle(op.url)])
+              .then(([gj, style]) => {
                 if (cancelled || v.isDestroyed()) return undefined
-                return Cesium.GeoJsonDataSource.load(gj as never)
+                return Cesium.GeoJsonDataSource.load(gj as never, style
+                  ? {
+                      markerColor: style.markerColor,
+                      markerSize: style.markerSize,
+                      stroke: style.stroke,
+                      strokeWidth: style.strokeWidth,
+                      fill: style.fill,
+                    }
+                  : undefined)
               })
               .then((ds) => {
                 if (cancelled || v.isDestroyed() || !ds) return
@@ -296,6 +307,15 @@ export function GlobeViewer() {
               .catch(() => {})
           } else if (isGeoJsonLayer(op)) {
             Cesium.GeoJsonDataSource.load(op.url)
+              .then((ds) => {
+                if (cancelled || v.isDestroyed()) return
+                if (!added.some((x) => x.id === a.id)) return
+                v.dataSources.add(ds)
+                rec.ds.push(ds)
+              })
+              .catch(() => {})
+          } else if (isKmlLayer(op)) {
+            Cesium.KmlDataSource.load(op.url)
               .then((ds) => {
                 if (cancelled || v.isDestroyed()) return
                 if (!added.some((x) => x.id === a.id)) return
