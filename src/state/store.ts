@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 
 export type Theme = 'dark' | 'light'
 
@@ -37,7 +38,9 @@ interface AppState {
   setEffect: <K extends keyof Effects>(key: K, value: Effects[K]) => void
 }
 
-export const useAppStore = create<AppState>((set) => ({
+export const useAppStore = create<AppState>()(
+  persist(
+    (set) => ({
   theme: 'dark',
   toggleTheme: () => set((s) => ({ theme: s.theme === 'dark' ? 'light' : 'dark' })),
   collapsed: false,
@@ -59,5 +62,18 @@ export const useAppStore = create<AppState>((set) => ({
     translucencyAlpha: 0.6,
     autoRotate: false,
   },
-  setEffect: (key, value) => set((s) => ({ effects: { ...s.effects, [key]: value } })),
-}))
+    setEffect: (key, value) => set((s) => ({ effects: { ...s.effects, [key]: value } })),
+    }),
+    {
+      name: 'earth-viewer',
+      // 只持久化用户状态，不持久化函数；刷新后恢复主题/面板/已添加图层/效果
+      partialize: (s) => ({
+        theme: s.theme,
+        collapsed: s.collapsed,
+        collapsedRight: s.collapsedRight,
+        added: s.added,
+        effects: s.effects,
+      }),
+    }
+  )
+)
