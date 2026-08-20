@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAppStore } from '../state/store'
 import { fetchWebmap } from '../globe/webmap'
-import { assessWebmap } from '../globe/assess'
+import { assessWebmap, type WebmapAssessment } from '../globe/assess'
 
 interface SearchResult {
   id: string
@@ -9,6 +9,7 @@ interface SearchResult {
   thumbnail?: string
   snippet?: string
   numViews?: number
+  fidelity?: 'full' | 'partial' | 'none'
 }
 
 const DEFAULT_QUERY = 'type:"Web Map" AND access:public'
@@ -34,35 +35,37 @@ export function LayerPanel() {
   const [addingId, setAddingId] = useState<string | null>(null)
   const nextStart = useRef(1)
   const loadingRef = useRef(false)
-  const renderCache = useRef(new Map<string, boolean>())
+  const abortRef = useRef<AbortController | null>(null)
+  const assessCache = useRef(new Map<string, WebmapAssessment>())
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const kwRef = useRef(kw)
   kwRef.current = kw
+  const timerRef = useRef<number | null>(null)
 
   /** 判断 webmap 是否至少有一个可渲染图层（带 url 的 MapServer/ImageServer/Feature/GeoJSON） */
-  async function checkRenderable(it: SearchResult): Promise<boolean> {
-    const cached = renderCache.current.get(it.id)
-    if (cached !== undefined) return cached
+  async function assessItem(it: SearchResult, signal?: AbortSignal): Promise<WebmapAssessment | null> {
+    const cached = assessCache.current.get(it.id)
+    if (cached) return cached
     try {
-      const wm = await fetchWebmap(it.id)
-      const ok = assessWebmap(wm as Record<string, unknown>).renderable
-      renderCache.current.set(it.id, ok)
-      return ok
+      const wm = await fetchWebmap(it.id, signal)
+      const a = assessWebmap(wm as Record<string, unknown>)
+      assessCache.current.set(it.id, a)
+      return a
     } catch {
-      renderCache.current.set(it.id, false)
-      return false
+      return null
     }
   }
 
-  /** 分批检查（每批 6 个），控制并发避免触发限流 */
-  async function filterRenderable(items: SearchResult[]): Promise<SearchResult[]> {
+  /** 分批检查（每批 6 个），控制并发避免触发限流；保留评估结果用于能力角标 */
+  async function filterRenderable(items: SearchResult[], signal?: AbortSignal): Promise<SearchResult[]> {
     const out: SearchResult[] = []
     const BATCH = 6
     for (let i = 0; i < items.length; i += BATCH) {
       const batch = items.slice(i, i + BATCH)
-      const flags = await Promise.all(batch.map(checkRenderable))
+      const flags = await Promise.all(batch.map((it) => assessItem(it, signal)))
       batch.forEach((it, idx) => {
-        if (flags[idx]) out.push(it)
+        const a = flags[idx]
+        if (a?.renderable) out.push({ ...it, fidelity: a.fidelity })
       })
     }
     return out
@@ -70,19 +73,24 @@ export function LayerPanel() {
 
   async function loadMore(reset: boolean) {
     if (loadingRef.current) return
+    // 取消上一个未完成的请求（防抖/新搜索时避免旧结果覆盖）
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
     loadingRef.current = true
     setLoading(true)
     setErr('')
     try {
       let start = reset ? 1 : nextStart.current
-      let usable: SearchResult[] = []
+      const usable: SearchResult[] = []
       let guard = 0
       // 预取 + 过滤：翻页直到凑够 PAGE 个可渲染的，或搜索到底
       while (usable.length < PAGE && guard < 12) {
         guard++
         const q = DEFAULT_QUERY + (kwRef.current ? ' AND ' + kwRef.current : '')
         const r = await fetch(
-          '/sharing/rest/search?q=' + encodeURIComponent(q) + '&f=json&num=' + PAGE + '&start=' + start
+          '/sharing/rest/search?q=' + encodeURIComponent(q) + '&f=json&num=' + PAGE + '&start=' + start,
+          { signal: controller.signal }
         )
         const j = (await r.json()) as {
           results?: SearchResult[]
@@ -101,7 +109,7 @@ export function LayerPanel() {
           setDone(true)
           break
         }
-        const ok = await filterRenderable(results)
+        const ok = await filterRenderable(results, controller.signal)
         usable.push(...ok)
         if (!j.nextStart) {
           setDone(true)
@@ -114,21 +122,55 @@ export function LayerPanel() {
       if (reset) setItems(usable)
       else setItems((prev) => [...prev, ...usable])
     } catch (e) {
+      if ((e as Error).name === 'AbortError') return
       setErr('加载失败，请检查网络 / 代理')
     } finally {
-      loadingRef.current = false
-      setLoading(false)
+      if (abortRef.current === controller) {
+        loadingRef.current = false
+        setLoading(false)
+      }
     }
   }
 
-  useEffect(() => {
+  const runSearch = () => {
     setItems([])
     setDone(false)
     setErr('')
     nextStart.current = 1
     void loadMore(true)
+  }
+
+  // 搜索防抖：停止输入 300ms 后才发起新搜索
+  useEffect(() => {
+    if (timerRef.current !== null) clearTimeout(timerRef.current)
+    timerRef.current = window.setTimeout(runSearch, 300)
+    return () => {
+      if (timerRef.current !== null) clearTimeout(timerRef.current)
+      abortRef.current?.abort()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kw])
+
+  // 回车立即搜索（跳过防抖）
+  const submitSearch = () => {
+    if (timerRef.current !== null) clearTimeout(timerRef.current)
+    runSearch()
+  }
+
+  // 取消进行中的搜索
+  const cancelSearch = () => {
+    abortRef.current?.abort()
+    loadingRef.current = false
+    setLoading(false)
+  }
+
+  const [toast, setToast] = useState('')
+  const toastTimer = useRef<number | null>(null)
+  const notify = (msg: string) => {
+    setToast(msg)
+    if (toastTimer.current !== null) clearTimeout(toastTimer.current)
+    toastTimer.current = window.setTimeout(() => setToast(''), 4000)
+  }
 
   async function addWebmap(it: SearchResult) {
     if (addingId) return
@@ -143,8 +185,13 @@ export function LayerPanel() {
         webmap: wm as Record<string, unknown>,
         kind: 'webmap',
       })
+      const a = assessWebmap(wm as Record<string, unknown>)
+      const skipped = a.layers.filter((l) => l.support === 'none').map((l) => l.title).filter(Boolean)
+      if (a.fidelity === 'partial' && skipped.length > 0) {
+        notify('已添加，但部分图层不支持：' + skipped.join('、'))
+      }
     } catch (e) {
-      setErr('添加失败：' + String(e))
+      notify('添加失败：' + String(e))
     } finally {
       setAddingId(null)
     }
@@ -176,7 +223,7 @@ export function LayerPanel() {
               {added.map((l) => (
                 <div key={l.id} className="added-card">
                   {l.thumb ? (
-                    <img className="ac-thumb" src={l.thumb} alt="" onError={(e) => (e.currentTarget.style.display = 'none')} />
+                    <img className="ac-thumb" src={l.thumb} alt={l.title} onError={(e) => (e.currentTarget.style.display = 'none')} />
                   ) : (
                     <div className="ac-ph" />
                   )}
@@ -197,8 +244,17 @@ export function LayerPanel() {
             <input
               value={kw}
               onChange={(e) => setKw(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') submitSearch()
+              }}
               placeholder="搜索"
+              aria-label="搜索 ArcGIS Online 数据源"
             />
+            {loading && (
+              <button className="search-cancel" onClick={cancelSearch} title="取消搜索" aria-label="取消搜索">
+                ✕
+              </button>
+            )}
           </div>
           <div className="gallery">
             {items.map((it) => (
@@ -213,7 +269,7 @@ export function LayerPanel() {
                   <img
                     className="gc-thumb"
                     src={thumbUrl(it.id, it.thumbnail)}
-                    alt=""
+                    alt={it.title}
                     loading="lazy"
                     onError={(e) => (e.currentTarget.style.display = 'none')}
                   />
@@ -221,6 +277,9 @@ export function LayerPanel() {
                   <div className="gc-ph" />
                 )}
                 <span className="gc-title">{it.title}</span>
+                {it.fidelity === 'partial' && (
+                  <span className="gc-badge" title="部分图层暂不支持，添加时会跳过">部分支持</span>
+                )}
               </button>
             ))}
           </div>
@@ -233,6 +292,11 @@ export function LayerPanel() {
           {err && <div className="gallery-hint err">{err}</div>}
         </section>
       </div>
+      {toast && (
+        <div className="layer-toast" role="status" aria-live="polite">
+          {toast}
+        </div>
+      )}
     </aside>
   )
 }
