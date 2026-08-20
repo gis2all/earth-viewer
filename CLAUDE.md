@@ -26,7 +26,7 @@
 | React | 18.3.x |
 | Vite | 5.4.x（`vite-plugin-cesium`） |
 | TypeScript | 5.6.x |
-| **CesiumJS** | ⚠️ package.json 写 `^1.120.0`，**实际安装的是 1.144.0**（`^` 被 npm 升到最新 1.x）。改动前先确认 `node_modules/cesium/package.json` 的真实版本，API 可能已变 |
+| **CesiumJS** | **1.144.0**（已精确锁定，勿改回 `^` 以免漂移） |
 | zustand | 4.5.x（全局状态） |
 
 - **渲染引擎只有 Cesium**；无 MapLibre、无时间轴（时间轴模块已删除）。
@@ -41,6 +41,8 @@ earth-viz-hub/
   index.html            # 页面标题 Earth Viewer + favicon links
   package.json          # name=earth-viewer
   vite.config.ts        # arcgis-online-proxy（/sharing 代理到 www.arcgis.com，绕 CORS）
+  vitest.config.ts      # 单测配置（node 环境，src/**/*.test.ts）
+  eslint.config.js      # ESLint（typescript-eslint + react-hooks）
   CLAUDE.md             # 本文件
   docs/                 # ★不入 git（.gitignore 忽略），会话交接/规格等内部文档
   public/
@@ -102,7 +104,11 @@ earth-viz-hub/
   - `102100 / 3857` / 其他 / 失败 → 默认 Web Mercator
   - 结果带模块级缓存（`CRS_CACHE`），探测失败静默回退，不影响现有行为。
 - 渲染时应用图层 `opacity`（→ `ImageryLayer.alpha`）和 `visibility`（false 跳过）。
+- **WMS / KML 已支持**：type 兼容 `"WMS"/"KML"` 与 `"WMSLayer"/"KMLLayer"`；WMS 用 `WebMapServiceImageryProvider`（图层名取 `layerName` 或 `layers` 数组首项），KML 用 `KmlDataSource`。
+- **FeatureLayer 符号映射**：读服务 metadata 的 `drawingInfo.renderer`，SimpleRenderer（点/线/面）映射为 Cesium GeoJSON 样式；UniqueValue 等暂返回 null（默认样式）。
+- **FeatureLayer 分页**：按 `maxRecordCount` + `resultOffset` 循环拉取，上限 5000 条。
 - 卡片右上角 X 移除图层。
+- **状态持久化**：zustand persist（localStorage `earth-viewer`），保存 theme/collapsed/added/effects，刷新恢复。
 
 ### 4.3 画廊（LayerPanel）
 
@@ -110,7 +116,9 @@ earth-viz-hub/
 - **预取 + 过滤**：每页 24 条结果，分批（每批 6 个）拉取每个 webmap JSON 并用 `assessWebmap` 判断；纯矢量切片 / 纯辅助层 / 3D 场景的 webmap 被剔除。
 - **自动翻页补齐**：一页过滤后不足 24 项继续翻页，直到凑够或搜索到底（12 页上限防死循环）。
 - **按 `numViews`（浏览数）降序**排序。
-- **缓存**：`renderCache`（Map<itemId, boolean>）跨搜索复用，避免重复拉取。
+- **缓存**：`assessCache`（Map<itemId, WebmapAssessment>）跨搜索复用，避免重复拉取。
+- **搜索防抖 300ms + AbortController 取消**：快速输入不重复请求、不产生乱序覆盖；Enter 立即搜索、加载中有取消按钮。
+- **能力角标**：`fidelity=partial` 的卡片显示"部分支持"；添加时若跳过不支持层，toast 提示具体图层名。
 - 无限滚动：滚动接近底部触发 `loadMore(false)`。
 
 ### 4.4 相机（踩坑多，★别回退）
@@ -161,7 +169,7 @@ earth-viz-hub/
 
 - **不支持渲染 ArcGIS VectorTileLayer（MVT 矢量切片）**：Cesium 1.144 已移除实验性的 `VectorTileImageryProvider`。这类 webmap（如 Streets、Topographic 的矢量版）会被评估器过滤。
 - **不支持 ArcGIS 3D Scene 图层**。
-- **WMS / KML / CSV / 动态服务等**：能力表未声明，默认按"不支持"过滤；未来想支持就在 `classifyLayer` 加类型 + 写对应 provider。
+- **WMS / KML 已支持**；CSV / 动态服务等仍未声明，按"不支持"过滤；未来在 `classifyLayer` 加类型 + 写 provider 即可。
 - 瓦片服务 metadata 请求失败的（CORS 等）会静默回退默认 3857（可能错位，但至少不崩）。
 - `docs/` 不进 git；`*.log`、`*.tsbuildinfo`、`node_modules/`、`dist/` 已忽略。
 
@@ -183,7 +191,7 @@ earth-viz-hub/
 1. **部署上线**：用户要能公网访问的 app。
 2. 气象 / 地震时序 + 时间轴（曾讨论，用户说排在 bug 修复之后）。
 3. 六大类数据目录（基础地形、人文地理、环境生态、动态气象、地质深部、太空叠加）。
-4. 把评估器的 `reason` / `fidelity` 展示到 UI（卡片能力角标 / 添加时"部分图层不支持"提示）。
+4. 能力角标与 toast 提示已实现，可继续打磨（如卡片 tooltip 展示具体跳过原因）。
 5. ArcGIS Online 搜索已接入；可继续打磨搜索体验（排序、分页目标数量等）。
 
 ---
