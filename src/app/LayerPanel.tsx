@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAppStore } from '../state/store'
-import { fetchWebmap } from '../globe/webmap'
+import { fetchWebmap, detectMapService } from '../globe/webmap'
 import { assessWebmap, type WebmapAssessment } from '../globe/assess'
 
 interface SearchResult {
@@ -26,6 +26,7 @@ export function LayerPanel() {
   const added = useAppStore((s) => s.added)
   const addLayer = useAppStore((s) => s.addLayer)
   const removeLayer = useAppStore((s) => s.removeLayer)
+  const layerErrors = useAppStore((s) => s.layerErrors)
 
   const [kw, setKw] = useState('')
   const [items, setItems] = useState<SearchResult[]>([])
@@ -50,10 +51,42 @@ export function LayerPanel() {
     try {
       const wm = await fetchWebmap(it.id, signal)
       const a = assessWebmap(wm as Record<string, unknown>)
+      // 探测 MapServer/ImageServer 是否为动态服务（无 tileInfo）：动态服务无法用 /tile/ 渲染，降级为不可渲染
+      await refineAssessment(a)
       assessCache.current.set(it.id, a)
       return a
     } catch {
       return null
+    }
+  }
+
+  /** 对评估结果做异步精化：动态 MapServer 标为 none */
+  async function refineAssessment(a: WebmapAssessment) {
+    const tileLayers = a.layers.filter(
+      (l) => l.support === 'full' && /\/MapServer\/?$|\/ImageServer\/?$/i.test(l.url ?? '')
+    )
+    if (tileLayers.length === 0) return
+    const checks = await Promise.all(tileLayers.map((l) => detectMapService(l.url as string)))
+    tileLayers.forEach((l, i) => {
+      const info = checks[i]
+      if (info && !info.tiled) {
+        l.support = 'none'
+        l.reason = '动态 MapServer（无缓存瓦片），暂不支持'
+      }
+    })
+    // 重算 renderable / fidelity
+    const renderable = a.layers.some(
+      (l) => (l.role === 'basemap' || l.role === 'business') && (l.support === 'full' || l.support === 'partial')
+    )
+    a.renderable = renderable
+    a.fidelity = renderable
+      ? a.layers.some((l) => l.support !== 'full')
+        ? 'partial'
+        : 'full'
+      : 'none'
+    if (!renderable) {
+      const first = a.layers.find((l) => l.reason)
+      a.reason = first?.reason ?? '无可渲染图层'
     }
   }
 
@@ -234,6 +267,9 @@ export function LayerPanel() {
                     <div className="ac-ph" />
                   )}
                   <span className="added-title">{l.title}</span>
+                  {layerErrors[l.id] && (
+                    <span className="added-err" title={layerErrors[l.id]}>加载失败</span>
+                  )}
                   <button className="remove-btn" onClick={() => removeLayer(l.id)} title="移除图层">
                     ×
                   </button>

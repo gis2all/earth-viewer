@@ -1,6 +1,9 @@
 import { useEffect, useRef } from 'react'
 import * as Cesium from 'cesium'
 import { useAppStore } from '../state/store'
+
+const useLayerError = () => useAppStore((s) => s.setLayerError)
+const useClearLayerError = () => useAppStore((s) => s.clearLayerError)
 import { registerViewer, unregisterViewer } from './cameraApi'
 import { renderableLayersFromWebmap } from './assess'
 import {
@@ -47,6 +50,8 @@ export function GlobeViewer() {
   const effects = useAppStore((s) => s.effects)
   const effectsRef = useRef(effects)
   effectsRef.current = effects
+  const setLayerError = useLayerError()
+  const clearLayerError = useClearLayerError()
   const layerMapRef = useRef<Map<string, { layers: Cesium.ImageryLayer[]; ds: Cesium.DataSource[] }>>(new Map())
 
   // 创建 viewer（仅一次）
@@ -303,8 +308,12 @@ export function GlobeViewer() {
                 if (!added.some((x) => x.id === a.id)) return
                 v.dataSources.add(ds)
                 rec.ds.push(ds)
+                clearLayerError(a.id)
               })
-              .catch((e) => console.error('[layer] Feature 图层加载失败', op.url, e))
+              .catch((e) => {
+                console.error('[layer] Feature 图层加载失败', op.url, e)
+                setLayerError(a.id, '要素图层加载失败：' + (op.title || op.url))
+              })
           } else if (isGeoJsonLayer(op)) {
             Cesium.GeoJsonDataSource.load(op.url)
               .then((ds) => {
@@ -312,8 +321,12 @@ export function GlobeViewer() {
                 if (!added.some((x) => x.id === a.id)) return
                 v.dataSources.add(ds)
                 rec.ds.push(ds)
+                clearLayerError(a.id)
               })
-              .catch((e) => console.error('[layer] GeoJSON 图层加载失败', op.url, e))
+              .catch((e) => {
+                console.error('[layer] GeoJSON 图层加载失败', op.url, e)
+                setLayerError(a.id, 'GeoJSON 图层加载失败：' + (op.title || op.url))
+              })
           } else if (isKmlLayer(op)) {
             Cesium.KmlDataSource.load(op.url)
               .then((ds) => {
@@ -321,8 +334,12 @@ export function GlobeViewer() {
                 if (!added.some((x) => x.id === a.id)) return
                 v.dataSources.add(ds)
                 rec.ds.push(ds)
+                clearLayerError(a.id)
               })
-              .catch((e) => console.error('[layer] KML 图层加载失败', op.url, e))
+              .catch((e) => {
+                console.error('[layer] KML 图层加载失败', op.url, e)
+                setLayerError(a.id, 'KML 图层加载失败：' + (op.title || op.url))
+              })
           }
         }
       }
@@ -338,7 +355,7 @@ export function GlobeViewer() {
     return () => {
       cancelled = true
     }
-  }, [added])
+  }, [added, setLayerError, clearLayerError])
 
 
   return <div ref={containerRef} style={{ position: 'absolute', inset: 0 }} />

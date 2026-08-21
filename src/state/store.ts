@@ -34,6 +34,10 @@ interface AppState {
   added: AddedLayer[]
   addLayer: (l: AddedLayer) => void
   removeLayer: (id: string) => void
+  /** 图层加载失败信息：layerId -> 错误描述（会话级，不持久化） */
+  layerErrors: Record<string, string>
+  setLayerError: (id: string, msg: string) => void
+  clearLayerError: (id: string) => void
   effects: Effects
   setEffect: <K extends keyof Effects>(key: K, value: Effects[K]) => void
 }
@@ -51,6 +55,15 @@ export const useAppStore = create<AppState>()(
   addLayer: (l) =>
     set((s) => (s.added.some((x) => x.id === l.id) ? s : { added: [...s.added, l] })),
   removeLayer: (id) => set((s) => ({ added: s.added.filter((x) => x.id !== id) })),
+  layerErrors: {},
+  setLayerError: (id, msg) => set((s) => ({ layerErrors: { ...s.layerErrors, [id]: msg } })),
+  clearLayerError: (id) =>
+    set((s) => {
+      if (!(id in s.layerErrors)) return s
+      const next = { ...s.layerErrors }
+      delete next[id]
+      return { layerErrors: next }
+    }),
   effects: {
     atmosphere: false,
     stars: true,
