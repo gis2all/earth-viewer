@@ -2,19 +2,7 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 的格式。
 
-## [Unreleased]
-
-### 新增
-- Cloudflare Pages 部署配置（`wrangler.toml`、`public/_headers`、`public/_redirects`）
-- README 产品图标（`public/logo.svg`）与压缩截图（`public/screenshot.jpg`）
-- 徽章体系：Coverage / Deps / Tests / E2E（CI 实时生成，GitHub Pages 发布）
-- CLAUDE.md 重写为 Agent 上手手册（30 秒速览 + 任务式操作指南）
-
-### 修复
-- 画廊无限滚动 items 重复膨胀（onBatch 误用累积 pageAcc 追加）
-- 无输入内容时搜索取消按钮不显示
-
-## [0.1.0] - 首版
+## [0.1.0] - 2026-08-21
 
 ### 新增
 - CesiumJS 1.144 3D 地球渲染（4326 底图/地形，两极无空白）
@@ -26,3 +14,11 @@
 - 深浅色双主题、品牌图标与 favicon 跟随主题
 - 质量门禁：覆盖率门槛（statements/lines ≥ 90%）、Playwright E2E、GitHub Actions CI
 - Docker 运行（两阶段镜像，端口统一 5173）
+- Cloudflare Pages 部署（`wrangler.toml`、`_headers`/`_redirects`、自定义域名 https://earth.gis2all.top）
+- README 产品图标与压缩截图、徽章体系（Coverage / Deps / Tests / E2E）
+- CLAUDE.md 重写为 Agent 上手手册（30 秒速览 + 任务式操作指南）
+- 社区文件：CONTRIBUTING / SECURITY / CODE_OF_CONDUCT / PR 与 Issue 模板
+
+### 修复
+- 画廊无限滚动 items 重复膨胀（onBatch 误用累积 pageAcc 追加）
+- 无输入内容时搜索取消按钮不显示
