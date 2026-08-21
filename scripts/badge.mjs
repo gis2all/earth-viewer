@@ -47,7 +47,7 @@ if (audit && audit.metadata && audit.metadata.vulnerabilities) {
   writeBadge('deps.json', 'deps', 'n/a', 'lightgrey')
 }
 
-// tests（vitest json 输出）
+// tests（vitest json 输出，CI 每次实时生成）
 const tr = readJson('test-results.json')
 if (tr) {
   const msg = tr.numPassedTests + '/' + tr.numTotalTests + ' passed'
@@ -56,7 +56,7 @@ if (tr) {
   writeBadge('tests.json', 'tests', 'n/a', 'lightgrey')
 }
 
-// e2e（playwright json 输出）
+// e2e（playwright json 输出，CI 每次实时生成）
 const er = readJson('e2e-results.json')
 if (er && er.stats) {
   const msg = er.stats.expected + ' passed'
@@ -64,3 +64,4 @@ if (er && er.stats) {
 } else {
   writeBadge('e2e.json', 'e2e', 'n/a', 'lightgrey')
 }
+

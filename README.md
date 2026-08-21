@@ -1,4 +1,4 @@
-# Earth Viewer
+# <img src="public/logo.svg" width="32" height="32" alt="Earth Viewer" /> Earth Viewer
 
 [![CI](https://github.com/gis2all/earth-viewer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gis2all/earth-viewer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -9,16 +9,16 @@
 
 3D 地球图层应用：Cesium 渲染地球，接入 ArcGIS Online 公开图层，搜索、评估、添加、叠加和管理地图图层，并实时调节地球渲染效果。
 
-![Earth Viewer](.github/screenshots/app.png)
+![Earth Viewer](public/screenshot.jpg)
 
 ## 技术栈
 
 | 技术 | 职责 |
 | --- | --- |
 | React 18 | UI 组件 |
-| CesiumJS 1.144.0 | 3D 地球渲染（版本精确锁定） |
+| CesiumJS  | 3D 地球渲染 |
 | TypeScript 5.6 | 类型安全 |
-| Vite 5 | 开发与构建（vite-plugin-cesium） |
+| Vite 5 | 开发与构建 |
 | zustand | 全局状态与持久化 |
 | Vitest / Testing Library | 单元测试 |
 | Playwright | E2E 浏览器回归 |
@@ -36,7 +36,7 @@ npm install
 npm run dev
 ```
 
-启动后访问 http://localhost:5173。开发态已内置 `/sharing` 代理（vite 中间件转发到 `www.arcgis.com`，绕开浏览器 CORS）。
+启动后访问 http://localhost:5173 。开发态已内置 `/sharing` 代理（vite 中间件转发到 `www.arcgis.com`，绕开浏览器 CORS）。
 
 ### 二、Docker 方式
 
@@ -46,7 +46,7 @@ npm run dev
 docker compose up --build
 ```
 
-构建镜像会先执行 `npm ci && npm run build` 生成生产产物，再由内置 Node 服务同时托管静态文件与 `/sharing` ArcGIS 代理。启动后访问 http://localhost:5173。停止：`docker compose down`；需要改端口时，修改 `docker-compose.yml` 的 `ports` 映射。
+构建镜像会先执行 `npm ci && npm run build` 生成生产产物，再由内置 Node 服务同时托管静态文件与 `/sharing` ArcGIS 代理。启动后访问 http://localhost:5173 。停止：`docker compose down`；需要改端口时，修改 `docker-compose.yml` 的 `ports` 映射。
 
 ## 常用命令
 
