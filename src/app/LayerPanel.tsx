@@ -36,6 +36,7 @@ export function LayerPanel() {
   const nextStart = useRef(1)
   const loadingRef = useRef(false)
   const abortRef = useRef<AbortController | null>(null)
+  const requestIdRef = useRef(0)
   const assessCache = useRef(new Map<string, WebmapAssessment>())
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const kwRef = useRef(kw)
@@ -73,6 +74,8 @@ export function LayerPanel() {
 
   async function loadMore(reset: boolean) {
     if (loadingRef.current) return
+    // 请求序列号：只有最新一次请求才允许更新 UI，彻底消除旧请求覆盖新结果的风险
+    const requestId = ++requestIdRef.current
     // 取消上一个未完成的请求（防抖/新搜索时避免旧结果覆盖）
     abortRef.current?.abort()
     const controller = new AbortController()
@@ -119,13 +122,15 @@ export function LayerPanel() {
       }
       // 按浏览数（view count）降序
       usable.sort((a, b) => (b.numViews ?? 0) - (a.numViews ?? 0))
+      if (requestId !== requestIdRef.current) return
       if (reset) setItems(usable)
       else setItems((prev) => [...prev, ...usable])
     } catch (e) {
       if ((e as Error).name === 'AbortError') return
+      if (requestId !== requestIdRef.current) return
       setErr('加载失败，请检查网络 / 代理')
     } finally {
-      if (abortRef.current === controller) {
+      if (requestId === requestIdRef.current && abortRef.current === controller) {
         loadingRef.current = false
         setLoading(false)
       }
@@ -157,8 +162,9 @@ export function LayerPanel() {
     runSearch()
   }
 
-  // 取消进行中的搜索
+  // 取消进行中的搜索（递增序列号，使旧请求彻底失效）
   const cancelSearch = () => {
+    requestIdRef.current++
     abortRef.current?.abort()
     loadingRef.current = false
     setLoading(false)
