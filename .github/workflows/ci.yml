@@ -9,18 +9,40 @@ jobs:
   quality:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - name: npm audit (production deps)
         run: npm audit --omit=dev --audit-level=high
+      - name: Collect audit data for badge
+        run: npm audit --omit=dev --json > audit.json || true
       - run: npm run lint
-      - run: npm test
+      - name: Unit tests + coverage gate (>=90%)
+        run: npm run test:coverage
       - run: npm run build
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
       - name: E2E smoke
         run: npm run test:e2e
+      - name: Generate badge data (coverage / deps / tests / e2e)
+        run: node scripts/badge.mjs
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: coverage
+
+  deploy-pages:
+    if: github.ref == 'refs/heads/main'
+    needs: quality
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment
