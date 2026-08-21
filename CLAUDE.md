@@ -179,6 +179,7 @@ earth-viz-hub/
 - **WMS / KML 已支持**；CSV / 动态服务等仍未声明，按"不支持"过滤；未来在 `classifyLayer` 加类型 + 写 provider 即可。
 - 瓦片服务 metadata 请求失败的（CORS 等）会静默回退默认 3857（可能错位，但至少不崩）。
 - `docs/` 不进 git；`*.log`、`*.tsbuildinfo`、`node_modules/`、`dist/` 已忽略。
+- **安全边界**：CI 审计生产依赖（`npm audit --omit=dev`）；dev 链 vite→esbuild 有已知漏洞（修复需升 vite 8，breaking，暂缓，升级前勿用 `npm audit fix --force`）。代理层已加固（白名单路径 + GET-only + Referer + Rate Limit）。外部文本（title/snippet）走 React 文本渲染（自动转义），无 `dangerouslySetInnerHTML`，无注入点。
 
 ---
 
