@@ -1,10 +1,21 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { isFeatureLayer, isGeoJsonLayer, isKmlLayer, fetchFeatureStyle, fetchFeatureGeoJSON } from './webmap'
+import {
+  isFeatureLayer,
+  isGeoJsonLayer,
+  isKmlLayer,
+  fetchFeatureStyle,
+  fetchFeatureGeoJSON,
+  fetchWebmap,
+  detectMapService,
+  providerForWebLayer,
+} from './webmap'
 
-// Cesium 在 node 环境不可用，mock 掉（webmap 只用到 Color / WMS provider）
+// Cesium 在 node 环境不可用，mock 掉（webmap 只用到 Color / WMS provider / UrlTemplate）
 vi.mock('cesium', () => ({
   Color: { fromBytes: (...args: number[]) => args },
   WebMapServiceImageryProvider: vi.fn(),
+  UrlTemplateImageryProvider: vi.fn(),
+  GeographicTilingScheme: vi.fn(),
 }))
 
 describe('图层类型判断', () => {
@@ -18,6 +29,124 @@ describe('图层类型判断', () => {
   })
 })
 
+describe('fetchWebmap', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('成功拉取 webmap JSON', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ title: 'wm' }) })))
+    const wm = await fetchWebmap('abc')
+    expect(wm).toEqual({ title: 'wm' })
+  })
+
+  it('HTTP 失败抛错', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false })))
+    await expect(fetchWebmap('abc')).rejects.toThrow()
+  })
+})
+
+// 注意：detectMapService 有模块级 CRS_CACHE（按 URL 缓存），测试必须用唯一 URL 前缀（d1/d2/d3...），
+// 否则后一个用例会命中前一个的缓存，结果与预期不符。新增用例请换新前缀。
+describe('detectMapService（tiled / dynamic / 失败）', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('有 tileInfo → tiled=true，读取 wkid 与最大级别', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ spatialReference: { wkid: 4326 }, tileInfo: { lods: [{}, {}, {}] } }),
+      }))
+    )
+    const info = await detectMapService('https://d1/MapServer/')
+    expect(info).toEqual({ wkid: 4326, maxLevel: 2, tiled: true })
+  })
+
+  it('无 tileInfo → tiled=false（动态服务）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ spatialReference: { wkid: 3857 } }) })))
+    expect(await detectMapService('https://d2/MapServer')).toMatchObject({ tiled: false })
+  })
+
+  it('metadata 非 ok → null', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false })))
+    expect(await detectMapService('https://d3/MapServer')).toBeNull()
+  })
+
+  it('无 spatialReference.wkid → null', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({}) })))
+    expect(await detectMapService('https://d4/MapServer')).toBeNull()
+  })
+})
+
+describe('providerForWebLayer', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('MapServer 4326 → UrlTemplate + GeographicTilingScheme', async () => {
+    const { UrlTemplateImageryProvider, GeographicTilingScheme } = await import('cesium')
+    const ut = UrlTemplateImageryProvider as unknown as ReturnType<typeof vi.fn>
+    const geo = GeographicTilingScheme as unknown as ReturnType<typeof vi.fn>
+    ut.mockClear(); geo.mockClear()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ spatialReference: { wkid: 4326 }, tileInfo: { lods: [{}, {}, {}] } }),
+      }))
+    )
+    await providerForWebLayer({ url: 'https://p4326/MapServer', layerType: 'ArcGISTiledMapServiceLayer' })
+    expect(ut).toHaveBeenCalledWith(
+      expect.objectContaining({ url: 'https://p4326/MapServer/tile/{z}/{y}/{x}', maximumLevel: 2 })
+    )
+    expect(geo).toHaveBeenCalled()
+  })
+
+  it('MapServer 3857 tiled → UrlTemplate（默认 tilingScheme，无 maximumLevel）', async () => {
+    const { UrlTemplateImageryProvider } = await import('cesium')
+    const ut = UrlTemplateImageryProvider as unknown as ReturnType<typeof vi.fn>
+    ut.mockClear()
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ spatialReference: { wkid: 3857 }, tileInfo: { lods: [] } }) })))
+    await providerForWebLayer({ url: 'https://p3857/MapServer', layerType: 'ArcGISMapServiceLayer' })
+    expect(ut).toHaveBeenCalledWith({ url: 'https://p3857/MapServer/tile/{z}/{y}/{x}' })
+  })
+
+  it('动态 MapServer（无 tileInfo）→ null', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ spatialReference: { wkid: 3857 } }) })))
+    const pr = await providerForWebLayer({ url: 'https://pdyn/MapServer', layerType: 'ArcGISMapServiceLayer' })
+    expect(pr).toBeNull()
+  })
+
+  it('layerType 含 MapServer 且带 url → provider', async () => {
+    const { UrlTemplateImageryProvider } = await import('cesium')
+    const ut = UrlTemplateImageryProvider as unknown as ReturnType<typeof vi.fn>
+    ut.mockClear()
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ spatialReference: { wkid: 3857 }, tileInfo: { lods: [] } }) })))
+    await providerForWebLayer({ url: 'https://ptype/MapServer', layerType: 'ArcGISMapServiceLayer' })
+    expect(ut).toHaveBeenCalled()
+  })
+
+  it('WMS：layerName 优先；无则 layers 字符串', async () => {
+    const { WebMapServiceImageryProvider } = await import('cesium')
+    const wms = WebMapServiceImageryProvider as unknown as ReturnType<typeof vi.fn>
+    wms.mockClear()
+    await providerForWebLayer({ url: 'https://x/wms', type: 'WMS', layerName: 'named' })
+    expect(wms).toHaveBeenCalledWith(expect.objectContaining({ layers: 'named' }))
+    wms.mockClear()
+    await providerForWebLayer({ url: 'https://x/wms', type: 'WMSLayer', layers: 'single' })
+    expect(wms).toHaveBeenCalledWith(expect.objectContaining({ layers: 'single' }))
+  })
+
+  it('OpenStreetMap / urlTemplate / 未知 → 分支', async () => {
+    const { UrlTemplateImageryProvider } = await import('cesium')
+    const ut = UrlTemplateImageryProvider as unknown as ReturnType<typeof vi.fn>
+    ut.mockClear()
+    await providerForWebLayer({ url: 'https://x/osm', layerType: 'OpenStreetMap' })
+    expect(ut).toHaveBeenCalled()
+    ut.mockClear()
+    await providerForWebLayer({ url: 'https://x/t', urlTemplate: 'https://x/{z}/{x}/{y}' })
+    expect(ut).toHaveBeenCalledWith({ url: 'https://x/{z}/{x}/{y}' })
+    expect(await providerForWebLayer({ url: 'https://x/unknown', layerType: 'Foo' })).toBeNull()
+  })
+})
+
 describe('fetchFeatureStyle（SimpleRenderer 符号映射）', () => {
   afterEach(() => vi.unstubAllGlobals())
 
@@ -27,8 +156,16 @@ describe('fetchFeatureStyle（SimpleRenderer 符号映射）', () => {
       json: async () => ({ drawingInfo: { renderer: { type: 'simple', symbol: { type: 'esriSMS', color: [255, 0, 0, 255], size: 8 } } } }),
     })))
     const style = await fetchFeatureStyle('https://x/FeatureServer/0')
-    expect(style).not.toBeNull()
     expect(style?.markerSize).toBe(8)
+  })
+
+  it('线符号 → stroke', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ drawingInfo: { renderer: { type: 'simple', symbol: { type: 'esriSLS', color: [0, 0, 255, 255], width: 2 } } } }),
+    })))
+    const style = await fetchFeatureStyle('https://x/FeatureServer/0')
+    expect(style?.strokeWidth).toBe(2)
   })
 
   it('面符号 → fill + outline', async () => {
@@ -41,90 +178,100 @@ describe('fetchFeatureStyle（SimpleRenderer 符号映射）', () => {
     expect(style?.strokeWidth).toBe(1)
   })
 
-  it('非 simple renderer → null', async () => {
+  it('未知符号 / 非 simple / 失败 / 无 symbol → null', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
-      json: async () => ({ drawingInfo: { renderer: { type: 'uniqueValue' } } }),
+      json: async () => ({ drawingInfo: { renderer: { type: 'simple', symbol: { type: 'esriPTS' } } } }),
     })))
     expect(await fetchFeatureStyle('https://x/FeatureServer/0')).toBeNull()
-  })
-
-  it('请求失败 → null', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ drawingInfo: { renderer: { type: 'uniqueValue' } } }) })))
+    expect(await fetchFeatureStyle('https://x/FeatureServer/0')).toBeNull()
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false })))
+    expect(await fetchFeatureStyle('https://x/FeatureServer/0')).toBeNull()
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({}) })))
     expect(await fetchFeatureStyle('https://x/FeatureServer/0')).toBeNull()
   })
 })
 
-describe('WMS provider 构造', () => {
+describe('fetchFeatureGeoJSON 分页', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('meta 探测失败 → 用默认页大小 2000 拉取', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (u: string) => {
+      if (String(u).endsWith('?f=json')) return { ok: false }
+      const m = /resultOffset=(\d+)/.exec(String(u))
+      const n = m ? Number(m[1]) : 0
+      return { ok: true, json: async () => ({ features: n >= 4000 ? [] : Array.from({ length: 2000 }, (_, i) => ({ id: n + i })) }) }
+    }))
+    const gj = (await fetchFeatureGeoJSON('https://x/FeatureServer/0', 4000)) as { features: unknown[] }
+    expect(gj.features).toHaveLength(4000)
+  })
+
+  it('空页（无要素）→ 立即停止', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ features: [] }) })))
+    const gj = (await fetchFeatureGeoJSON('https://x/FeatureServer/0')) as { features: unknown[] }
+    expect(gj.features).toHaveLength(0)
+  })
+
+  it('查询失败抛错', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (u: string) => {
+      if (String(u).endsWith('?f=json')) return { ok: true, json: async () => ({ maxRecordCount: 100 }) }
+      return { ok: false }
+    }))
+    await expect(fetchFeatureGeoJSON('https://x/FeatureServer/0')).rejects.toThrow('要素服务查询失败')
+  })
+})
+
+describe('WMS provider 构造（原有）', () => {
   afterEach(() => vi.unstubAllGlobals())
 
   it('图层名从 layers 数组首项提取', async () => {
     const { WebMapServiceImageryProvider } = await import('cesium')
     const wmsCtor = WebMapServiceImageryProvider as unknown as ReturnType<typeof vi.fn>
-    const { providerForWebLayer } = await import('./webmap')
     await providerForWebLayer({ url: 'https://x/wms', type: 'WMS', layers: [{ name: 'layerA', title: 'A' }] })
-    expect(wmsCtor).toHaveBeenCalledWith(
-      expect.objectContaining({ url: 'https://x/wms', layers: 'layerA' })
-    )
+    expect(wmsCtor).toHaveBeenCalledWith(expect.objectContaining({ url: 'https://x/wms', layers: 'layerA' }))
   })
 
   it('按 resultOffset 分页拉取直到拉完或达上限', async () => {
     const urls: string[] = []
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (u: string) => {
-        urls.push(String(u))
-        if (String(u).endsWith('?f=json')) {
-          return { ok: true, json: async () => ({ maxRecordCount: 1000 }) }
-        }
-        const m = /resultOffset=(\d+)/.exec(String(u))
-        const n = m ? Number(m[1]) : 0
-        const features = n >= 3000 ? [] : Array.from({ length: 1000 }, (_, i) => ({ id: n + i }))
-        return { ok: true, json: async () => ({ features }) }
-      })
-    )
+    vi.stubGlobal('fetch', vi.fn(async (u: string) => {
+      urls.push(String(u))
+      if (String(u).endsWith('?f=json')) return { ok: true, json: async () => ({ maxRecordCount: 1000 }) }
+      const m = /resultOffset=(\d+)/.exec(String(u))
+      const n = m ? Number(m[1]) : 0
+      const features = n >= 3000 ? [] : Array.from({ length: 1000 }, (_, i) => ({ id: n + i }))
+      return { ok: true, json: async () => ({ features }) }
+    }))
     const gj = (await fetchFeatureGeoJSON('https://x/FeatureServer/0', 3000)) as { features: { id: number }[] }
     expect(gj.features.length).toBe(3000)
     expect(urls.some((u) => u.includes('resultOffset=2000'))).toBe(true)
   })
 
-  it('服务不支持分页（返回数量不变）时停止，避免死循环', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (u: string) => {
-        if (String(u).endsWith('?f=json')) return { ok: true, json: async () => ({ maxRecordCount: 1000 }) }
-        return { ok: true, json: async () => ({ features: [{ id: 1 }] }) }
-      })
-    )
+  it('服务不支持分页（返回数量不变）时停止', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (u: string) => {
+      if (String(u).endsWith('?f=json')) return { ok: true, json: async () => ({ maxRecordCount: 1000 }) }
+      return { ok: true, json: async () => ({ features: [{ id: 1 }] }) }
+    }))
     const gj = (await fetchFeatureGeoJSON('https://x/FeatureServer/0')) as { features: unknown[] }
     expect(gj.features.length).toBe(1)
   })
 
-  it('服务忽略 resultOffset 返回相同满页数据时停止（重复检测），不重复拉取', async () => {
+  it('服务忽略 resultOffset 返回相同满页时停止（重复检测）', async () => {
     let calls = 0
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (u: string) => {
-        calls++
-        if (String(u).endsWith('?f=json')) return { ok: true, json: async () => ({ maxRecordCount: 1000 }) }
-        // 每页都返回同一批 1000 条（模拟服务忽略 resultOffset）
-        return {
-          ok: true,
-          json: async () => ({ features: Array.from({ length: 1000 }, (_, i) => ({ id: i, name: 'same' })) }),
-        }
-      })
-    )
+    vi.stubGlobal('fetch', vi.fn(async (u: string) => {
+      calls++
+      if (String(u).endsWith('?f=json')) return { ok: true, json: async () => ({ maxRecordCount: 1000 }) }
+      return { ok: true, json: async () => ({ features: Array.from({ length: 1000 }, (_, i) => ({ id: i, name: 'same' })) }) }
+    }))
     const gj = (await fetchFeatureGeoJSON('https://x/FeatureServer/0', 5000)) as { features: unknown[] }
-    // 重复检测应在第 2 页停止，只保留 1 页数据
     expect(gj.features.length).toBe(1000)
     expect(calls).toBeLessThan(5)
   })
 
-  it('无图层名 → 返回 null（不构造 provider）', async () => {
+  it('无图层名 → 返回 null', async () => {
     const { WebMapServiceImageryProvider } = await import('cesium')
     const wmsCtor = WebMapServiceImageryProvider as unknown as ReturnType<typeof vi.fn>
     wmsCtor.mockClear()
-    const { providerForWebLayer } = await import('./webmap')
     const p = await providerForWebLayer({ url: 'https://x/wms', type: 'WMS' })
     expect(p).toBeNull()
     expect(wmsCtor).not.toHaveBeenCalled()
