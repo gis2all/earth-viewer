@@ -91,16 +91,23 @@ export function LayerPanel() {
   }
 
   /** 分批检查（每批 6 个），控制并发避免触发限流；保留评估结果用于能力角标 */
-  async function filterRenderable(items: SearchResult[], signal?: AbortSignal): Promise<SearchResult[]> {
+  async function filterRenderable(
+    items: SearchResult[],
+    signal?: AbortSignal,
+    onBatch?: (batch: SearchResult[]) => void
+  ): Promise<SearchResult[]> {
     const out: SearchResult[] = []
     const BATCH = 6
     for (let i = 0; i < items.length; i += BATCH) {
       const batch = items.slice(i, i + BATCH)
       const flags = await Promise.all(batch.map((it) => assessItem(it, signal)))
+      const ok: SearchResult[] = []
       batch.forEach((it, idx) => {
         const a = flags[idx]
-        if (a?.renderable) out.push({ ...it, fidelity: a.fidelity })
+        if (a?.renderable) ok.push({ ...it, fidelity: a.fidelity })
       })
+      out.push(...ok)
+      onBatch?.(ok)
     }
     return out
   }
@@ -121,11 +128,12 @@ export function LayerPanel() {
       const usable: SearchResult[] = []
       let guard = 0
       // 预取 + 过滤：翻页直到凑够 PAGE 个可渲染的，或搜索到底
-      while (usable.length < PAGE && guard < 12) {
+      const sortByViews = (arr: SearchResult[]) => arr.slice().sort((a, b) => (b.numViews ?? 0) - (a.numViews ?? 0))
+      while (guard < 12) {
         guard++
         const q = DEFAULT_QUERY + (kwRef.current ? ' AND ' + kwRef.current : '')
         const r = await fetch(
-          '/sharing/rest/search?q=' + encodeURIComponent(q) + '&f=json&num=' + PAGE + '&start=' + start,
+          '/sharing/rest/search?q=' + encodeURIComponent(q) + '&f=json&num=' + PAGE + '&start=' + start + '&sortField=numViews&sortOrder=desc',
           { signal: withFetchTimeout(controller.signal) }
         )
         const j = (await r.json()) as {
@@ -145,19 +153,26 @@ export function LayerPanel() {
           setDone(true)
           break
         }
-        const ok = await filterRenderable(results, controller.signal)
+        // 每批评估完立即上屏（第一屏不必等凑满 24 项）
+        const pageAcc: SearchResult[] = []
+        const ok = await filterRenderable(results, controller.signal, (partial) => {
+          pageAcc.push(...partial)
+          if (requestId !== requestIdRef.current) return
+          if (reset) setItems(sortByViews([...usable, ...pageAcc]))
+          else setItems((prev) => sortByViews([...prev, ...pageAcc]))
+        })
         usable.push(...ok)
+        if (usable.length >= PAGE) break
         if (!j.nextStart) {
           setDone(true)
           break
         }
         start = j.nextStart
       }
-      // 按浏览数（view count）降序
-      usable.sort((a, b) => (b.numViews ?? 0) - (a.numViews ?? 0))
-      if (requestId !== requestIdRef.current) return
-      if (reset) setItems(usable)
-      else setItems((prev) => [...prev, ...usable])
+      // 已通过 onBatch 增量渲染；此处兜底（如首屏无结果时无批次触发）
+      if (requestId === requestIdRef.current && reset) setItems(sortByViews(usable))
+      // 翻页上限耗尽仍未凑满时标记到底（避免静默停止）
+      if (requestId === requestIdRef.current && usable.length < PAGE) setDone(true)
     } catch (e) {
       if ((e as Error).name === 'AbortError') return
       if (requestId !== requestIdRef.current) return
