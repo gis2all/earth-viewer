@@ -45,9 +45,10 @@ earth-viz-hub/
   eslint.config.js      # ESLint（typescript-eslint + react-hooks）
   playwright.config.ts  # E2E 冒烟测试（mock ArcGIS 请求，确定性）
   e2e/app.spec.ts       # 浏览器冒烟：加载→搜索→添加→删除
-  functions/sharing/    # Cloudflare Pages Functions：/sharing/* 生产代理（arcgis.com）
-  server/proxy.mjs      # 通用 Node 生产代理（无托管 Functions 时用）
-  .github/workflows/ci.yml  # CI：lint + test + build
+  functions/sharing/    # Cloudflare Pages Functions：/sharing/* 生产代理（arcgis.com，配置后续再做）
+  server/proxy.mjs      # 通用 Node 生产服务（静态托管 dist + /sharing 代理，备选）
+  server/nginx.conf     # Nginx 部署示例（备选）
+  .github/workflows/ci.yml  # CI：lint + test + build + e2e
   CLAUDE.md             # 本文件
   docs/                 # ★不入 git（.gitignore 忽略），会话交接/规格等内部文档
   public/
@@ -99,7 +100,8 @@ earth-viz-hub/
   ```ts
   { renderable: boolean, fidelity: 'full'|'partial'|'none', reason?, layers: LayerAssessment[] }
   ```
-- **能力表**（`classifyLayer`）分三级：`full`（影像瓦片 MapServer/ImageServer、基础 WMS/KML）、`partial`（FeatureLayer/FeatureServer/GeoJSONLayer——降级为 GeoJSON，仅映射 SimpleRenderer 样式、条数受限）、`none`（VectorTile / 3D Scene / 其他，带原因）。
+- **能力表**（`classifyLayer`）分三级：`full`（影像瓦片 MapServer/ImageServer、带图层名的 WMS、KML）、`partial`（FeatureLayer/FeatureServer/GeoJSONLayer——降级为 GeoJSON；WMS 缺图层名）、`none`（VectorTile / 3D Scene / 其他，带原因）。
+- **tiled / dynamic 区分**：`detectMapService()` 探测服务 metadata 的 `tileInfo`——无 tileInfo 的动态 MapServer 不能走 `/tile/{z}/{y}/{x}`，provider 返回 null 且评估降级为不可渲染（LayerPanel 预取时精化）。
 - **角色分类**：`basemap`（主底图）/ `overlay`（辅助层）/ `business`（业务层）。
   - ★overlay 判定用 URL 黑名单：`World_Hillshade | World_Boundaries_and_Places | World_Transportation | World_Reference | World_Terrain_Base | World_Shaded_Relief`。
   - ★**overlay 辅助层不渲染**（`renderableLayersFromWebmap` 过滤掉）——否则灰度 Hillshade 会盖住彩色底图，出现"地图全白"。
@@ -111,8 +113,8 @@ earth-viz-hub/
 - 渲染时应用图层 `opacity`（→ `ImageryLayer.alpha`）和 `visibility`（false 跳过）。
 - **WMS / KML 已支持**：type 兼容 `"WMS"/"KML"` 与 `"WMSLayer"/"KMLLayer"`；WMS 用 `WebMapServiceImageryProvider`（图层名取 `layerName` 或 `layers` 数组首项），KML 用 `KmlDataSource`。
 - **FeatureLayer 符号映射**：读服务 metadata 的 `drawingInfo.renderer`，SimpleRenderer（点/线/面）映射为 Cesium GeoJSON 样式；UniqueValue 等暂返回 null（默认样式）。
-- **FeatureLayer 分页**：按 `maxRecordCount` + `resultOffset` 循环拉取，上限 5000 条。
-- 卡片右上角 X 移除图层。
+- **FeatureLayer 分页**：按 `maxRecordCount` + `resultOffset` 循环拉取，上限 5000 条；含**重复页面检测**（服务忽略 resultOffset 时停止），防止无限拉取。
+- **图层加载失败用户可见**：GlobeViewer 加载 Feature/GeoJSON/KML 失败时写入 store `layerErrors`，已添加卡片显示「加载失败」红标（title 附原因），成功加载后清除。
 - **状态持久化**：zustand persist（localStorage `earth-viewer`），保存 theme/collapsed/added/effects，刷新恢复。
 
 ### 4.3 画廊（LayerPanel）
@@ -193,7 +195,7 @@ earth-viz-hub/
 
 ## 八、待办（按优先级）
 
-1. **部署上线**：用户要能公网访问的 app。已备好生产 ArcGIS 代理（`functions/sharing/` 用于 Cloudflare Pages，`server/proxy.mjs` 用于 Node 托管）+ CI workflow，选好平台即可发布。
+1. **部署上线**：目标 Cloudflare Pages（`functions/sharing/` 已备好 ArcGIS 代理），Pages 项目配置（wrangler/_headers/构建）后续再做。CI（`npm run lint/test/build` + Playwright e2e）已就绪。
 2. 气象 / 地震时序 + 时间轴（曾讨论，用户说排在 bug 修复之后）。
 3. 能力角标与 toast 提示已实现，可继续打磨（如卡片 tooltip 展示具体跳过原因）。
 4. ArcGIS Online 搜索已接入；可继续打磨搜索体验（排序、分页目标数量等）。
