@@ -19,7 +19,7 @@ import {
 const TERRAIN_URL =
   'https://tiles.arcgis.com/tiles/HDgMIJDCbHtnomY9/arcgis/rest/services/Terrain_3D_GCSv2/ImageServer'
 
-// 缓存地形 Provider// 缓存地形 Provider
+// 缓存地形 Provider
 let cachedTerrain: Cesium.TerrainProvider | null = null
 let terrainLoading: Promise<Cesium.TerrainProvider> | null = null
 function getTerrainProvider(): Promise<Cesium.TerrainProvider> {

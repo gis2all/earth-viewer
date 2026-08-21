@@ -16,6 +16,10 @@ export interface WebLayer {
   urlTemplate?: string
   opacity?: number
   visibility?: boolean
+  /** WMS 图层的子图层列表（[{ name, title }]），WMS 图层名可能在此而非 layerName */
+  layers?: unknown
+  /** WMS 图层名（部分 webmap 直接给 layerName） */
+  layerName?: string
 }
 
 function layerKind(l: WebLayer): string {
@@ -88,12 +92,11 @@ export async function providerForWebLayer(layer: WebLayer): Promise<Cesium.Image
   }
   // WMS：用 WebMapServiceImageryProvider，需图层名（webmap 里可能是 layerName 或 layers 数组）
   if (/WMSLayer|WMS/i.test(t) && url) {
-    const l = layer as { layerName?: string; layers?: unknown }
-    let name = l.layerName
-    if (!name && Array.isArray(l.layers) && l.layers.length > 0) {
-      name = (l.layers[0] as { name?: string }).name
+    let name = layer.layerName
+    if (!name && Array.isArray(layer.layers) && layer.layers.length > 0) {
+      name = (layer.layers[0] as { name?: string }).name
     }
-    if (!name && typeof l.layers === 'string') name = l.layers
+    if (!name && typeof layer.layers === 'string') name = layer.layers
     if (!name) return null
     return new Cesium.WebMapServiceImageryProvider({ url, layers: name })
   }
@@ -206,13 +209,4 @@ export async function fetchFeatureStyle(url: string): Promise<FeatureStyle | nul
   }
 }
 
-/** 从 Web Map 提取可用的底图 Provider */
-export async function baseProviderFromWebmap(wm: Record<string, unknown>): Promise<Cesium.ImageryProvider | null> {
-  const baseMap = wm.baseMap as { baseMapLayers?: WebLayer[] } | undefined
-  for (const l of baseMap?.baseMapLayers ?? []) {
-    const p = await providerForWebLayer(l)
-    if (p) return p
-  }
-  return null
-}
 
