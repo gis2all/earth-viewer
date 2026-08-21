@@ -64,18 +64,39 @@ describe('assessWebmap 整体评估', () => {
     }
     expect(assessWebmap(wm as unknown as Record<string, unknown>).renderable).toBe(false)
   })
-  it('业务 FeatureLayer → 可渲染 full', () => {
+  it('业务 FeatureLayer → 可渲染但降级为 partial', () => {
     const wm = {
       baseMap: { baseMapLayers: [] },
       operationalLayers: [layer({ title: 'Incidents', url: 'https://x/FeatureServer/0', layerType: 'ArcGISFeatureLayer' })],
     }
     const a = assessWebmap(wm as unknown as Record<string, unknown>)
     expect(a.renderable).toBe(true)
+    expect(a.fidelity).toBe('partial')
+    expect(a.layers[0].support).toBe('partial')
+    expect(a.layers[0].reason).toBeTruthy()
+  })
+  it('MapServer 底图 → full（非 partial）', () => {
+    const wm = {
+      baseMap: { baseMapLayers: [layer({ title: 'World Imagery', url: 'https://x/World_Imagery/MapServer', layerType: 'ArcGISTiledMapServiceLayer' })] },
+      operationalLayers: [],
+    }
+    const a = assessWebmap(wm as unknown as Record<string, unknown>)
     expect(a.fidelity).toBe('full')
+    expect(a.layers[0].support).toBe('full')
   })
 })
 
 describe('renderableLayersFromWebmap', () => {
+  it('partial 要素图层也会被渲染（降级但可用）', () => {
+    const wm = {
+      baseMap: { baseMapLayers: [] },
+      operationalLayers: [layer({ title: 'Incidents', url: 'https://x/FeatureServer/0', layerType: 'ArcGISFeatureLayer' })],
+    }
+    const layers = renderableLayersFromWebmap(wm as unknown as Record<string, unknown>)
+    expect(layers.length).toBe(1)
+    expect(layers[0].title).toBe('Incidents')
+  })
+
   it('跳过 overlay 与 none 层，保留主底图', () => {
     const wm = {
       baseMap: {

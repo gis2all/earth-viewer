@@ -1,6 +1,6 @@
 import type { WebLayer } from './webmap'
 
-export type LayerSupport = 'full' | 'none'
+export type LayerSupport = 'full' | 'partial' | 'none'
 export type LayerRole = 'basemap' | 'overlay' | 'business'
 
 export interface LayerAssessment {
@@ -48,15 +48,26 @@ export function classifyLayer(l: WebLayer, role: LayerRole): LayerAssessment {
   if (!url) {
     return { ...base, support: 'none', reason: '图层缺少可加载的服务地址' }
   }
-  // MapServer / ImageServer 瓦片、Feature / GeoJSON 矢量、WMS / KML：完整支持
+  // 能力表（分层级）：
+  // - full：影像瓦片（MapServer/ImageServer）、基础 WMS/KML —— 原生渲染
+  // - partial：FeatureLayer / FeatureServer / GeoJSONLayer —— 降级为 GeoJSON，仅映射 SimpleRenderer 样式、条数有限
+  // - none：VectorTile / Scene / 其他 —— 不支持
   // 注意：ArcGIS webmap 里 WMS/KML 图层的 type 是 "WMS"/"KML"（也可能 "WMSLayer"/"KMLLayer"）
-  const supported =
-    /\/MapServer\/?$|\/ImageServer\/?$/i.test(url) ||
-    /FeatureLayer|FeatureServer|GeoJSONLayer|WMSLayer|KMLLayer|^(WMS|KML)$/i.test(kind)
-  if (!supported) {
-    return { ...base, support: 'none', reason: '图层类型暂不支持：' + (kind || url) }
+  const isTile =
+    /\/MapServer\/?$|\/ImageServer\/?$/i.test(url)
+  const isWmsKml = /WMSLayer|KMLLayer|^(WMS|KML)$/i.test(kind)
+  const isFeature = /FeatureLayer|FeatureServer|GeoJSONLayer/i.test(kind)
+  if (isTile || isWmsKml) {
+    return base
   }
-  return base
+  if (isFeature) {
+    return {
+      ...base,
+      support: 'partial',
+      reason: '要素图层降级为 GeoJSON 渲染（仅映射 SimpleRenderer 样式，条数受限）',
+    }
+  }
+  return { ...base, support: 'none', reason: '图层类型暂不支持：' + (kind || url) }
 }
 
 /** 返回应当渲染的图层：支持（full）且非辅助层（overlay）——让渲染层消费同一份评估结果 */
@@ -71,7 +82,10 @@ export function renderableLayersFromWebmap(wm: Record<string, unknown>): WebLaye
     ...opLayers.map((l) => ({ l, role: 'business' as LayerRole })),
   ]
   return all
-    .filter(({ l, role }) => role !== 'overlay' && classifyLayer(l, role).support === 'full')
+    .filter(({ l, role }) => {
+      const a = classifyLayer(l, role)
+      return role !== 'overlay' && (a.support === 'full' || a.support === 'partial')
+    })
     .map(({ l }) => l)
 }
 
@@ -85,14 +99,16 @@ export function assessWebmap(wm: Record<string, unknown>): WebmapAssessment {
     ...opLayers.map((l) => classifyLayer(l, 'business')),
   ]
 
-  // 主内容 = 可渲染的主底图或业务图层（overlay 只做叠加，不能当主内容）
+  // 主内容 = 可渲染的主底图或业务图层（overlay 只做叠加，不能当主内容；full/partial 都可渲染）
   const mainLayers = layers.filter(
-    (l) => (l.role === 'basemap' || l.role === 'business') && l.support === 'full'
+    (l) =>
+      (l.role === 'basemap' || l.role === 'business') &&
+      (l.support === 'full' || l.support === 'partial')
   )
   const renderable = mainLayers.length > 0
 
-  const noneLayers = layers.filter((l) => l.support === 'none')
-  const fidelity = renderable ? (noneLayers.length > 0 ? 'partial' : 'full') : 'none'
+  const degradedLayers = layers.filter((l) => l.support === 'partial' || l.support === 'none')
+  const fidelity = renderable ? (degradedLayers.length > 0 ? 'partial' : 'full') : 'none'
 
   let reason: string | undefined
   if (!renderable) {
