@@ -158,8 +158,9 @@ export function LayerPanel() {
         const ok = await filterRenderable(results, controller.signal, (partial) => {
           pageAcc.push(...partial)
           if (requestId !== requestIdRef.current) return
+          // reset=true：usable（跨页累积）+ pageAcc（本页累积）；追加模式：prev + 本批 partial（避免 pageAcc 累积导致重复）
           if (reset) setItems(sortByViews([...usable, ...pageAcc]))
-          else setItems((prev) => sortByViews([...prev, ...pageAcc]))
+          else setItems((prev) => sortByViews([...prev, ...partial]))
         })
         usable.push(...ok)
         if (usable.length >= PAGE) break
@@ -307,7 +308,8 @@ export function LayerPanel() {
               placeholder="搜索"
               aria-label="搜索 ArcGIS Online 数据源"
             />
-            {loading && (
+            {/* 取消/清除按钮：仅在有输入内容且加载中显示（无输入时初始自动加载不冒出来） */}
+            {loading && kw.length > 0 && (
               <button className="search-cancel" onClick={cancelSearch} title="取消搜索" aria-label="取消搜索">
                 ✕
               </button>
