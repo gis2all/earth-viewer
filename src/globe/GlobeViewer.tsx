@@ -68,6 +68,8 @@ export function GlobeViewer() {
   useEffect(() => {
     const el = containerRef.current
     if (!el || viewerRef.current) return
+    // E2E 测试模式：headless CI 的软件渲染 WebGL 极慢，UI 交互测试不需要球 → 跳过 Cesium Viewer
+    if ((window as unknown as { __E2E__?: boolean }).__E2E__) return
     const v = new Cesium.Viewer(el, {
       baseLayer: false,
       baseLayerPicker: false,

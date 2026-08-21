@@ -1,5 +1,12 @@
 import { test, expect } from '@playwright/test'
 
+// E2E 模式：跳过 Cesium Viewer 创建（CI headless 软件渲染慢，UI 交互测试不需要球）
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    ;(window as unknown as { __E2E__?: boolean }).__E2E__ = true
+  })
+})
+
 // 冒烟：页面加载 → 搜索 → 添加图层 → 删除图层（mock ArcGIS 请求，保证确定性）
 test('冒烟：加载、搜索、添加、删除图层', async ({ page }) => {
   // 拦截 ArcGIS 搜索与 webmap 数据请求（避免依赖真实网络）

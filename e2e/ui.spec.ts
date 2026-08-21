@@ -1,5 +1,12 @@
 import { test, expect, type Page } from '@playwright/test'
 
+// E2E 模式：跳过 Cesium Viewer 创建（CI headless 软件渲染慢，UI 交互测试不需要球）
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    ;(window as unknown as { __E2E__?: boolean }).__E2E__ = true
+  })
+})
+
 // 通用 mock：ArcGIS 搜索 + webmap 数据（保证交互测试确定性）
 async function mockArcGIS(page: Page, searchDelay = 0) {
   await page.route('**/sharing/rest/search*', async (route) => {
