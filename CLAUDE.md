@@ -75,6 +75,16 @@ docker compose down         # 停止
 - 运行阶段只用 Node 内置 http，**无 npm 依赖**，镜像轻量。
 - 端口映射 `5173:5173`；改端口只需改 `docker-compose.yml`。
 
+### 3.4 Cloudflare Pages（生产线上）
+
+- 域名：`https://earth.gis2all.top`（Pages 自定义域名，`gis2all.top` 已在 Cloudflare，走 Pages 自动 CNAME 绑定）
+- 部署方式：Cloudflare dashboard 连接 GitHub（`gis2all/earth-viewer`）自动构建部署（方案 A，非 wrangler-action）
+- 构建：`npm run build`，输出 `dist/`；新版 Pages 用 `npx wrangler deploy`，由 `wrangler.toml` 的 `pages_build_output_dir = "dist"` 声明静态目录
+- ★**环境变量 `ALLOWED_ORIGIN=https://earth.gis2all.top` 必设**：`functions/sharing/` 代理的 Origin 检查，不设则浏览器请求（带 Origin）被 403
+- 安全头 / CSP / 缓存：`public/_headers`（CSP 已从 index.html 移到这里）；SPA 回退：`public/_redirects`（`/* /index.html 200`）
+- ★CSP 只在 Pages 生效；**本地 dev / Docker 无内联 CSP**（meta 已移除，node proxy 不读 _headers；如需可给 `server/proxy.mjs` 加 _headers 支持）
+- 构建失败排查：先确认 `wrangler.toml` 存在（新版 Pages 必需）、Node 版本 22、`ALLOWED_ORIGIN` 已设；再查构建日志
+
 ---
 
 ## 四、架构与目录
@@ -96,7 +106,8 @@ earth-viz-hub/
   .github/
     workflows/ci.yml    # CI：Node 22，audit + lint + test + build + e2e
     screenshots/app.png # README 产品截图
-  functions/sharing/    # Cloudflare Pages Functions：/sharing/* 生产代理（Pages 配置后续再做）
+  wrangler.toml         # Cloudflare Pages 配置（pages_build_output_dir=dist）
+  functions/sharing/    # Cloudflare Pages Functions：/sharing/* 生产代理（白名单+Origin 检查+限流）
   server/
     proxy.mjs           # 通用 Node 生产服务（静态托管 dist + /sharing 代理，默认 5173）
     nginx.conf          # Nginx 部署示例（listen 5173）
@@ -106,6 +117,8 @@ earth-viz-hub/
     favicon-dark.svg / favicon-light.svg / favicon-16/32.png
     covers/*.png        # 图层卡片封面图
     data/countries.geojson
+    _headers            # Pages 安全头/CSP/缓存（★CSP 唯一来源）
+    _redirects          # Pages SPA 回退（/* /index.html 200）
   src/
     main.tsx / App.tsx
     app/
@@ -261,7 +274,7 @@ earth-viz-hub/
 
 ## 九、待办（按优先级）
 
-1. **部署上线**：目标 Cloudflare Pages（`functions/sharing/` 已备好 ArcGIS 代理），Pages 项目配置（wrangler/_headers/构建）后续再做。CI 门禁已就绪。
+1. **部署上线（进行中）**：Cloudflare Pages 已配置（`wrangler.toml` + `_headers`/`_redirects` + Functions 代理 + 域名 `earth.gis2all.top`），首次成功部署后验证球渲染与搜索画廊。
 2. 气象 / 地震时序 + 时间轴（曾讨论，用户说排在 bug 修复之后）。
 3. 能力角标与 toast 提示已实现，可继续打磨（如卡片 tooltip 展示具体跳过原因）。
 4. ~~ArcGIS Online 搜索排序~~（已完成：`sortField=numViews` + 流式上屏）。
