@@ -11,3 +11,5 @@ vite.config.js.map
 vite.config.d.ts.map
 docs/
 *.tsbuildinfo
+test-results/
+playwright-report/

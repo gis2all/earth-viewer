@@ -304,7 +304,7 @@ export function GlobeViewer() {
                 v.dataSources.add(ds)
                 rec.ds.push(ds)
               })
-              .catch(() => {})
+              .catch((e) => console.error('[layer] Feature 图层加载失败', op.url, e))
           } else if (isGeoJsonLayer(op)) {
             Cesium.GeoJsonDataSource.load(op.url)
               .then((ds) => {
@@ -313,7 +313,7 @@ export function GlobeViewer() {
                 v.dataSources.add(ds)
                 rec.ds.push(ds)
               })
-              .catch(() => {})
+              .catch((e) => console.error('[layer] GeoJSON 图层加载失败', op.url, e))
           } else if (isKmlLayer(op)) {
             Cesium.KmlDataSource.load(op.url)
               .then((ds) => {
@@ -322,7 +322,7 @@ export function GlobeViewer() {
                 v.dataSources.add(ds)
                 rec.ds.push(ds)
               })
-              .catch(() => {})
+              .catch((e) => console.error('[layer] KML 图层加载失败', op.url, e))
           }
         }
       }

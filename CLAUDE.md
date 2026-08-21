@@ -43,6 +43,8 @@ earth-viz-hub/
   vite.config.ts        # arcgis-online-proxy（/sharing 代理到 www.arcgis.com，绕 CORS）
   vitest.config.ts      # 单测配置（jsdom 全局，src/**/*.test.{ts,tsx}）
   eslint.config.js      # ESLint（typescript-eslint + react-hooks）
+  playwright.config.ts  # E2E 冒烟测试（mock ArcGIS 请求，确定性）
+  e2e/app.spec.ts       # 浏览器冒烟：加载→搜索→添加→删除
   functions/sharing/    # Cloudflare Pages Functions：/sharing/* 生产代理（arcgis.com）
   server/proxy.mjs      # 通用 Node 生产代理（无托管 Functions 时用）
   .github/workflows/ci.yml  # CI：lint + test + build
