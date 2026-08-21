@@ -11,5 +11,9 @@ vite.config.js.map
 vite.config.d.ts.map
 docs/
 *.tsbuildinfo
+coverage/
 test-results/
 playwright-report/
+test-results.json
+e2e-results.json
+audit.json

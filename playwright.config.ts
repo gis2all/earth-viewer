@@ -5,6 +5,8 @@ export default defineConfig({
   timeout: 90000,
   workers: 1,
   retries: 1,
+  // 输出 JSON 供 scripts/badge.mjs 生成 e2e 徽章（真实通过数）
+  reporter: [['list'], ['json', { outputFile: 'e2e-results.json' }]],
   use: {
     baseURL: 'http://localhost:5173',
     headless: true,
