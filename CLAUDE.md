@@ -224,6 +224,7 @@ earth-viz-hub/
 - **瓦片服务 metadata 请求失败**（CORS 等）会静默回退默认 3857（可能错位，但至少不崩）。
 - **dev 依赖链 vite→esbuild 有已知漏洞**：修复需升 vite 8（breaking，暂缓），升级前勿执行 `npm audit fix --force`。
 - **ArcGIS 匿名访问有速率限制（429）**：画廊预取分批控制并发（每批 6 个）。
+- **E2E 的 UI 交互测试运行在轻量模式**（页面注入 `window.__E2E__`，GlobeViewer 跳过 Cesium Viewer 创建）：CI 无头环境软件渲染 WebGL 极慢会拖垮交互测试；「球真实渲染 + 图层上球」由容器手动/集成验证覆盖（headless 也测不准渲染）。
 
 ---
 
@@ -294,7 +295,7 @@ earth-viz-hub/
 
 ## 十一、工程约定
 
-- **不要频繁 git 提交**（用户明确要求，工作区大量未提交改动属正常）。
+- ★**未经用户明确准许，不得执行 `git add` / `git commit` / `git push`**（含「提交并推送」类自动操作）；只有用户明确说「提交/推送」才执行，工作区大量未提交改动属正常。
 - **`docs/` 不入 git**；`*.tsbuildinfo`、`*.log`、`node_modules/`、`dist/`、`test-results/` 均已忽略。
 - 开发服务器日志**不要输出到项目根目录**（避免污染仓库根目录）；需要后台启动时把日志重定向到系统临时目录（如 `$env:TEMP\earthviz-dev.log`）。
 - Windows 环境：写文件用 Python / Node（utf-8、LF）；编码敏感文件别用 PowerShell 重定向写。

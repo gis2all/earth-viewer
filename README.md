@@ -1,7 +1,11 @@
 # Earth Viewer
 
-[![CI](https://github.com/gis2all/earth-viz-hub/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gis2all/earth-viz-hub/actions/workflows/ci.yml)
+[![CI](https://github.com/gis2all/earth-viewer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gis2all/earth-viewer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Coverage](https://img.shields.io/endpoint?url=https://gis2all.github.io/earth-viewer/coverage.json)](https://gis2all.github.io/earth-viewer/)
+[![Deps](https://img.shields.io/endpoint?url=https://gis2all.github.io/earth-viewer/deps.json)](https://github.com/gis2all/earth-viewer/actions)
+[![Tests](https://img.shields.io/endpoint?url=https://gis2all.github.io/earth-viewer/tests.json)](https://github.com/gis2all/earth-viewer/actions)
+[![E2E](https://img.shields.io/endpoint?url=https://gis2all.github.io/earth-viewer/e2e.json)](https://github.com/gis2all/earth-viewer/actions)
 
 3D 地球图层应用：Cesium 渲染地球，接入 ArcGIS Online 公开图层，搜索、评估、添加、叠加和管理地图图层，并实时调节地球渲染效果。
 
