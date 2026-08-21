@@ -41,8 +41,11 @@ earth-viz-hub/
   index.html            # 页面标题 Earth Viewer + favicon links
   package.json          # name=earth-viewer
   vite.config.ts        # arcgis-online-proxy（/sharing 代理到 www.arcgis.com，绕 CORS）
-  vitest.config.ts      # 单测配置（node 环境，src/**/*.test.ts）
+  vitest.config.ts      # 单测配置（jsdom 全局，src/**/*.test.{ts,tsx}）
   eslint.config.js      # ESLint（typescript-eslint + react-hooks）
+  functions/sharing/    # Cloudflare Pages Functions：/sharing/* 生产代理（arcgis.com）
+  server/proxy.mjs      # 通用 Node 生产代理（无托管 Functions 时用）
+  .github/workflows/ci.yml  # CI：lint + test + build
   CLAUDE.md             # 本文件
   docs/                 # ★不入 git（.gitignore 忽略），会话交接/规格等内部文档
   public/
@@ -94,7 +97,7 @@ earth-viz-hub/
   ```ts
   { renderable: boolean, fidelity: 'full'|'partial'|'none', reason?, layers: LayerAssessment[] }
   ```
-- **能力表**（`classifyLayer`）：MapServer / ImageServer / FeatureServer / FeatureLayer / GeoJSONLayer = `full`；**VectorTileLayer / 3D Scene = `none`（带原因）**；无 url = `none`。
+- **能力表**（`classifyLayer`）分三级：`full`（影像瓦片 MapServer/ImageServer、基础 WMS/KML）、`partial`（FeatureLayer/FeatureServer/GeoJSONLayer——降级为 GeoJSON，仅映射 SimpleRenderer 样式、条数受限）、`none`（VectorTile / 3D Scene / 其他，带原因）。
 - **角色分类**：`basemap`（主底图）/ `overlay`（辅助层）/ `business`（业务层）。
   - ★overlay 判定用 URL 黑名单：`World_Hillshade | World_Boundaries_and_Places | World_Transportation | World_Reference | World_Terrain_Base | World_Shaded_Relief`。
   - ★**overlay 辅助层不渲染**（`renderableLayersFromWebmap` 过滤掉）——否则灰度 Hillshade 会盖住彩色底图，出现"地图全白"。
@@ -117,7 +120,7 @@ earth-viz-hub/
 - **自动翻页补齐**：一页过滤后不足 24 项继续翻页，直到凑够或搜索到底（12 页上限防死循环）。
 - **按 `numViews`（浏览数）降序**排序。
 - **缓存**：`assessCache`（Map<itemId, WebmapAssessment>）跨搜索复用，避免重复拉取。
-- **搜索防抖 300ms + AbortController 取消**：快速输入不重复请求、不产生乱序覆盖；Enter 立即搜索、加载中有取消按钮。
+- **搜索防抖 300ms + AbortController 取消 + requestId 序列号**：只有最新一次请求才更新 UI，彻底消除旧请求覆盖新结果；Enter 立即搜索、加载中有取消按钮。
 - **能力角标**：`fidelity=partial` 的卡片显示"部分支持"；添加时若跳过不支持层，toast 提示具体图层名。
 - 无限滚动：滚动接近底部触发 `loadMore(false)`。
 
@@ -188,7 +191,7 @@ earth-viz-hub/
 
 ## 八、待办（按优先级）
 
-1. **部署上线**：用户要能公网访问的 app。
+1. **部署上线**：用户要能公网访问的 app。已备好生产 ArcGIS 代理（`functions/sharing/` 用于 Cloudflare Pages，`server/proxy.mjs` 用于 Node 托管）+ CI workflow，选好平台即可发布。
 2. 气象 / 地震时序 + 时间轴（曾讨论，用户说排在 bug 修复之后）。
 3. 能力角标与 toast 提示已实现，可继续打磨（如卡片 tooltip 展示具体跳过原因）。
 4. ArcGIS Online 搜索已接入；可继续打磨搜索体验（排序、分页目标数量等）。
