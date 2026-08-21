@@ -1,4 +1,4 @@
-# <table><tr><td><img src="public/logo.svg" width="32" height="32" alt=""></td><td>Earth Viewer</td></tr></table>
+# <img src="public/logo.svg" width="32" height="32" alt=""> Earth Viewer
 
 [![CI](https://github.com/gis2all/earth-viewer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gis2all/earth-viewer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
