@@ -1,0 +1,11 @@
+node_modules/
+dist/
+docs/
+test-results/
+playwright-report/
+*.log
+*.tsbuildinfo
+.git/
+.gitignore
+.github/
+.superpowers/
