@@ -88,6 +88,23 @@ test('添加图层与删除', async ({ page }) => {
   await expect(page.locator('.added-card')).toHaveCount(0)
 })
 
+test('窄屏布局：面板可折叠且页面不横向溢出', async ({ page }) => {
+  await page.setViewportSize({ width: 480, height: 800 })
+  await page.reload()
+  await page.waitForSelector('.gallery-card', { timeout: 15000 })
+  // 折叠左面板
+  await page.locator('.panel .fold').first().evaluate((el) => (el as HTMLElement).click())
+  await expect(page.locator('.panel.collapsed').first()).toBeVisible()
+  // 折叠右面板
+  await page.locator('.panel-right .fold').evaluate((el) => (el as HTMLElement).click())
+  await expect(page.locator('.panel-right.collapsed')).toBeVisible()
+  // 无横向溢出
+  const noOverflow = await page.evaluate(
+    () => document.documentElement.scrollWidth <= window.innerWidth + 1
+  )
+  expect(noOverflow).toBe(true)
+})
+
 test('取消进行中的搜索', async ({ page }) => {
   // 重新挂载带延迟的 mock
   await mockArcGIS(page, 2000)
