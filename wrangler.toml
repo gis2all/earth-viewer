@@ -1,0 +1,4 @@
+# Cloudflare Pages 配置（新版 Pages 用 wrangler deploy 部署，需要声明静态输出目录）
+name = "earth-viewer"
+compatibility_date = "2024-11-01"
+pages_build_output_dir = "dist"
