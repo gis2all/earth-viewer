@@ -1,12 +1,12 @@
 // 通用 Node 生产服务：静态托管 dist/ + /sharing/* 代理到 www.arcgis.com
-// 用法：npm run build 后执行  node server/proxy.mjs 8080
+// 用法：npm run build 后执行  node server/proxy.mjs 5173
 import http from 'node:http'
 import https from 'node:https'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const PORT = Number(process.argv[2] || 8080)
+const PORT = Number(process.argv[2] || 5173)
 const DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../dist')
 const TARGET_HOST = 'www.arcgis.com'
 
