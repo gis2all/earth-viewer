@@ -42,6 +42,16 @@ const MAX_ZOOM = 25000000
 const MIN_PITCH = Cesium.Math.toRadians(-89.9)
 const MAX_PITCH = Cesium.Math.toRadians(0)
 
+// 交互参数（命名常量，避免魔法数字）
+const WHEEL_ZOOM_OUT_FACTOR = 1.25 // 滚轮上滑放大倍率
+const WHEEL_ZOOM_IN_FACTOR = 0.8 // 滚轮下滑缩小倍率
+const AUTO_ROTATE_IDLE_MS = 3000 // 无交互多久后开始自动环绕
+const AUTO_ROTATE_STEP_RAD = 0.0012 // 自动环绕每帧经度增量（东西向）
+const ZOOM_EASE = 0.25 // 滚轮缩放每帧缓动系数（越大越快）
+const SSE_ZOOMING = 4 // 缩放中瓦片清晰度（粗，保流畅）
+const SSE_SETTLED = 2 // 稳定后瓦片清晰度（精细）
+const DOUBLE_CLICK_ZOOM_RATIO = 0.5 // 双击 zoom in 到当前高度的一半
+
 export function GlobeViewer() {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewerRef = useRef<Cesium.Viewer | null>(null)
@@ -104,7 +114,7 @@ export function GlobeViewer() {
       e.preventDefault()
       cancelFlight()
       const h = v.camera.positionCartographic.height
-      const factor = e.deltaY > 0 ? 1.25 : 0.8
+      const factor = e.deltaY > 0 ? WHEEL_ZOOM_OUT_FACTOR : WHEEL_ZOOM_IN_FACTOR
       let min = MIN_ZOOM
       const gh = v.scene.globe.getHeight(v.camera.positionCartographic)
       if (gh !== undefined) min = Math.max(min, gh + 20)
@@ -118,14 +128,14 @@ export function GlobeViewer() {
     const onCameraFrame = () => {
       const c = v.camera
       // 自动旋转（无交互 3 秒后、且非飞行中）—— setView 递增经度，沿东西方向绕地球转
-      if (effectsRef.current.autoRotate && performance.now() - lastInteract > 3000) {
+      if (effectsRef.current.autoRotate && performance.now() - lastInteract > AUTO_ROTATE_IDLE_MS) {
         const fl = c as unknown as { _currentFlight?: unknown }
         if (!fl._currentFlight) {
           // 自动旋转：沿东西方向绕地球转（经度递增，保持纬度/高度/朝向不变）
           const carto = c.positionCartographic
           c.setView({
             destination: Cesium.Cartesian3.fromRadians(
-              carto.longitude + 0.0012,
+              carto.longitude + AUTO_ROTATE_STEP_RAD,
               carto.latitude,
               carto.height,
             ),
@@ -148,20 +158,20 @@ export function GlobeViewer() {
       const wheelActive = performance.now() - lastWheel < 1500
       if (wheelActive) {
         if (Math.abs(diff) > 1) {
-          c.moveForward(diff * 0.25)
+          c.moveForward(diff * ZOOM_EASE)
         }
         if (Math.abs(diff) > h * 0.005) {
           settledFrames = 0
-          v.scene.globe.maximumScreenSpaceError = 4
+          v.scene.globe.maximumScreenSpaceError = SSE_ZOOMING
         } else {
           settledFrames++
           if (settledFrames > 8) {
-            v.scene.globe.maximumScreenSpaceError = 2
+            v.scene.globe.maximumScreenSpaceError = SSE_SETTLED
           }
         }
       } else {
         targetH = h
-        v.scene.globe.maximumScreenSpaceError = 2
+        v.scene.globe.maximumScreenSpaceError = SSE_SETTLED
       }
     }
     v.scene.postUpdate.addEventListener(onCameraFrame)
@@ -184,7 +194,7 @@ export function GlobeViewer() {
       if (!picked) return
       const carto = v.scene.globe.ellipsoid.cartesianToCartographic(picked)
       const curH = v.camera.positionCartographic.height
-      const targetH2 = Math.max(MIN_ZOOM * 2, curH * 0.5)
+      const targetH2 = Math.max(MIN_ZOOM * 2, curH * DOUBLE_CLICK_ZOOM_RATIO)
       v.camera.flyTo({
         destination: Cesium.Cartesian3.fromDegrees(
           Cesium.Math.toDegrees(carto.longitude),
