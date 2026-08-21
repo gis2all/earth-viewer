@@ -38,10 +38,17 @@ function mapServerTileUrl(url: string): string {
 }
 
 // 服务坐标系探测缓存（同一 URL 只探测一次）
-const CRS_CACHE = new Map<string, { wkid: number; maxLevel: number }>()
+export interface MapServiceInfo {
+  wkid: number
+  maxLevel: number
+  /** 是否有缓存瓦片（tileInfo）——false 表示动态 MapServer，不能用 /tile/ 模板请求 */
+  tiled: boolean
+}
 
-/** 探测 MapServer/ImageServer 的坐标系（spatialReference.wkid）与最大级别；失败返回 null → 走默认 3857 */
-async function detectCrs(url: string): Promise<{ wkid: number; maxLevel: number } | null> {
+const CRS_CACHE = new Map<string, MapServiceInfo>()
+
+/** 探测 MapServer/ImageServer：坐标系（wkid）、最大级别、是否缓存瓦片；失败返回 null */
+export async function detectMapService(url: string): Promise<MapServiceInfo | null> {
   const base = url.replace(/\/?$/, '')
   const cached = CRS_CACHE.get(base)
   if (cached) return cached
@@ -56,7 +63,7 @@ async function detectCrs(url: string): Promise<{ wkid: number; maxLevel: number 
     if (typeof wkid !== 'number') return null
     const lods = j.tileInfo?.lods
     const maxLevel = Array.isArray(lods) && lods.length ? lods.length - 1 : 0
-    const info = { wkid, maxLevel }
+    const info: MapServiceInfo = { wkid, maxLevel, tiled: !!j.tileInfo }
     CRS_CACHE.set(base, info)
     return info
   } catch {
@@ -64,9 +71,13 @@ async function detectCrs(url: string): Promise<{ wkid: number; maxLevel: number 
   }
 }
 
-/** 瓦片服务 → Provider：4326 用 GeographicTilingScheme，其余（3857/未知）用默认 Web Mercator */
-async function providerForTiledMap(url: string): Promise<Cesium.ImageryProvider> {
+const detectCrs = detectMapService
+
+/** 瓦片服务 → Provider：4326 用 GeographicTilingScheme，其余（3857/未知）用默认 Web Mercator；动态服务（无 tileInfo）返回 null */
+async function providerForTiledMap(url: string): Promise<Cesium.ImageryProvider | null> {
   const crs = await detectCrs(url)
+  // 动态 MapServer：没有缓存瓦片，/tile/{z}/{y}/{x} 无效，不构造 provider
+  if (crs && !crs.tiled) return null
   const opts: Cesium.UrlTemplateImageryProvider.ConstructorOptions = {
     url: mapServerTileUrl(url),
   }
@@ -142,6 +153,7 @@ export async function fetchFeatureGeoJSON(url: string, limit = 5000): Promise<un
   const features: unknown[] = []
   let offset = 0
   let guard = 0
+  let lastKey: string | null = null
   while (offset < limit && guard < 50) {
     guard++
     const r = await fetch(
@@ -150,9 +162,17 @@ export async function fetchFeatureGeoJSON(url: string, limit = 5000): Promise<un
     if (!r.ok) throw new Error('要素服务查询失败')
     const gj = (await r.json()) as { features?: unknown[] }
     const feats = gj.features ?? []
+    if (feats.length === 0) break
+    // 拉完（不足一页）则停止
+    if (feats.length < pageSize) {
+      features.push(...feats)
+      break
+    }
+    // 重复页面检测：服务忽略 resultOffset 时每页返回相同数据，避免无限拉取
+    const key = JSON.stringify(feats[0])
+    if (key === lastKey) break
+    lastKey = key
     features.push(...feats)
-    // 拉完或服务不支持分页（返回数量不变）则停止
-    if (feats.length < pageSize || feats.length === 0) break
     offset += feats.length
     if (offset >= limit) break
   }

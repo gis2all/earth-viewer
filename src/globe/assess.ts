@@ -55,9 +55,22 @@ export function classifyLayer(l: WebLayer, role: LayerRole): LayerAssessment {
   // 注意：ArcGIS webmap 里 WMS/KML 图层的 type 是 "WMS"/"KML"（也可能 "WMSLayer"/"KMLLayer"）
   const isTile =
     /\/MapServer\/?$|\/ImageServer\/?$/i.test(url)
-  const isWmsKml = /WMSLayer|KMLLayer|^(WMS|KML)$/i.test(kind)
+  const isWms = /WMSLayer|^WMS$/i.test(kind)
+  const isKml = /KMLLayer|^KML$/i.test(kind)
   const isFeature = /FeatureLayer|FeatureServer|GeoJSONLayer/i.test(kind)
-  if (isTile || isWmsKml) {
+  if (isTile) {
+    return base
+  }
+  if (isWms) {
+    // WMS 必须能确定图层名（layerName 或 layers 数组/字符串），否则 provider 无法构造
+    const hasName =
+      !!l.layerName || Array.isArray(l.layers) || typeof l.layers === 'string'
+    if (!hasName) {
+      return { ...base, support: 'partial', reason: '缺少 WMS 图层名，无法渲染' }
+    }
+    return base
+  }
+  if (isKml) {
     return base
   }
   if (isFeature) {

@@ -100,6 +100,26 @@ describe('WMS provider 构造', () => {
     expect(gj.features.length).toBe(1)
   })
 
+  it('服务忽略 resultOffset 返回相同满页数据时停止（重复检测），不重复拉取', async () => {
+    let calls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (u: string) => {
+        calls++
+        if (String(u).endsWith('?f=json')) return { ok: true, json: async () => ({ maxRecordCount: 1000 }) }
+        // 每页都返回同一批 1000 条（模拟服务忽略 resultOffset）
+        return {
+          ok: true,
+          json: async () => ({ features: Array.from({ length: 1000 }, (_, i) => ({ id: i, name: 'same' })) }),
+        }
+      })
+    )
+    const gj = (await fetchFeatureGeoJSON('https://x/FeatureServer/0', 5000)) as { features: unknown[] }
+    // 重复检测应在第 2 页停止，只保留 1 页数据
+    expect(gj.features.length).toBe(1000)
+    expect(calls).toBeLessThan(5)
+  })
+
   it('无图层名 → 返回 null（不构造 provider）', async () => {
     const { WebMapServiceImageryProvider } = await import('cesium')
     const wmsCtor = WebMapServiceImageryProvider as unknown as ReturnType<typeof vi.fn>

@@ -19,10 +19,15 @@ describe('classifyLayer 能力表', () => {
     const l = layer({ url: 'https://x/SceneServer/0', layerType: 'ArcGISSceneServiceLayer' })
     expect(classifyLayer(l, 'business').support).toBe('none')
   })
-  it('WMS / KML 支持（含真实 type "WMS"/"KML"）', () => {
-    expect(classifyLayer(layer({ url: 'https://x/wms', layerType: 'WMSLayer' }), 'business').support).toBe('full')
+  it('WMS 带图层名 → full；缺图层名 → partial', () => {
+    expect(classifyLayer(layer({ url: 'https://x/wms', layerType: 'WMSLayer', layers: [{ name: 'a' }] }), 'business').support).toBe('full')
+    expect(classifyLayer(layer({ url: 'https://x/wms', type: 'WMS', layers: [{ name: 'a' }] }), 'business').support).toBe('full')
+    const noName = classifyLayer(layer({ url: 'https://x/wms', type: 'WMS' }), 'business')
+    expect(noName.support).toBe('partial')
+    expect(noName.reason).toBeTruthy()
+  })
+  it('KML 支持（含真实 type "KML"）', () => {
     expect(classifyLayer(layer({ url: 'https://x/a.kml', layerType: 'KMLLayer' }), 'business').support).toBe('full')
-    expect(classifyLayer(layer({ url: 'https://x/wms', type: 'WMS' }), 'business').support).toBe('full')
     expect(classifyLayer(layer({ url: 'https://x/a.kml', type: 'KML' }), 'business').support).toBe('full')
   })
   it('无 url 不支持', () => {
