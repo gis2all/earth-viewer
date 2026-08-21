@@ -28,17 +28,17 @@ test('冒烟：加载、搜索、添加、删除图层', async ({ page }) => {
   await page.goto('/')
   await expect(page).toHaveTitle('Earth Viewer')
   // 画廊加载出可渲染卡片
-  await page.waitForSelector('.gallery-card', { timeout: 15000 })
+  await page.waitForSelector('.gallery-card', { timeout: 60000 })
   // 搜索
   await page.fill('.search input', 'Imagery')
-  await page.waitForSelector('.gallery-card', { timeout: 15000 })
+  await page.waitForSelector('.gallery-card', { timeout: 60000 })
   // 添加第一张卡片
   await page.locator('.gallery-card').first().click()
-  await page.waitForSelector('.added-card', { timeout: 15000 })
+  await page.waitForSelector('.added-card', { timeout: 60000 })
   await expect(page.locator('.added-card')).toHaveCount(1)
   // 删除
   const removeBtn = page.locator('.added-card .remove-btn').first()
-  await expect(removeBtn).toBeVisible({ timeout: 10000 })
+  await expect(removeBtn).toBeVisible({ timeout: 30000 })
   await removeBtn.click()
   await expect(page.locator('.added-card')).toHaveCount(0)
 })

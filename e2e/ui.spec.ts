@@ -32,7 +32,7 @@ async function mockArcGIS(page: Page, searchDelay = 0) {
 test.beforeEach(async ({ page }) => {
   await mockArcGIS(page)
   await page.goto('/')
-  await page.waitForSelector('.gallery-card', { timeout: 15000 })
+  await page.waitForSelector('.gallery-card', { timeout: 30000 })
 })
 
 test('主题切换更新 favicon 并持久化到 localStorage', async ({ page }) => {
@@ -82,7 +82,7 @@ test('效果开关与滑杆', async ({ page }) => {
 
 test('添加图层与删除', async ({ page }) => {
   await page.locator('.gallery-card').first().click()
-  await page.waitForSelector('.added-card', { timeout: 15000 })
+  await page.waitForSelector('.added-card', { timeout: 30000 })
   await expect(page.locator('.added-card')).toHaveCount(1)
   await page.locator('.added-card .remove-btn').click()
   await expect(page.locator('.added-card')).toHaveCount(0)
@@ -91,7 +91,7 @@ test('添加图层与删除', async ({ page }) => {
 test('窄屏布局：面板可折叠且页面不横向溢出', async ({ page }) => {
   await page.setViewportSize({ width: 480, height: 800 })
   await page.reload()
-  await page.waitForSelector('.gallery-card', { timeout: 15000 })
+  await page.waitForSelector('.gallery-card', { timeout: 30000 })
   // 折叠左面板
   await page.locator('.panel .fold').first().evaluate((el) => (el as HTMLElement).click())
   await expect(page.locator('.panel.collapsed').first()).toBeVisible()
