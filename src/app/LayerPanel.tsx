@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAppStore } from '../state/store'
-import { fetchWebmap, detectMapService } from '../globe/webmap'
+import { fetchWebmap, detectMapService, withFetchTimeout } from '../globe/webmap'
 import { assessWebmap, type WebmapAssessment } from '../globe/assess'
 
 interface SearchResult {
@@ -126,7 +126,7 @@ export function LayerPanel() {
         const q = DEFAULT_QUERY + (kwRef.current ? ' AND ' + kwRef.current : '')
         const r = await fetch(
           '/sharing/rest/search?q=' + encodeURIComponent(q) + '&f=json&num=' + PAGE + '&start=' + start,
-          { signal: controller.signal }
+          { signal: withFetchTimeout(controller.signal) }
         )
         const j = (await r.json()) as {
           results?: SearchResult[]

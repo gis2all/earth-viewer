@@ -1,5 +1,13 @@
 import * as Cesium from 'cesium'
 
+// 网络请求超时（毫秒）：慢速服务不阻塞交互
+const FETCH_TIMEOUT = 15000
+
+/** 组合传入的取消信号与超时信号 */
+export function withFetchTimeout(signal?: AbortSignal): AbortSignal {
+  return signal ? AbortSignal.any([signal, AbortSignal.timeout(FETCH_TIMEOUT)]) : AbortSignal.timeout(FETCH_TIMEOUT)
+}
+
 export const WORLD_IMAGERY_TILES =
   'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
 export const WORLD_LABELS_TILES =
@@ -28,7 +36,7 @@ function layerKind(l: WebLayer): string {
 
 /** 通过本地代理拉取 Web Map JSON（支持 AbortSignal 取消） */
 export async function fetchWebmap(itemId: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
-  const r = await fetch(`/sharing/rest/content/items/${itemId}/data?f=json`, { signal })
+  const r = await fetch(`/sharing/rest/content/items/${itemId}/data?f=json`, { signal: withFetchTimeout(signal) })
   if (!r.ok) throw new Error('获取 Web Map 失败')
   return r.json()
 }
@@ -53,7 +61,7 @@ export async function detectMapService(url: string): Promise<MapServiceInfo | nu
   const cached = CRS_CACHE.get(base)
   if (cached) return cached
   try {
-    const r = await fetch(`${base}?f=json`)
+    const r = await fetch(`${base}?f=json`, { signal: withFetchTimeout() })
     if (!r.ok) return null
     const j = (await r.json()) as {
       spatialReference?: { wkid?: number; latestWkid?: number }
@@ -140,7 +148,7 @@ export async function fetchFeatureGeoJSON(url: string, limit = 5000): Promise<un
   // 探测服务单页上限（maxRecordCount）
   let pageSize = 2000
   try {
-    const meta = await fetch(`${base}?f=json`)
+    const meta = await fetch(`${base}?f=json`, { signal: withFetchTimeout() })
     if (meta.ok) {
       const m = (await meta.json()) as { maxRecordCount?: number }
       if (typeof m.maxRecordCount === 'number' && m.maxRecordCount > 0 && m.maxRecordCount <= 4000) {
@@ -157,7 +165,8 @@ export async function fetchFeatureGeoJSON(url: string, limit = 5000): Promise<un
   while (offset < limit && guard < 50) {
     guard++
     const r = await fetch(
-      `${base}/query?where=1%3D1&f=geojson&outFields=*&resultOffset=${offset}&resultRecordCount=${pageSize}`
+      `${base}/query?where=1%3D1&f=geojson&outFields=*&resultOffset=${offset}&resultRecordCount=${pageSize}`,
+      { signal: withFetchTimeout() }
     )
     if (!r.ok) throw new Error('要素服务查询失败')
     const gj = (await r.json()) as { features?: unknown[] }
@@ -191,7 +200,7 @@ export interface FeatureStyle {
 export async function fetchFeatureStyle(url: string): Promise<FeatureStyle | null> {
   const base = url.replace(/\/?$/, '')
   try {
-    const r = await fetch(`${base}?f=json`)
+    const r = await fetch(`${base}?f=json`, { signal: withFetchTimeout() })
     if (!r.ok) return null
     const j = (await r.json()) as {
       drawingInfo?: { renderer?: { type?: string; symbol?: Record<string, unknown> } }
