@@ -14,8 +14,8 @@ async function mockArcGIS(page: Page, searchDelay = 0) {
     await route.fulfill({
       json: {
         results: [
-          { id: 'wm1', title: 'Test Imagery', thumbnail: null, numViews: 1 },
-          { id: 'wm2', title: 'Wildfire Incidents', thumbnail: null, numViews: 2 },
+          { id: 'wm1', title: 'Test Imagery', thumbnail: null, numViews: 1, type: 'Web Map' },
+          { id: 'wm2', title: 'Wildfire Incidents', thumbnail: null, numViews: 2, type: 'Web Map' },
         ],
         nextStart: null,
         total: 2,

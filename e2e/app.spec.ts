@@ -13,7 +13,7 @@ test('冒烟：加载、搜索、添加、删除图层', async ({ page }) => {
   await page.route('**/sharing/rest/search*', (route) =>
     route.fulfill({
       json: {
-        results: [{ id: 'wm1', title: 'Test Imagery', thumbnail: null, numViews: 1 }],
+        results: [{ id: 'wm1', title: 'Test Imagery', thumbnail: null, numViews: 1, type: 'Web Map' }],
         nextStart: null,
         total: 1,
       },
@@ -48,4 +48,43 @@ test('冒烟：加载、搜索、添加、删除图层', async ({ page }) => {
   await expect(removeBtn).toBeVisible({ timeout: 30000 })
   await removeBtn.click()
   await expect(page.locator('.added-card')).toHaveCount(0)
+})
+
+test('WebScene：搜索结果可添加到同一个地球图层列表', async ({ page }) => {
+  await page.route('**/sharing/rest/search*', async (route) => {
+    const url = new URL(route.request().url())
+    const q = url.searchParams.get('q') ?? ''
+    await route.fulfill({
+      json: q.includes('Web Scene')
+        ? {
+            results: [{ id: 'scene-1', title: 'Mock WebScene', thumbnail: null, numViews: 10, type: 'Web Scene' }],
+            nextStart: null,
+            total: 1,
+          }
+        : { results: [], nextStart: null, total: 0 },
+    })
+  })
+  await page.route('**/sharing/rest/content/items/scene-1/data*', (route) =>
+    route.fulfill({
+      json: {
+        operationalLayers: [],
+        baseMap: {
+          baseMapLayers: [
+            {
+              title: 'Buildings',
+              url: 'https://x/SceneServer/layers/0',
+              layerType: 'ArcGISSceneServiceLayer',
+            },
+          ],
+        },
+        viewingMode: 'global',
+      },
+    })
+  )
+
+  await page.goto('/')
+  await page.waitForSelector('.gallery-card', { timeout: 60000 })
+  await expect(page.locator('.gallery-card')).toContainText('Mock WebScene')
+  await page.locator('.gallery-card').click()
+  await expect(page.locator('.added-card')).toContainText('Mock WebScene')
 })
