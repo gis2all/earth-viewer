@@ -14,8 +14,10 @@ import {
 vi.mock('cesium', () => ({
   Color: { fromBytes: (...args: number[]) => args },
   WebMapServiceImageryProvider: vi.fn(),
+  WebMapTileServiceImageryProvider: vi.fn(),
   UrlTemplateImageryProvider: vi.fn(),
   GeographicTilingScheme: vi.fn(),
+  WebMercatorTilingScheme: vi.fn(),
 }))
 
 describe('图层类型判断', () => {
@@ -26,6 +28,7 @@ describe('图层类型判断', () => {
   it('isGeoJsonLayer / isKmlLayer', () => {
     expect(isGeoJsonLayer({ layerType: 'GeoJSONLayer' })).toBe(true)
     expect(isKmlLayer({ layerType: 'KMLLayer' })).toBe(true)
+    expect(isKmlLayer({ type: 'KML Collection' })).toBe(true)
   })
 })
 
@@ -108,10 +111,62 @@ describe('providerForWebLayer', () => {
     expect(ut).toHaveBeenCalledWith({ url: 'https://p3857/MapServer/tile/{z}/{y}/{x}' })
   })
 
-  it('动态 MapServer（无 tileInfo）→ null', async () => {
+  it('动态 MapServer（无 tileInfo）→ 走 /export 出图，并使用 4326 Geographic 网格', async () => {
+    const { UrlTemplateImageryProvider, GeographicTilingScheme } = await import('cesium')
+    const ut = UrlTemplateImageryProvider as unknown as ReturnType<typeof vi.fn>
+    const geo = GeographicTilingScheme as unknown as ReturnType<typeof vi.fn>
+    ut.mockClear(); geo.mockClear()
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ spatialReference: { wkid: 3857 } }) })))
     const pr = await providerForWebLayer({ url: 'https://pdyn/MapServer', layerType: 'ArcGISMapServiceLayer' })
-    expect(pr).toBeNull()
+    expect(pr).not.toBeNull()
+    expect(ut).toHaveBeenCalledWith(expect.objectContaining({ url: expect.stringContaining('/export?bbox={westDegrees}') }))
+    expect(geo).toHaveBeenCalled()
+  })
+
+  it('动态 MapServer 4326 → 用 GeographicTilingScheme', async () => {
+    const { GeographicTilingScheme } = await import('cesium')
+    const geo = GeographicTilingScheme as unknown as ReturnType<typeof vi.fn>
+    geo.mockClear()
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ spatialReference: { wkid: 4326 } }) })))
+    await providerForWebLayer({ url: 'https://pdyn4326/ImageServer', layerType: 'ArcGISImageServiceLayer' })
+    expect(geo).toHaveBeenCalled()
+  })
+
+  it('WMTS 带图层名 → WebMapTileServiceImageryProvider；缺层名 → null', async () => {
+    const { WebMapTileServiceImageryProvider } = await import('cesium')
+    const wmts = WebMapTileServiceImageryProvider as unknown as ReturnType<typeof vi.fn>
+    wmts.mockClear()
+    await providerForWebLayer({ url: 'https://x/WMTS', layerType: 'WMTSLayer', layers: [{ name: 'layerA' }] })
+    expect(wmts).toHaveBeenCalledWith(expect.objectContaining({ url: 'https://x/WMTS', layer: 'layerA' }))
+    expect(await providerForWebLayer({ url: 'https://x/WMTS', layerType: 'WMTSLayer' })).toBeNull()
+  })
+
+  it('WMTS 使用 WebMap 配置中的 style/format/tileMatrixSetID', async () => {
+    const { WebMapTileServiceImageryProvider } = await import('cesium')
+    const wmts = WebMapTileServiceImageryProvider as unknown as ReturnType<typeof vi.fn>
+    wmts.mockClear()
+    await providerForWebLayer({
+      url: 'https://x/WMTS',
+      layerType: 'WMTSLayer',
+      layerName: 'roads',
+      style: 'night',
+      format: 'image/jpeg',
+      tileMatrixSetID: 'GoogleMapsCompatible',
+    } as never)
+    expect(wmts).toHaveBeenCalledWith(expect.objectContaining({
+      layer: 'roads',
+      style: 'night',
+      format: 'image/jpeg',
+      tileMatrixSetID: 'GoogleMapsCompatible',
+    }))
+  })
+
+  it('WebTiledLayer → UrlTemplate 用其 urlTemplate', async () => {
+    const { UrlTemplateImageryProvider } = await import('cesium')
+    const ut = UrlTemplateImageryProvider as unknown as ReturnType<typeof vi.fn>
+    ut.mockClear()
+    await providerForWebLayer({ url: 'https://x/wm', layerType: 'WebTiledLayer', urlTemplate: 'https://t/{z}/{y}/{x}.png' })
+    expect(ut).toHaveBeenCalledWith({ url: 'https://t/{z}/{y}/{x}.png' })
   })
 
   it('layerType 含 MapServer 且带 url → provider', async () => {
@@ -220,6 +275,47 @@ describe('fetchFeatureGeoJSON 分页', () => {
     }))
     await expect(fetchFeatureGeoJSON('https://x/FeatureServer/0')).rejects.toThrow('要素服务查询失败')
   })
+
+  it('???????? id?? 0??? /id/query ??', async () => {
+    const urls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (u: string) => {
+      urls.push(String(u))
+      if (String(u).endsWith('?f=json')) return { ok: true, json: async () => ({ layers: [{ id: 1, name: 'PRE_TP' }], maxRecordCount: 100 }) }
+      return { ok: true, json: async () => ({ features: [{ id: 1 }] }) }
+    }))
+    const gj = (await fetchFeatureGeoJSON('https://x/FeatureServer')) as { features: unknown[] }
+    expect(gj.features).toHaveLength(1)
+    expect(urls.some((u) => u.includes('/1/query'))).toBe(true)
+  })
+
+  it('????? geojson ??? f=json ?? GeoJSON', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (u: string) => {
+      const url = String(u)
+      if (url.endsWith('?f=json')) return { ok: true, json: async () => ({ layers: [{ id: 0 }] }) }
+      if (url.includes('f=geojson')) return { ok: false }
+      return { ok: true, json: async () => ({ features: [{ attributes: { name: 'a' }, geometry: { x: 10, y: 20 } }] }) }
+    }))
+    const gj = (await fetchFeatureGeoJSON('https://x/FeatureServer/0')) as { features: Array<{ geometry: { type: string; coordinates: number[] } }> }
+    expect(gj.features[0].geometry.type).toBe('Point')
+    expect(gj.features[0].geometry.coordinates).toEqual([10, 20])
+  })
+
+  it('arcgis JSON ?/??????? LineString/Polygon', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (u: string) => {
+      const url = String(u)
+      if (url.endsWith('?f=json')) return { ok: true, json: async () => ({ layers: [{ id: 0 }] }) }
+      if (url.includes('f=geojson')) return { ok: false }
+      return { ok: true, json: async () => ({ features: [
+        { attributes: {}, geometry: { paths: [[[0, 0], [1, 1]]] } },
+        { attributes: {}, geometry: { rings: [[[0, 0], [1, 0], [1, 1], [0, 0]]] } },
+      ] }) }
+    }))
+    const gj = (await fetchFeatureGeoJSON('https://x/FeatureServer/0')) as { features: Array<{ geometry: { type: string } }> }
+    expect(gj.features[0].geometry.type).toBe('LineString')
+    expect(gj.features[1].geometry.type).toBe('Polygon')
+  })
+
+
 })
 
 describe('WMS provider 构造（原有）', () => {
@@ -245,6 +341,7 @@ describe('WMS provider 构造（原有）', () => {
     const gj = (await fetchFeatureGeoJSON('https://x/FeatureServer/0', 3000)) as { features: { id: number }[] }
     expect(gj.features.length).toBe(3000)
     expect(urls.some((u) => u.includes('resultOffset=2000'))).toBe(true)
+    expect(urls.some((u) => u.includes('outSR=4326'))).toBe(true)
   })
 
   it('服务不支持分页（返回数量不变）时停止', async () => {

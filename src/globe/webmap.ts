@@ -1,4 +1,5 @@
 import * as Cesium from 'cesium'
+import { SAFETY } from './loadSafety'
 
 // 网络请求超时（毫秒）：慢速服务不阻塞交互
 const FETCH_TIMEOUT = 15000
@@ -28,6 +29,19 @@ export interface WebLayer {
   layers?: unknown
   /** WMS 图层名（部分 webmap 直接给 layerName） */
   layerName?: string
+  /** WFS/OGC 图层或集合名称 */
+  name?: string
+  typeName?: string
+  collectionId?: string
+  /** VectorTile 图层引用的默认样式（styleUrl），用于客户端解码/着色 */
+  styleUrl?: string
+  /** 内嵌要素集 / 分组层（group）内部携带子图层或图层定义 */
+  layerDefinition?: Record<string, unknown>
+  /** WMTS 的 tileMatrixSet 等配置 */
+  tileMatrixSet?: string
+  tileMatrixSetID?: string
+  style?: string
+  format?: string
 }
 
 function layerKind(l: WebLayer): string {
@@ -99,14 +113,54 @@ async function providerForTiledMap(url: string): Promise<Cesium.ImageryProvider 
 }
 
 /** 把 Web Map 图层转成 Cesium 影像 Provider（MapServer/ImageServer/OSM/urlTemplate） */
+export function providerForDynamicMapServer(url: string): Cesium.ImageryProvider {
+  const base = url.replace(/\/?$/, '')
+  const exportUrl =
+    base +
+    '/export?bbox={westDegrees},{southDegrees},{eastDegrees},{northDegrees}' +
+    '&bboxSR=4326&imageSR=4326&size={width},{height}&format=png&transparent=true&f=image'
+  const opts: Cesium.UrlTemplateImageryProvider.ConstructorOptions = {
+    url: exportUrl,
+    // export URL 明确使用 bboxSR/imageSR=4326，必须匹配 GeographicTilingScheme。
+    tilingScheme: new Cesium.GeographicTilingScheme(),
+  }
+  return new Cesium.UrlTemplateImageryProvider(opts)
+}
+
+function wmtsLayerName(l: WebLayer): string | undefined {
+  if (l.layerName) return l.layerName
+  if (Array.isArray(l.layers) && l.layers.length > 0) {
+    return (l.layers[0] as { name?: string }).name
+  }
+  return undefined
+}
+
+/** WMTS：用直接配置构造；缺图层名返回 null */
+export function providerForWmts(layer: WebLayer): Cesium.ImageryProvider | null {
+  const url = layer.url || ''
+  const name = wmtsLayerName(layer)
+  if (!name) return null
+  return new Cesium.WebMapTileServiceImageryProvider({
+    url,
+    layer: name,
+    style: layer.style || '',
+    format: layer.format || 'image/png',
+    tileMatrixSetID: layer.tileMatrixSetID || layer.tileMatrixSet || 'default028mm',
+  })
+}
+
 export async function providerForWebLayer(layer: WebLayer): Promise<Cesium.ImageryProvider | null> {
   const t = layerKind(layer)
   const url = layer.url || ''
   // 按 URL 判断 MapServer/ImageServer（兼容 layerType 为 ArcGISTiledMapServiceLayer 等）
   if (url && /\/MapServer\/?$|\/ImageServer\/?$/i.test(url)) {
+    const crs = await detectMapService(url)
+    if (crs && !crs.tiled) return providerForDynamicMapServer(url)
     return providerForTiledMap(url)
   }
   if (/MapServer|ImageServer/i.test(t) && url) {
+    const crs = await detectMapService(url)
+    if (crs && !crs.tiled) return providerForDynamicMapServer(url)
     return providerForTiledMap(url)
   }
   // WMS：用 WebMapServiceImageryProvider，需图层名（webmap 里可能是 layerName 或 layers 数组）
@@ -117,7 +171,15 @@ export async function providerForWebLayer(layer: WebLayer): Promise<Cesium.Image
     }
     if (!name && typeof layer.layers === 'string') name = layer.layers
     if (!name) return null
-    return new Cesium.WebMapServiceImageryProvider({ url, layers: name })
+    return new Cesium.WebMapServiceImageryProvider({ url, layers: name, maximumLevel: SAFETY.IMAGERY_MAX_LEVEL })
+  }
+  // WMTS：OGC 瓦片，需图层名
+  if (/WMTSLayer|WMTS/i.test(t) && url) {
+    return providerForWmts(layer)
+  }
+  // WebTiledLayer：XYZ 模板
+  if (/WebTiledLayer/i.test(t) && layer.urlTemplate) {
+    return new Cesium.UrlTemplateImageryProvider({ url: layer.urlTemplate })
   }
   if (t === 'OpenStreetMap') {
     return new Cesium.UrlTemplateImageryProvider({
@@ -128,6 +190,14 @@ export async function providerForWebLayer(layer: WebLayer): Promise<Cesium.Image
     return new Cesium.UrlTemplateImageryProvider({ url: layer.urlTemplate })
   }
   return null
+}
+
+export interface FeatureStyle {
+  markerColor?: Cesium.Color
+  markerSize?: number
+  stroke?: Cesium.Color
+  strokeWidth?: number
+  fill?: Cesium.Color
 }
 
 export function isFeatureLayer(layer: WebLayer): boolean {
@@ -141,22 +211,62 @@ export function isGeoJsonLayer(layer: WebLayer): boolean {
 export function isKmlLayer(layer: WebLayer): boolean {
   return /KMLLayer|KML/i.test(layerKind(layer))
 }
+export function isVectorTileLayer(layer: WebLayer): boolean {
+  return /VectorTileLayer/i.test(layerKind(layer))
+}
+
+export function isSceneLayer(layer: WebLayer): boolean {
+  return /SceneLayer|ArcGISSceneServiceLayer|ArcGISSceneLayer|I3S|IntegratedMesh|PointCloud|3DObject|BuildingScene/i.test(layerKind(layer))
+}
+
+export function is3dTilesLayer(layer: WebLayer): boolean {
+  return /3DTiles|Cesium3DTiles|Tileset/i.test(layerKind(layer)) || /tileset\.json/i.test(layer.url ?? '')
+}
+
+export function isWfsLayer(layer: WebLayer): boolean {
+  return /WFS|OGCFeatureServer|OGCFeatureService/i.test(layerKind(layer))
+}
+
+export function isCsvLayer(layer: WebLayer): boolean {
+  return /CSVLayer/i.test(layerKind(layer))
+}
+
+
 
 /** 要素服务 → GeoJSON（按 resultOffset 分页拉取，上限 limit 防止超大服务拖垮页面） */
-export async function fetchFeatureGeoJSON(url: string, limit = 5000): Promise<unknown> {
-  const base = url.replace(/\/?$/, '')
-  // 探测服务单页上限（maxRecordCount）
+// ArcGIS JSON (f=json) query -> GeoJSON FeatureCollection (Point/Line/Polygon).
+function arcgisQueryToFeatureCollection(j: { features?: Array<{ attributes?: Record<string, unknown>; geometry?: unknown }> }): { type: 'FeatureCollection'; features: unknown[] } {
+  const features: unknown[] = []
+  for (const f of j.features ?? []) {
+    const g = f.geometry as { x?: number; y?: number; paths?: unknown[]; rings?: unknown[] } | null
+    let geometry: unknown = null
+    if (g && typeof g.x === 'number' && typeof g.y === 'number') {
+      geometry = { type: 'Point', coordinates: [g.x, g.y] }
+    } else if (g && Array.isArray(g.paths)) {
+      geometry = { type: g.paths.length === 1 ? 'LineString' : 'MultiLineString', coordinates: g.paths.length === 1 ? (g.paths[0] as unknown[]) : g.paths }
+    } else if (g && Array.isArray(g.rings)) {
+      geometry = { type: 'Polygon', coordinates: g.rings }
+    }
+    features.push({ type: 'Feature', properties: f.attributes ?? {}, geometry })
+  }
+  return { type: 'FeatureCollection', features }
+}
+
+/** FeatureServer -> GeoJSON (paged, capped so huge services don't drag the page) */
+export async function fetchFeatureGeoJSON(url: string, limit: number = SAFETY.MAX_FEATURES): Promise<unknown> {
+  const base = url.replace(/\/+$/, '')
   let pageSize = 2000
+  let layerId = 0
   try {
     const meta = await fetch(`${base}?f=json`, { signal: withFetchTimeout() })
     if (meta.ok) {
-      const m = (await meta.json()) as { maxRecordCount?: number }
-      if (typeof m.maxRecordCount === 'number' && m.maxRecordCount > 0 && m.maxRecordCount <= 4000) {
-        pageSize = m.maxRecordCount
-      }
+      const m = (await meta.json()) as { maxRecordCount?: number; layers?: Array<{ id?: number }> }
+      if (typeof m.maxRecordCount === 'number' && m.maxRecordCount > 0 && m.maxRecordCount <= 4000) pageSize = m.maxRecordCount
+      const firstLayer = m.layers?.find((l) => typeof l.id === 'number')
+      if (firstLayer) layerId = firstLayer.id as number
     }
   } catch {
-    // 探测失败则用默认页大小
+    // default
   }
   const features: unknown[] = []
   let offset = 0
@@ -164,20 +274,25 @@ export async function fetchFeatureGeoJSON(url: string, limit = 5000): Promise<un
   let lastKey: string | null = null
   while (offset < limit && guard < 50) {
     guard++
-    const r = await fetch(
-      `${base}/query?where=1%3D1&f=geojson&outFields=*&resultOffset=${offset}&resultRecordCount=${pageSize}`,
-      { signal: withFetchTimeout() }
-    )
-    if (!r.ok) throw new Error('要素服务查询失败')
-    const gj = (await r.json()) as { features?: unknown[] }
-    const feats = gj.features ?? []
+    const geojsonUrl = `${base}/${layerId}/query?where=1%3D1&f=geojson&outFields=1&outSR=4326&resultOffset=${offset}&resultRecordCount=${pageSize}`
+    const r = await fetch(geojsonUrl, { signal: withFetchTimeout() })
+    let feats: unknown[]
+    if (r.ok) {
+      const gj = (await r.json()) as { features?: unknown[] }
+      feats = gj.features ?? []
+    } else {
+      const jsonUrl = `${base}/${layerId}/query?where=1%3D1&f=json&outFields=*&outSR=4326&resultOffset=${offset}&resultRecordCount=${pageSize}`
+      const rj = await fetch(jsonUrl, { signal: withFetchTimeout() })
+      if (!rj.ok) throw new Error('要素服务查询失败')
+      const jj = (await rj.json()) as { features?: Array<{ attributes?: Record<string, unknown>; geometry?: unknown }>; error?: { message?: string } }
+      if (jj.error) throw new Error('要素服务查询失败：' + (jj.error.message ?? ''))
+      feats = arcgisQueryToFeatureCollection(jj).features
+    }
     if (feats.length === 0) break
-    // 拉完（不足一页）则停止
     if (feats.length < pageSize) {
       features.push(...feats)
       break
     }
-    // 重复页面检测：服务忽略 resultOffset 时每页返回相同数据，避免无限拉取
     const key = JSON.stringify(feats[0])
     if (key === lastKey) break
     lastKey = key
@@ -188,15 +303,19 @@ export async function fetchFeatureGeoJSON(url: string, limit = 5000): Promise<un
   return { type: 'FeatureCollection', features }
 }
 
-export interface FeatureStyle {
-  markerColor?: Cesium.Color
-  markerSize?: number
-  stroke?: Cesium.Color
-  strokeWidth?: number
-  fill?: Cesium.Color
+export async function fetchFeatureRenderer(url: string): Promise<Record<string, unknown> | null> {
+  const base = url.replace(/\/?$/, '')
+  try {
+    const r = await fetch(base + '?f=json', { signal: withFetchTimeout() })
+    if (!r.ok) return null
+    const j = (await r.json()) as { drawingInfo?: { renderer?: Record<string, unknown> } }
+    const renderer = j.drawingInfo?.renderer
+    return renderer && typeof renderer === 'object' ? renderer : null
+  } catch {
+    return null
+  }
 }
 
-/** 从要素服务 metadata 读取 SimpleRenderer 符号，映射为 Cesium GeoJSON 样式（其余渲染器返回 null） */
 export async function fetchFeatureStyle(url: string): Promise<FeatureStyle | null> {
   const base = url.replace(/\/?$/, '')
   try {
@@ -237,5 +356,3 @@ export async function fetchFeatureStyle(url: string): Promise<FeatureStyle | nul
     return null
   }
 }
-
-
