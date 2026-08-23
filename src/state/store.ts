@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import type { UserHome } from '../globe/geo'
 import { persist } from 'zustand/middleware'
 
 export type Theme = 'dark' | 'light'
@@ -40,6 +41,9 @@ interface AppState {
   clearLayerError: (id: string) => void
   effects: Effects
   setEffect: <K extends keyof Effects>(key: K, value: Effects[K]) => void
+  /** 用户大概位置（内存态；持久化由 geo.ts 的 localStorage 负责） */
+  userHome: UserHome | null
+  setUserHome: (h: UserHome | null) => void
 }
 
 export const useAppStore = create<AppState>()(
@@ -76,6 +80,8 @@ export const useAppStore = create<AppState>()(
     autoRotate: false,
   },
     setEffect: (key, value) => set((s) => ({ effects: { ...s.effects, [key]: value } })),
+    userHome: null,
+    setUserHome: (h) => set({ userHome: h }),
     }),
     {
       name: 'earth-viewer',
