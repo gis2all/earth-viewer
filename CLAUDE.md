@@ -7,7 +7,7 @@
 
 ## 0. 30 秒速览
 
-- **项目**：画廊式 3D 地球图层应用。Cesium 渲染地球 + 接入 ArcGIS Online 公开图层（搜索 → 评估 → 添加 → 叠加），线上 https://earth.gis2all.top
+- **项目**：画廊式 3D 地球图层应用。Cesium 渲染地球 + 接入 ArcGIS Online 公开图层（搜索 → 添加（点卡片时校验）→ 叠加），线上 https://earth.gis2all.top
 - **代码**：`D:\Code\earth-viz-hub`；git remote = `github.com/gis2all/earth-viewer`
 - **技术栈**：React 18 · CesiumJS 1.144（★精确锁定）· Vite 5 · TypeScript 5.6 · zustand；Node ≥ 22；Vitest + Playwright；Docker；Cloudflare Pages
 
@@ -33,7 +33,7 @@
 
 ## 1. 项目定位
 
-**Earth Viewer**：画廊式 3D 地球图层应用（曾用名 EarthViz Hub），目标是可以上线、不是 demo。左侧「图层」面板搜索 ArcGIS Online Web Map 并评估可渲染性，点卡片叠加到 Cesium 球上；右侧「效果」面板调节环境/地形/视图；顶栏回正/复位/主题切换。深浅色双主题，全直角 UI。
+**Earth Viewer**：画廊式 3D 地球图层应用（曾用名 EarthViz Hub），目标是可以上线、不是 demo。左侧「图层」面板搜索 ArcGIS Online Web Map/Web Scene ，点卡片时校验并按类型叠加到 Cesium 球上；右侧「效果」面板调节环境/地形/视图；顶栏回正/复位/主题切换。深浅色双主题，全直角 UI。
 
 ---
 
@@ -46,6 +46,7 @@
 | Vite | 5.4.x（`vite-plugin-cesium`，生产注入经典 Cesium.js） |
 | TypeScript | 5.6.x（strict） |
 | zustand | 4.5.x（全局状态 + persist localStorage `earth-viewer`） |
+| proj4 / @mapbox/vector-tile / pbf | ArcGIS 数据转换：坐标重投影 / MVT 矢量瓦片解码 |
 | Vitest / Testing Library | 单测 + 覆盖率（v8 provider） |
 | Playwright | E2E |
 | Node.js | **≥ 22**（CI/Docker/本地统一；Cesium 要求） |
@@ -104,6 +105,7 @@ earth-viz-hub/
   wrangler.toml         # Pages 配置：pages_build_output_dir = "dist"（★不能含 account_id）
   scripts/badge.mjs     # 从 coverage/audit/test/e2e 数据生成 4 个徽章 JSON
   functions/sharing/[[path]].js  # Pages Functions：/sharing/* 代理（白名单+GET-only+Origin+限流）
+  functions/api/geo.js       # Pages Function：/api/geo → CF-IPCountry 国家质心经纬度（用户大概定位）
   server/
     proxy.mjs           # Node 生产服务（静态 dist + /sharing 代理）
     nginx.conf          # Nginx 示例
@@ -120,18 +122,22 @@ earth-viz-hub/
     main.tsx / App.tsx
     app/
       AppShell.tsx      # 顶栏（品牌/回正/复位/主题）+ favicon 跟随主题 + 面板布局
-      LayerPanel.tsx    # 画廊：搜索+预取+assessWebmap 过滤+numViews 排序+按批流式上屏+无限滚动
+      LayerPanel.tsx    # 画廊：支持类型白名单并行搜索+轻预筛+排序+无限滚动，点卡片时校验
       EffectsPanel.tsx  # 效果面板（环境/地形/视图开关与滑杆）
     globe/
-      GlobeViewer.tsx   # Cesium 核心：Viewer 创建、相机、效果应用、图层增量管理（★__E2E__ 模式）
-      cameraApi.ts      # registerViewer / resetView / orientView
+      GlobeViewer.tsx   # Cesium 核心：Viewer 创建、相机、效果、图层增量、相机优先/userHome 回退（★__E2E__ 模式）
+      cameraApi.ts      # registerViewer/unregisterViewer/resetView/orientView/flyToHome（用户定位+启动高度）
+      geo.ts            # 用户大概定位：/api/geo + localStorage 缓存 + 硬编码兜底
       webmap.ts         # webmap 解析、provider 构建、detectCrs/detectMapService、Feature 分页
       assess.ts         # ★统一渲染能力评估器（classifyLayer/assessWebmap/renderableLayersFromWebmap）
-    state/store.ts      # zustand：theme/collapsed/added/effects/layerErrors
+      itemTypes.ts      # 可搜索 item type 白名单（SEARCH_ITEM_TYPES / isWebMapContainer）
+      serviceItem.ts    # 单图层服务 item（Map/Feature/Scene…）→ 包装成可渲染 webmap
+      csv.ts / vector.ts / vectorTile.ts / ogc.ts / scene.ts / loadSafety.ts  # 各数据源→GeoJSON/Provider + 防卡死
+    state/store.ts      # zustand：theme/collapsed/added/effects/layerErrors/userHome
     styles/theme.css    # 全部样式（直角、深浅主题变量）
 ```
 
-**数据流**：`LayerPanel` 搜索（`sortField=numViews`）→ 分批预取 webmap → `assessWebmap()` 过滤（每批立即上屏）→ 点卡片 `addLayer` → `GlobeViewer` 监听 `added` → `renderableLayersFromWebmap()` 构建 provider/DataSource 叠加。
+**数据流**：`LayerPanel` 按支持类型白名单并行搜索（`sortField=numViews`）→ 轻预筛直接上屏 → 点卡片 `addLayer` → `GlobeViewer` 监听 `added` → `renderableLayersFromWebmap()` 构建 provider/DataSource 叠加。
 
 ---
 
@@ -141,12 +147,17 @@ earth-viz-hub/
 |---|---|---|
 | `src/globe/assess.ts` | ★"能否渲染"唯一事实源：能力表、角色分类、整体评估 | `classifyLayer`、`assessWebmap`、`renderableLayersFromWebmap`；被 LayerPanel 与 GlobeViewer 共用 |
 | `src/globe/webmap.ts` | webmap JSON 解析、服务探测、provider/GeoJSON 构建 | `fetchWebmap`、`detectMapService`（CRS_CACHE）、`providerForWebLayer`、`fetchFeatureGeoJSON/Style` |
-| `src/globe/GlobeViewer.tsx` | Cesium Viewer 创建/销毁、相机控制、效果应用、图层生命周期 | 依赖 store、cameraApi、webmap、assess；★`window.__E2E__` 时跳过 Cesium |
-| `src/globe/cameraApi.ts` | 顶部按钮：复位/回正（flyTo） | `registerViewer/unregisterViewer/resetView/orientView` |
+| `src/globe/GlobeViewer.tsx` | Cesium Viewer 创建/销毁、相机控制、效果、图层生命周期；相机优先/userHome 回退；★`window.__E2E__` 时跳过 Cesium | 依赖 store、cameraApi、webmap、assess、scene/vector/vectorTile/ogc/csv/loadSafety |
+| `src/globe/cameraApi.ts` | 顶部按钮复位/回正 + 用户定位飞行 | `registerViewer/unregisterViewer/resetView/orientView/flyToHome/setInitialHeightForTest` |
 | `src/app/LayerPanel.tsx` | 画廊：搜索/预取/过滤/流式上屏/无限滚动/添加移除/错误 toast | 依赖 store、webmap、assess |
 | `src/app/AppShell.tsx` | 布局、品牌图标、favicon 主题切换、回正/复位按钮 | 依赖 store、cameraApi、GlobeViewer/LayerPanel/EffectsPanel |
-| `src/state/store.ts` | 全局状态 + persist | theme/added/effects/layerErrors + actions |
+| `src/state/store.ts` | 全局状态 + persist | theme/added/effects/layerErrors/userHome + actions |
 | `functions/sharing/[[path]].js` | Pages 生产代理（/sharing → www.arcgis.com） | 白名单 search/data；Origin 检查读 `ALLOWED_ORIGIN` |
+| `functions/api/geo.js` | Pages Function：/api/geo 用户国家质心经纬度 | `onRequest` 读 `CF-IPCountry` |
+| `src/globe/geo.ts` | 用户大概定位：请求 /api/geo、缓存、硬编码兜底 | `fetchUserHome`/`getUserHome`/`resetUserHomeCache` |
+| `src/globe/itemTypes.ts` | 可搜索 item type 白名单与容器判定 | `SEARCH_ITEM_TYPES`/`isWebMapContainer` |
+| `src/globe/serviceItem.ts` | 单图层服务 item 包装为可渲染 webmap | `resolveServiceItem` |
+| `src/globe/csv.ts / vector.ts / vectorTile.ts / ogc.ts / scene.ts / loadSafety.ts` | 各数据源→GeoJSON/Provider/防卡死 | `fetch*GeoJSON`/`loadI3S`/`load3DTiles`/`fetchVectorTileTemplates`/`riskOfLayer` |
 | `scripts/badge.mjs` | 从数据文件生成徽章 JSON | 读 coverage-summary / audit / test-results / e2e-results |
 
 ---
@@ -161,27 +172,31 @@ earth-viz-hub/
 ### 6.2 图层管理（★统一评估器 assess.ts）
 - `added: AddedLayer[]`，`kind: 'webmap' | 'fallback'`，webmap 存完整 JSON。
 - `assessWebmap(wm)` 输出 `{ renderable, fidelity: 'full'|'partial'|'none', reason?, layers }`；**过滤与渲染共用**（LayerPanel 用 renderable，GlobeViewer 用 renderableLayersFromWebmap）。
-- 能力表 `classifyLayer`：`full`（MapServer/ImageServer 瓦片、带名 WMS、KML）/ `partial`（FeatureLayer/GeoJSON 降级、WMS 缺名）/ `none`（VectorTile、3D Scene、其他，带原因）。
-- tiled/dynamic 区分：`detectMapService` 读 `tileInfo`，动态 MapServer 无 `/tile/` 模板 → 降级不可渲染。
+- 能力表 `classifyLayer`：`full`（MapServer/ImageServer 瓦片、动态服务 export、带名 WMS/WMTS、KML）/ `partial`（FeatureLayer/GeoJSON/CSV/WFS/OGC 降级、VectorTile MVT、I3S、3D Tiles、WMS 缺名）/ `none`（无地址或明确不支持，带原因）。
+- tiled/dynamic 区分：`detectMapService` 读 `tileInfo`；动态 MapServer/ImageServer 无 `/tile/` 模板 → 用 `/export?bbox={westDegrees}...` 出图（支持）。
 - 角色：`basemap`/`overlay`/`business`；★overlay 用 URL 黑名单（Hillshade 等）且**不渲染**（否则灰度盖住彩色底图=全白）。
 - 投影自动探测 `detectCrs`：4326 → Geographic；其余/失败 → Web Mercator；`CRS_CACHE` 缓存。
 - FeatureLayer：SimpleRenderer 符号映射；`maxRecordCount`+`resultOffset` 分页（上限 5000、重复页检测）。
 - 加载失败写入 `layerErrors`（卡片红标）；状态 persist。
+- 防卡死（loadSafety.ts）：风险分级 + 阈值 + 降级（全球矢量底图影像化、矢量 maxZoom 12、Feature/WFS/OGC/CSV 3000、GeoJSON/KML ≤8MB、WMS maximumLevel 16、Scene/3D SSE=16）；点聚合、串行渲染队列、字段裁剪（outFields=1）。
+- 健壮性：Feature 服务探测图层 id（非固定 /0） + f=geojson 不支持时回退 f=json 转 GeoJSON；WMTS 解析不到配置不抛错（返回服务根降级）。
 
 ### 6.3 画廊（LayerPanel）
-- 搜索 `type:"Web Map" AND access:public` + ★`sortField=numViews&sortOrder=desc`（否则首页全是 VectorTile 底图被过滤 → 空画廊）。
-- 预取每页 24 条、每批 6 个并发；★**按批流式上屏**（`onBatch`），不能等凑满 24 才渲染（否则 90s+ 空白）。
-- 自动翻页补齐（12 页上限），耗尽标 done；`assessCache` 跨搜索复用。
-- 防抖 300ms + AbortController + requestId 序列号（旧请求不覆盖新结果）。
-- ★无限滚动追加用**本批 partial**（不能用累积 pageAcc，否则 items 重复膨胀——已修）。
-- 取消/清除按钮：`loading && kw.length > 0` 才显示（无输入时不出现）。
-
+- 按支持 item type 白名单并行搜索（13 类），各取一页后按 numViews 合并去重；sortField=numViews&sortOrder=desc。
+- 轻预筛：搜索阶段不逐项拉 data、不做能力预评估；点卡片时才解析/渲染，不支持才 toast。
+- 每轮只拉未到底类型一页，滚动到底再翻下一页。
+- 服务 item 经 resolveServiceItem 包装为单图层；GeoJson/CSV 用 /items/<id>/data。
+- 防抖 300ms + AbortController + requestId 序列号。
+- 取消/清除按钮：loading && kw.length > 0 才显示。
 ### 6.4 相机（★别回退）
 - 右键拖拽=倾斜；滚轮=平滑缩放（目标高度缓动）；双击=zoom in 一半高度。
 - 限制：`MIN_ZOOM=20m`、`MAX_ZOOM=25,000km`；pitch `[-89.9°, 0°]`。
 - ★所有飞行统一 `flyTo`；任何鼠标按下 `cancelFlight()`（否则飞行中拖不动球）。
 - 瓦片清晰度：缩放中 SSE=4 → 稳定后=2（迟滞）。
 - ★自动环绕是**东西方向**：`setView` 经度递增 `+0.0012`，保持纬度/高度/朝向——不是原地转 heading。
+
+- ★相机/用户定位：Web Map/Scene 带 `viewpoint.camera` → 飞其相机（3857 反投影 + heading/tilt）；无相机 → `flyToHome()`（`userHome` + `initialHeight`）。首次进入加载完成后自动居中到 `userHome`。
+- `userHome`：用户大概经纬度，来自 `/api/geo`（CF-IPCountry → 国家质心），失败回退 `(35,104)`；由 `src/globe/geo.ts` 提供并缓存。★本地 dev 无 Cloudflare，/api/geo 404 → 走兜底。
 
 ### 6.5 效果面板
 - 环境：大气散射/星空/日月/雾效/昼夜光照；地形：地形透明（开关+透明度滑杆，★滑杆随开关显隐）、地形夸张 1–3X；视图：自动环绕。
@@ -198,9 +213,9 @@ earth-viz-hub/
 
 ## 7. 测试与质量门禁
 
-- **单测**：Vitest（jsdom），91 个用例（store/cameraApi/AppShell/assess/webmap/LayerPanel/EffectsPanel/GlobeViewer）。`npm run test:coverage`
-- **覆盖率门槛**（vitest.config.ts）：★statements ≥90 / lines ≥90 / functions ≥85 / branches ≥70（当前 ~93% / 98% / 95% / 81%）；include **全 src**（含 GlobeViewer），exclude 入口壳与测试文件——真实口径，不玩数字。
-- **E2E**：Playwright 12 项（冒烟 mock / UI 交互 mock / 真实 ArcGIS 集成 request）。
+- **单测**：Vitest（jsdom），188 个用例（含 store/cameraApi/AppShell/assess/webmap/LayerPanel/EffectsPanel/GlobeViewer/geo/itemTypes/serviceItem/VectorTile/OGC/CSV/vector/loadSafety）。`npm run test:coverage`
+- **覆盖率门槛**（vitest.config.ts）：★statements ≥90 / lines ≥90 / functions ≥85 / branches ≥70（当前 90.39% / 95.01% / 94.07% / 80.03%）；include **全 src**（含 GlobeViewer），exclude 入口壳与测试文件——真实口径，不玩数字。
+- **E2E**：Playwright 28 项（冒烟 mock / WebScene UI / UI 交互 mock / 真实 ArcGIS 集成 request）。
 - ★**E2E 轻量模式**：`e2e/app.spec.ts`、`e2e/ui.spec.ts` 注入 `window.__E2E__`，GlobeViewer 跳过 Cesium 创建（CI 无头软件渲染极慢会拖垮交互测试）；「球真实渲染+图层上球」由线上/容器验证覆盖（headless 测不准渲染）。
 - **徽章**：6 个（CI / License / Coverage / Deps / Tests / E2E）；`scripts/badge.mjs` 从 coverage-summary/audit/test-results/e2e-results 生成 JSON → GitHub Actions 发布到 GitHub Pages → shields endpoint 渲染，**每次 CI 实时生成**。
 - **CI**（.github/workflows/ci.yml）：audit（--omit=dev）→ lint → test:coverage → build → e2e → badge → upload-pages-artifact（main 分支 deploy 到 Pages）。
@@ -209,14 +224,17 @@ earth-viz-hub/
 
 ## 8. 已知限制（Cesium 能力边界）
 
-- 不支持 ArcGIS VectorTileLayer（MVT）与 3D Scene 图层（评估器过滤并带原因）。
-- 动态 MapServer（无 tileInfo）不支持 `/tile/` 渲染。
-- WMS/KML 支持；CSV 等未声明，按"不支持"过滤（在 `classifyLayer` 加类型+provider 即可）。
+- ArcGIS VectorTileLayer 使用 Cesium `MVTDataProvider` 动态转 3D Tiles；WebScene 纯 `styleUrl` 会解析 style JSON 的 MVT sources。
+- ArcGIS SceneServer/I3S 使用 Cesium `I3SDataProvider`；3D Tiles 使用 `Cesium3DTileset`。
+- 动态 MapServer/ImageServer 使用 `/export` 的 4326 影像兜底；不依赖 `/tile/`。
+- WMS/WMTS/KML/KML Collection 支持；Feature/GeoJSON/CSV/WFS/OGC API Features 转 GeoJSON 降级渲染。
 - FeatureLayer/GeoJSON 降级为 GeoJSON：SimpleRenderer 映射、最多 5000 条、属性/符号分级部分丢失。
 - 瓦片 metadata 探测失败静默回退 3857（可能错位但不崩）。
 - dev 链 vite→esbuild 已知漏洞（升 vite 8 breaking，暂缓）。
 - ArcGIS 匿名访问有速率限制（429），画廊预取分批（每批 6）控制并发。
 - `functions/sharing/` 白名单只放行 search / webmap data（`/sharing/rest/info` 等返回 403 是预期）。
+- 本地 dev 无 Cloudflare，`/api/geo` 会 404 → `userHome` 回退 `(35,104)`；国家质心为"大概"定位，城市级需第三方 IP 库。
+- Web Scene 的 `viewingMode:'local'`（局部坐标系）相机暂未覆盖，仅处理 global。
 
 ---
 
@@ -238,6 +256,10 @@ earth-viz-hub/
 | ArcGIS 公开服务匿名访问 | 搜索/瓦片无需账号不耗 credits；风险是 429，分批并发 |
 | 品牌图标黑白斜切地球 | 硬线条 ArcGIS 风、简洁；深浅主题反转，favicon 同步 |
 | Cloudflare Pages 而非 Workers | 本项目是静态站点+Functions 代理；Workers 项目类型会导致 wrangler pages deploy 报"项目不存在" |
+| 相机优先 / 用户位置回退 | Web Map/Scene 有 `viewpoint` 就用作者视角；无相机数据回退到 userHome，避免"加了却看不到"或飞到任意 extent 乱跳 |
+| 用户定位用 /api/geo（国家质心）+ 硬编码兜底 | 自托管、不弹浏览器授权、不把用户 IP 给第三方；本地 dev 无 Cloudflare 走兜底 |
+| 多数据类型统一支持（ArcGIS→Cesium） | 统一评估器 + 分类型 provider/DataSource，避免"发现一个问题打一个补丁" |
+| 防卡死 loadSafety | 超大服务/全球矢量会拖垮页面，风险分级+阈值降级 |
 
 ---
 
@@ -254,6 +276,7 @@ earth-viz-hub/
 - **构建配置**：build command `npm run build`，输出 `dist`，生产分支 `main`；**Builds 设置里的 build token 若失效**（"belongs to a user who left"）需在 dashboard 换新。
 - **安全头/CSP/缓存**：`public/_headers`；SPA 回退 `public/_redirects`。★CSP 只对 Pages 生效（本地 dev / Docker 无内联 CSP）。
 - 域名绑定：`earth.gis2all.top` CNAME → `earth-viewer-9rw.pages.dev`（已在 Cloudflare 完成）。
+- `functions/api/geo.js` 是 Pages Function，随 `functions/` 一起部署；`/api/geo` 读 `CF-IPCountry` 返回用户国家质心经纬度（无需额外环境变量）。
 
 ---
 
@@ -335,6 +358,7 @@ npx wrangler pages deploy --project-name=earth-viewer
 | **Cloudflare：认证 10000** | token 无 Cloudflare Pages Edit 权限 | token 必须含 Pages > Edit（Workers 模板不够） |
 | **Cloudflare：build token 失效** | 绑定已离开用户的 token | dashboard Builds → API token 换新 |
 | **Cloudflare：wrangler.toml 报错** | 含 account_id（Pages 不支持） | 去掉 account_id，用 CLOUDFLARE_ACCOUNT_ID 环境变量 |
+| 连续快速搜索把旧请求的游标写进新搜索 | 旧请求 Abort 不及时仍写入 nextStartsRef/pendingRef | 游标/缓冲写入前判断 `requestId === requestIdRef.current`（LayerPanel loadMore） |
 
 ---
 

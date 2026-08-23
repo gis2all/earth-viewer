@@ -20,6 +20,7 @@
 | TypeScript 5.6 | 类型安全 |
 | Vite 5 | 开发与构建 |
 | zustand | 全局状态与持久化 |
+| proj4 / @mapbox/vector-tile / pbf | ArcGIS 数据转换 |
 | Vitest / Testing Library | 单元测试 |
 | Playwright | E2E 浏览器回归 |
 | Node.js（内置 http） | 生产静态托管 + `/sharing` ArcGIS 代理 |
@@ -81,11 +82,11 @@ GlobeViewer（Cesium）
 
 ```text
 src/app/              UI：顶栏、左右面板（AppShell / LayerPanel / EffectsPanel）
-src/globe/            Cesium 核心：GlobeViewer、cameraApi、webmap 解析、assess 评估器
-src/state/            zustand 全局状态（theme / collapsed / added / effects）
+src/globe/            Cesium 核心：GlobeViewer、cameraApi、geo(用户定位)、webmap、assess 与各数据源适配
+src/state/            zustand 全局状态（theme / collapsed / added / effects / userHome）
 src/styles/           全部样式（直角、深浅主题 CSS 变量）
 e2e/                  Playwright 冒烟、UI 与真实 ArcGIS 集成测试
-functions/sharing/    Cloudflare Pages Functions：/sharing/* 生产代理（Pages 配置后续再做）
+functions/            Cloudflare Pages Functions：/sharing/* 代理 + /api/geo 用户定位
 server/               通用 Node 生产服务（proxy.mjs）与 Nginx 部署示例
 .github/workflows/    CI 门禁
 ```
