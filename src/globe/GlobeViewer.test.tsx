@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, act, cleanup } from '@testing-library/react'
-import { GlobeViewer } from './GlobeViewer'
+import { render, act, cleanup, screen } from '@testing-library/react'
+import { GlobeViewer, viewpointCameraFromWebmap } from './GlobeViewer'
 import { useAppStore } from '../state/store'
 
 // ---- Cesium mock（fake Viewer，可断言创建/底图/图层/相机/效果） ----
@@ -56,6 +56,7 @@ const cesiumMock = vi.hoisted(() => {
       moon: { show: true },
       fog: { enabled: false },
       verticalExaggeration: 1,
+      primitives: { add: vi.fn(), remove: vi.fn() },
     }
     const camera = {
       positionCartographic: { height: 1000, longitude: 1, latitude: 0.5 },
@@ -80,6 +81,7 @@ const cesiumMock = vi.hoisted(() => {
       terrainProvider: undefined,
       isDestroyed: vi.fn(() => false),
       destroy: vi.fn(),
+      flyTo: vi.fn(),
     }
     viewers.push(v)
     return v
@@ -128,8 +130,39 @@ vi.mock('cesium', () => {
     ArcGISTiledElevationTerrainProvider: {
       fromUrl: vi.fn(() => Promise.resolve({ terrain: 't' })),
     },
+    I3SDataProvider: {
+      fromUrl: vi.fn(() => Promise.resolve({ prim: 'i3s' })),
+    },
+    Cesium3DTileset: {
+      fromUrl: vi.fn(() => Promise.resolve({ tileset: '3d' })),
+    },
+    MVTDataProvider: {
+      fromUrl: vi.fn(() => Promise.resolve({ prim: 'mvt' })),
+    },
   }
 })
+
+// 矢量瓦片解码：mock，避免真实网络
+vi.mock('./vectorTile', () => ({
+  fetchVectorTileGeoJSON: vi.fn(() => Promise.resolve({ type: 'FeatureCollection', features: [] })),
+  vectorTileUrl: vi.fn((u: string, z?: number, y?: number, x?: number) =>
+    u + '/tile/' + (z === undefined ? '{z}/{y}/{x}' : z + '/' + y + '/' + x) + '.pbf'),
+  fetchVectorTileTemplates: vi.fn(() => Promise.resolve(['https://x/VectorTileServer/tile/{z}/{y}/{x}.pbf'])),
+  toCesiumMvtTemplate: vi.fn((u: string) => u.replace('{z}/{y}/{x}', '{z}/{x}/{y}')),
+}))
+
+vi.mock('./ogc', () => ({
+  fetchOgcFeatureGeoJSON: vi.fn(() => Promise.resolve({ type: 'FeatureCollection', features: [] })),
+}))
+
+vi.mock('./csv', () => ({
+  fetchCsvGeoJSON: vi.fn(() => Promise.resolve({ type: 'FeatureCollection', features: [] })),
+}))
+
+vi.mock('./geo', () => ({
+  fetchUserHome: vi.fn(() => Promise.resolve({ lat: 31, lon: 121 })),
+  getUserHome: vi.fn(() => null),
+}))
 
 const freshEffects = {
   atmosphere: false,
@@ -166,6 +199,7 @@ describe('GlobeViewer', () => {
       collapsed: false,
       collapsedRight: false,
       layerErrors: {},
+      userHome: null,
     })
     vi.restoreAllMocks()
   })
@@ -185,8 +219,8 @@ describe('GlobeViewer', () => {
     // 相机事件
     expect(v.scene.canvas.addEventListener).toHaveBeenCalledWith('wheel', expect.any(Function), { passive: false })
     expect(v.scene.postUpdate.addEventListener).toHaveBeenCalled()
-    expect(v.scene.globe.tileCacheSize).toBe(300)
-    expect(v.scene.globe.preloadSiblings).toBe(true)
+    expect(v.scene.globe.tileCacheSize).toBe(100)
+    expect(v.scene.globe.preloadSiblings).toBe(false)
     expect(v.scene.globe.baseColor).toEqual({ css: '#0d1526' })
     expect(cesiumMock.handlerInstances.length).toBe(1)
     // 地形异步设置
@@ -377,6 +411,7 @@ describe('GlobeViewer 补强', () => {
       collapsed: false,
       collapsedRight: false,
       layerErrors: {},
+      userHome: null,
     })
     vi.restoreAllMocks()
   })
@@ -384,6 +419,83 @@ describe('GlobeViewer 补强', () => {
   afterEach(() => {
     cleanup()
     vi.restoreAllMocks()
+  })
+
+  it('无相机 FeatureLayer 添加到球上，并回退 flyToHome（初始位置）', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, json: async () => ({ features: [] }) }))
+    )
+    render(<GlobeViewer />)
+    await flush()
+    const v = viewer()
+    act(() => {
+      useAppStore.getState().addLayer({
+        id: 'feat-fly',
+        title: 'Quakes',
+        kind: 'webmap',
+        webmap: {
+          baseMap: { baseMapLayers: [] },
+          operationalLayers: [
+            { id: 'f1', title: 'Quakes', url: 'https://x/FeatureServer/0', layerType: 'ArcGISFeatureLayer' },
+          ],
+        },
+      })
+    })
+    await flush()
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(v.dataSources.add).toHaveBeenCalled()
+    // 无相机 → 回退到"程序初始位置"（camera.flyTo 至少被调用一次）
+    expect(v.camera.flyTo).toHaveBeenCalled()
+  })
+
+  it('有相机 WebMap（viewpoint）添加后飞到该相机', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, json: async () => ({ features: [] }) }))
+    )
+    render(<GlobeViewer />)
+    await flush()
+    const v = viewer()
+    act(() => {
+      useAppStore.getState().addLayer({
+        id: 'cam-map',
+        title: 'Cam',
+        kind: 'webmap',
+        webmap: {
+          viewpoint: {
+            camera: {
+              position: { x: 2.1734, y: 41.3874, z: 1000, spatialReference: { wkid: 4326 } },
+              heading: 30,
+              tilt: 45,
+            },
+          },
+          baseMap: { baseMapLayers: [] },
+          operationalLayers: [
+            { id: 'op', title: 'Img', url: 'https://x/MapServer', layerType: 'ArcGISTiledMapServiceLayer' },
+          ],
+        },
+      })
+    })
+    await flush()
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    // 有相机 → camera.flyTo 用的是解析出的相机位置/朝向
+    const calls = v.camera.flyTo.mock.calls
+    const camCall = calls.find((c: unknown[]) => {
+      const o = c[0] as { destination?: { args?: number[] }; orientation?: { heading: number; pitch: number } }
+      return Array.isArray(o.destination?.args) && o.destination.args[0] === 2.1734
+    })
+    expect(camCall).toBeDefined()
+    expect(camCall![0].orientation.heading).toBeCloseTo(Math.PI / 6)
+    expect(camCall![0].orientation.pitch).toBeCloseTo((45 - 90) * Math.PI / 180)
   })
 
   it('pitch 超出范围时钳制回合法区间', async () => {
@@ -545,5 +657,256 @@ describe('GlobeViewer 补强', () => {
       await Promise.resolve()
     })
     expect(useAppStore.getState().layerErrors['kml']).toMatch(/KML 图层加载失败/)
+  })
+  it('添加 3D Scene 图层 → I3SDataProvider.fromUrl 并加入 primitives', async () => {
+    render(<GlobeViewer />)
+    await flush()
+    const v = viewer()
+    const { I3SDataProvider } = await import('cesium')
+    const fromUrl = I3SDataProvider.fromUrl as unknown as ReturnType<typeof vi.fn>
+    fromUrl.mockClear()
+    act(() => {
+      useAppStore.getState().addLayer({
+        id: 'scene', title: 'Buildings', kind: 'webmap',
+        webmap: {
+          baseMap: { baseMapLayers: [] },
+          operationalLayers: [
+            { id: 's1', title: 'Buildings', url: 'https://x/SceneServer/layers/0', layerType: 'ArcGISSceneServiceLayer' },
+          ],
+        },
+      })
+    })
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(fromUrl).toHaveBeenCalledWith(
+      'https://x/SceneServer/layers/0',
+      expect.objectContaining({ applySymbology: true })
+    )
+    expect(v.scene.primitives.add).toHaveBeenCalled()
+  })
+
+  it('添加 3D Tiles 图层 → Cesium3DTileset.fromUrl 并加入 primitives', async () => {
+    render(<GlobeViewer />)
+    await flush()
+    const v = viewer()
+    const { Cesium3DTileset } = await import('cesium')
+    const fromUrl = Cesium3DTileset.fromUrl as unknown as ReturnType<typeof vi.fn>
+    fromUrl.mockClear()
+    act(() => {
+      useAppStore.getState().addLayer({
+        id: 'tiles', title: '3D Model', kind: 'webmap',
+        webmap: {
+          baseMap: { baseMapLayers: [] },
+          operationalLayers: [
+            { id: 't1', title: '3D Model', url: 'https://x/tileset.json', layerType: '3DTilesService' },
+          ],
+        },
+      })
+    })
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(fromUrl).toHaveBeenCalled()
+    expect(v.scene.primitives.add).toHaveBeenCalled()
+  })
+
+  it('添加 VectorTile 图层 → Cesium MVTDataProvider 加入 primitives', async () => {
+    render(<GlobeViewer />)
+    await flush()
+    const v = viewer()
+    const { MVTDataProvider } = await import('cesium')
+    const fn = MVTDataProvider.fromUrl as unknown as ReturnType<typeof vi.fn>
+    fn.mockClear()
+    act(() => {
+      useAppStore.getState().addLayer({
+        id: 'vt', title: 'Streets', kind: 'webmap',
+        webmap: {
+          baseMap: { baseMapLayers: [] },
+          operationalLayers: [
+            { id: 'v1', title: 'Streets', url: 'https://x/VectorTileServer', layerType: 'VectorTileLayer', styleUrl: 'https://x/style' },
+          ],
+        },
+      })
+    })
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(fn).toHaveBeenCalled()
+    expect(fn).toHaveBeenCalledWith('https://x/VectorTileServer/tile/{z}/{x}/{y}.pbf', expect.anything())
+    expect(v.scene.primitives.add).toHaveBeenCalled()
+  })
+
+  it('WebScene 只有 styleUrl 的 VectorTileLayer → 解析样式源并加入 primitives', async () => {
+    render(<GlobeViewer />)
+    await flush()
+    const v = viewer()
+    const { fetchVectorTileTemplates } = await import('./vectorTile')
+    const templates = fetchVectorTileTemplates as unknown as ReturnType<typeof vi.fn>
+    templates.mockClear()
+    act(() => {
+      useAppStore.getState().addLayer({
+        id: 'scene-vt', title: 'Scene Basemap', kind: 'webmap',
+        webmap: {
+          baseMap: {
+            baseMapLayers: [{
+              id: 'vt',
+              title: 'Scene Basemap',
+              layerType: 'VectorTileLayer',
+              styleUrl: 'https://cdn.example/root.json',
+            }],
+          },
+          operationalLayers: [],
+        },
+      })
+    })
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(templates).toHaveBeenCalledWith(expect.objectContaining({ styleUrl: 'https://cdn.example/root.json' }))
+    expect(v.scene.primitives.add).toHaveBeenCalled()
+  })
+
+  it('添加 Feature 图层 → 重投影后 GeoJsonDataSource.load', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (u: string) => {
+      const url = String(u)
+      if (url.endsWith('?f=json')) {
+        return { ok: true, json: async () => ({ spatialReference: { wkid: 4326 }, maxRecordCount: 1000, drawingInfo: { renderer: { type: 'simple', symbol: { type: 'esriSMS', color: [255, 0, 0, 255], size: 8 } } } }) }
+      }
+      return { ok: true, json: async () => ({ type: 'FeatureCollection', features: [{ id: 1 }] }) }
+    }))
+    render(<GlobeViewer />)
+    await flush()
+    viewer()
+    const { GeoJsonDataSource } = await import('cesium')
+    const load = GeoJsonDataSource.load as unknown as ReturnType<typeof vi.fn>
+    load.mockClear()
+    act(() => {
+      useAppStore.getState().addLayer({
+        id: 'feat', title: 'Incidents', kind: 'webmap',
+        webmap: {
+          baseMap: { baseMapLayers: [] },
+          operationalLayers: [
+            { id: 'f1', title: 'Incidents', url: 'https://x/FeatureServer/0', layerType: 'ArcGISFeatureLayer' },
+          ],
+        },
+      })
+    })
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(load).toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it('添加 WFS 图层 → 通过 OGC 适配器读取 GeoJSON 并加入 dataSources', async () => {
+    render(<GlobeViewer />)
+    await flush()
+    const v = viewer()
+    const { fetchOgcFeatureGeoJSON } = await import('./ogc')
+    const fetchOgc = fetchOgcFeatureGeoJSON as unknown as ReturnType<typeof vi.fn>
+    fetchOgc.mockClear()
+    act(() => {
+      useAppStore.getState().addLayer({
+        id: 'wfs', title: 'Roads', kind: 'webmap',
+        webmap: {
+          baseMap: { baseMapLayers: [] },
+          operationalLayers: [
+            { id: 'w1', title: 'Roads', url: 'https://x/wfs', type: 'WFS' },
+          ],
+        },
+      })
+    })
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(fetchOgc).toHaveBeenCalledWith('https://x/wfs', expect.objectContaining({ type: 'WFS' }))
+    expect(v.dataSources.add).toHaveBeenCalled()
+  })
+
+  it('添加 CSV 图层 → 转为 GeoJSON 并加入 dataSources', async () => {
+    render(<GlobeViewer />)
+    await flush()
+    const v = viewer()
+    const { fetchCsvGeoJSON } = await import('./csv')
+    const fetchCsv = fetchCsvGeoJSON as unknown as ReturnType<typeof vi.fn>
+    fetchCsv.mockClear()
+    act(() => {
+      useAppStore.getState().addLayer({
+        id: 'csv', title: 'Points', kind: 'webmap',
+        webmap: {
+          baseMap: { baseMapLayers: [] },
+          operationalLayers: [
+            { id: 'c1', title: 'Points', url: 'https://x/points.csv', layerType: 'CSVLayer' },
+          ],
+        },
+      })
+    })
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(fetchCsv).toHaveBeenCalledWith('https://x/points.csv', expect.objectContaining({ layerType: 'CSVLayer' }))
+    expect(v.dataSources.add).toHaveBeenCalled()
+  })
+
+
+
+  it('WebGL 不可用时优雅降级显示提示且不创建球', async () => {
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 Chrome/120' })
+    const origCreate = document.createElement.bind(document)
+    const spy = vi.spyOn(document, 'createElement').mockImplementation((tag: string, opts?: ElementCreationOptions) => {
+      const el = origCreate(tag, opts)
+      if (tag === 'canvas') (el as HTMLCanvasElement & { getContext: () => null }).getContext = () => null
+      return el
+    })
+    try {
+      render(<GlobeViewer />)
+      await act(async () => { await Promise.resolve() })
+      expect(screen.getByText(/无法创建 WebGL/)).toBeInTheDocument()
+    } finally {
+      spy.mockRestore()
+      vi.unstubAllGlobals()
+    }
+  })
+
+
+  it('GeoJSON 渲染后开启点聚合', async () => {
+    const { GeoJsonDataSource } = await import('cesium')
+    const ds = {
+      clustering: { enabled: false, pixelRange: 0, minimumClusterSize: 0, clusterBillboards: false },
+    } as never
+    ;(GeoJsonDataSource.load as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(ds)
+    render(<GlobeViewer />)
+    await flush()
+    const v = viewer()
+    act(() => {
+      useAppStore.getState().addLayer({
+        id: 'g2',
+        title: 'P',
+        kind: 'webmap',
+        webmap: {
+          baseMap: { baseMapLayers: [] },
+          operationalLayers: [{ id: 'p1', title: 'P', url: 'https://x/p.geojson', layerType: 'GeoJSONLayer' }],
+        },
+      })
+    })
+    await flush()
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(v.dataSources.add).toHaveBeenCalled()
+    expect((ds as { clustering: { enabled: boolean } }).clustering.enabled).toBe(true)
+  })
+
+})
+
+
+describe('viewpointCameraFromWebmap', () => {
+  it('解析 4326 相机的目的地与朝向', () => {
+    const wm = { viewpoint: { camera: { position: { x: 2.17, y: 41.38, z: 1000, spatialReference: { wkid: 4326 } }, heading: 30, tilt: 45 } } }
+    const cam = viewpointCameraFromWebmap(wm as never)
+    expect(cam?.destination).toEqual({ tag: 'fromDegrees', args: [2.17, 41.38, 1000] })
+    expect(cam?.orientation.heading).toBeCloseTo(Math.PI / 6)
+    expect(cam?.orientation.pitch).toBeCloseTo((45 - 90) * Math.PI / 180)
+  })
+
+  it('解析 3857 相机（反投影到经纬度）', () => {
+    // 3857 下 x=111319.49m ≈ 1° 经线，y=0 → 赤道
+    const wm = { initialState: { viewpoint: { camera: { position: { x: 111319.49, y: 0, z: 500, spatialReference: { wkid: 102100 } }, heading: 0, tilt: 90 } } } }
+    const cam = viewpointCameraFromWebmap(wm as never)
+    const args = (cam?.destination as unknown as { args: number[] })?.args
+    expect(args[0]).toBeCloseTo(1, 1)
+    expect(args[1]).toBeCloseTo(0, 1)
+    expect(cam?.orientation.pitch).toBeCloseTo(0)
+  })
+
+  it('无相机 → 返回 null', () => {
+    expect(viewpointCameraFromWebmap({ baseMap: {} } as never)).toBeNull()
+    expect(viewpointCameraFromWebmap({ viewpoint: {} } as never)).toBeNull()
+    expect(viewpointCameraFromWebmap(undefined)).toBeNull()
   })
 })
