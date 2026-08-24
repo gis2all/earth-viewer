@@ -27,5 +27,6 @@ export function processViewportData(input: ViewportProcessInput): ViewportProces
   // ② 要素数预算（防对象爆炸）
   const fb = consumeFeatureBudget(maxFeatures, vb.data, maxFeatures)
   const features = (fb?.data as { features?: Record<string, unknown>[] } | null)?.features ?? []
-  return { features, capped: vb.capped || !fb, vertices: vb.vertices }
+  // 要素超限（fb.capped）也算 bounded，便于调用方提示降级
+  return { features, capped: vb.capped || (fb ? fb.capped : true), vertices: vb.vertices }
 }

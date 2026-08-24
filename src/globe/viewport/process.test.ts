@@ -21,3 +21,9 @@ describe('processViewportData', () => {
     expect(processViewportData({ geojson: {} }).features.length).toBe(0)
   })
 })
+
+  it('要素超限时汇报 capped（便于调用方提示降级）', () => {
+    const r = processViewportData({ geojson: { features: Array(2000) }, maxVertices: 100000, maxFeatures: 1500 })
+    expect(r.capped).toBe(true)
+    expect(r.features.length).toBe(1500)
+  })
