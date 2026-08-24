@@ -23,6 +23,8 @@ export interface Effects {
   globeTranslucency: boolean
   translucencyAlpha: number
   autoRotate: boolean
+  /** 是否显示区划/参考网格层（如 NWS zones） */
+  showReferenceLayers?: boolean
 }
 
 interface AppState {
@@ -78,6 +80,7 @@ export const useAppStore = create<AppState>()(
     globeTranslucency: false,
     translucencyAlpha: 0.6,
     autoRotate: false,
+    showReferenceLayers: true,
   },
     setEffect: (key, value) => set((s) => ({ effects: { ...s.effects, [key]: value } })),
     userHome: null,
