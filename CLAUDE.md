@@ -14,7 +14,7 @@
 | 命令 | 用途 |
 |---|---|
 | `npm run dev` | 本地开发 http://localhost:5173（内置 /sharing 代理） |
-| `npm run test:coverage` | 单测 + 覆盖率门禁（★statements/lines ≥ 90%，当前 ~91.8%） |
+| `npm run test:coverage` | 单测 + 覆盖率门禁（★statements/lines ≥ 90%，当前 ~90.6%） |
 | `npm run lint` / `npm run build` | ESLint / 生产构建（dist/） |
 | `npm run test:e2e` | Playwright E2E（含真实 ArcGIS 集成） |
 | `docker compose up --build` | Docker 运行（5173） |
@@ -49,7 +49,7 @@
 | proj4 / @mapbox/vector-tile / pbf | ArcGIS 数据转换：坐标重投影 / MVT 矢量瓦片解码 |
 | Vitest / Testing Library | 单测 + 覆盖率（v8 provider） |
 | Playwright | E2E |
-| Node.js | **≥ 22**（CI/Docker/本地统一；Cesium 要求） |
+| Node.js | **≥ 22**（CI/Docker 统一 + package.json `engines` 与 .npmrc `engine-strict` 本地强制；Cesium 要求） |
 | Docker | 两阶段镜像（node:22-alpine），Compose 运行 |
 | Cloudflare Pages + wrangler | 生产部署 |
 
@@ -98,7 +98,7 @@ earth-viz-hub/
   index.html            # 页面标题 Earth Viewer + favicon（★无内联 CSP，见 _headers）
   package.json          # name=earth-viewer
   vite.config.ts        # /sharing 代理中间件 + react + cesium 插件
-  vitest.config.ts      # 单测 + ★coverage 门槛（include 全 src，exclude 入口/测试）
+  vitest.config.ts      # 单测 + ★coverage 门槛（include 全 src，exclude 入口/测试 + worker/primitive（dataWorker.ts、primitive.ts））
   eslint.config.js      # ESLint
   playwright.config.ts  # E2E（baseURL 5173，json reporter 输出 e2e-results.json）
   Dockerfile / docker-compose.yml / .dockerignore
@@ -282,8 +282,8 @@ earth-viz-hub/
 
 ## 7. 测试与质量门禁
 
-- **单测**：Vitest（jsdom），270 个用例（含 store/cameraApi/AppShell/assess/webmap/LayerPanel/EffectsPanel/GlobeViewer/geo/itemTypes/serviceItem/VectorTile/OGC/CSV/vector/loadSafety）。`npm run test:coverage`
-- **覆盖率门槛**（vitest.config.ts）：★statements ≥90 / lines ≥90 / functions ≥85 / branches ≥70（当前 91.85% / 96.63% / 94.75% / 81.74%）；include **全 src**（含 GlobeViewer），exclude 入口壳与测试文件——真实口径，不玩数字。
+- **单测**：Vitest（jsdom），281 个用例（含 store/cameraApi/AppShell/assess/webmap/LayerPanel/EffectsPanel/GlobeViewer/geo/itemTypes/serviceItem/VectorTile/OGC/CSV/vector/loadSafety）。`npm run test:coverage`
+- **覆盖率门槛**（vitest.config.ts）：★statements ≥90 / lines ≥90 / functions ≥85 / branches ≥70（当前 90.57% / 96.12% / 93.76% / 80.72%）；include **全 src**（含 GlobeViewer），exclude 入口壳与测试文件——真实口径，不玩数字。
 - **E2E**：Playwright 28 项（冒烟 mock / WebScene UI / UI 交互 mock / 真实 ArcGIS 集成 request）。
 - ★**E2E 轻量模式**：`e2e/app.spec.ts`、`e2e/ui.spec.ts` 注入 `window.__E2E__`，GlobeViewer 跳过 Cesium 创建（CI 无头软件渲染极慢会拖垮交互测试）；「球真实渲染+图层上球」由线上/容器验证覆盖（headless 测不准渲染）。
 - **徽章**：6 个（CI / License / Coverage / Deps / Tests / E2E）；`scripts/badge.mjs` 从 coverage-summary/audit/test-results/e2e-results 生成 JSON → GitHub Actions 发布到 GitHub Pages → shields endpoint 渲染，**每次 CI 实时生成**。
