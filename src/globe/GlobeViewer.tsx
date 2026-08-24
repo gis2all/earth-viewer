@@ -17,6 +17,7 @@ import {
   providerForWebLayer,
   isFeatureLayer,
   isGeoJsonLayer,
+  isFeatureCollectionLayer,
   isKmlLayer,
   isVectorTileLayer,
   isSceneLayer,
@@ -94,6 +95,15 @@ function enablePointClustering(ds: Cesium.DataSource) {
   c.pixelRange = 20
   c.minimumClusterSize = 2
   c.clusterBillboards = true
+}
+
+/** 防抖：相机移动结束后等待 ms 再触发，避免快速缩放/拖动时视口查询风暴 */
+function debounce<T extends (...args: unknown[]) => void>(fn: T, ms: number): T {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  return ((...args: unknown[]) => {
+    if (timer !== undefined) clearTimeout(timer)
+    timer = setTimeout(() => fn(...args), ms)
+  }) as T
 }
 
 // ---- 从 Web Map / Web Scene JSON 解析"初始相机"（ArcGIS viewpoint） ----
@@ -180,6 +190,11 @@ export function GlobeViewer() {
     }
     viewerRef.current = v
     registerViewer(v)
+    // WebGL 上下文丢失预案（内存不足/卡死时不白屏：易加载并提示）
+    const onCtxLost = (e: Event) => { e.preventDefault(); setGlError('WebGL 上下文已丢失（可能内存不足，正在尝试恢复…）') }
+    const onCtxRestored = () => setGlError('')
+    v.scene.canvas.addEventListener('webglcontextlost', onCtxLost)
+    v.scene.canvas.addEventListener('webglcontextrestored', onCtxRestored)
     // 首次进入：加载完成后自动居中到用户大概位置
     void flyToHome(v)
     // 关闭 Bloom 泛光（移除图层发光高亮）
@@ -312,6 +327,8 @@ export function GlobeViewer() {
 
     return () => {
       v.scene.canvas.removeEventListener('wheel', onWheel)
+      v.scene.canvas.removeEventListener('webglcontextlost', onCtxLost)
+      v.scene.canvas.removeEventListener('webglcontextrestored', onCtxRestored)
       v.scene.postUpdate.removeEventListener(onCameraFrame)
       handler.destroy()
       unregisterViewer()
@@ -472,6 +489,27 @@ export function GlobeViewer() {
               console.error('[layer] 矢量瓦片加载失败', op.url || op.styleUrl, e)
               setLayerError(a.id, '矢量瓦片加载失败：' + (op.title || op.url || op.styleUrl))
             })
+        } else if (isFeatureCollectionLayer(op)) {
+          // 内嵌 FeatureCollection（layerDefinition.featureCollection）：走 Worker 预算管线，防大内嵌数据集卡死
+          const fc = (op.layerDefinition as { featureCollection?: unknown } | undefined)?.featureCollection
+          const realFc = (fc as { featureCollection?: unknown } | undefined)?.featureCollection ?? fc
+          if (!realFc) { setLayerError(a.id, '内嵌要素集为空'); continue }
+          runViewportProcess({ geojson: realFc, maxVertices: SAFETY.MAX_RENDER_VERTICES, maxFeatures: SAFETY.MAX_RENDER_FEATURES })
+            .then((res) => {
+              if (res.capped) setLayerNote('内嵌数据量大，已按顶点/要素预算降级')
+              return Cesium.GeoJsonDataSource.load({ type: 'FeatureCollection', features: res.features } as never)
+            })
+            .then((ds) => {
+              if (!keepAlive() || !ds) return
+              enablePointClustering(ds as Cesium.DataSource)
+              v.dataSources.add(ds)
+              rec.ds.push(ds)
+              clearLayerError(a.id)
+            })
+            .catch((e) => {
+              console.error('[layer] 内嵌要素集加载失败', op.title || op.url, e)
+              setLayerError(a.id, '内嵌要素集加载失败：' + (op.title || op.url))
+            })
         } else if (op.url) {
           if (isSceneLayer(op)) {
             // ArcGIS SceneServer / I3S 3D 场景
@@ -504,10 +542,14 @@ export function GlobeViewer() {
             fetchOgcFeatureGeoJSON(op.url, op, signal)
               .then((gj) => {
                 if (cancelled || v.isDestroyed()) return undefined
-                const b = consumeBudget(gj)
-                if (!b) { setLayerNote('数据总量过大，已省略部分图层'); return undefined }
-                if (b.capped) setLayerNote('数据量大，仅显示部分要素')
-                return Cesium.GeoJsonDataSource.load(b.data as never)
+                return runViewportProcess({ geojson: gj, maxVertices: SAFETY.MAX_RENDER_VERTICES, maxFeatures: SAFETY.MAX_RENDER_FEATURES })
+                  .then((res) => {
+                    if (res.capped) setLayerNote('数据量大，已按顶点/要素预算降级')
+                    const b = consumeBudget({ type: 'FeatureCollection', features: res.features })
+                    if (!b) { setLayerNote('数据总量过大，已省略部分图层'); return undefined }
+                    if (b.capped) setLayerNote('数据量大，仅显示部分要素')
+                    return Cesium.GeoJsonDataSource.load(b.data as never)
+                  })
               })
               .then((ds) => {
                 if (!keepAlive() || !ds) return
@@ -526,10 +568,14 @@ export function GlobeViewer() {
             fetchCsvGeoJSON(op.url, op, signal)
               .then((gj) => {
                 if (cancelled || v.isDestroyed()) return undefined
-                const b = consumeBudget(gj)
-                if (!b) { setLayerNote('数据总量过大，已省略部分图层'); return undefined }
-                if (b.capped) setLayerNote('数据量大，仅显示部分要素')
-                return Cesium.GeoJsonDataSource.load(b.data as never)
+                return runViewportProcess({ geojson: gj, maxVertices: SAFETY.MAX_RENDER_VERTICES, maxFeatures: SAFETY.MAX_RENDER_FEATURES })
+                  .then((res) => {
+                    if (res.capped) setLayerNote('数据量大，已按顶点/要素预算降级')
+                    const b = consumeBudget({ type: 'FeatureCollection', features: res.features })
+                    if (!b) { setLayerNote('数据总量过大，已省略部分图层'); return undefined }
+                    if (b.capped) setLayerNote('数据量大，仅显示部分要素')
+                    return Cesium.GeoJsonDataSource.load(b.data as never)
+                  })
               })
               .then((ds) => {
                 if (!keepAlive() || !ds) return
@@ -553,7 +599,7 @@ export function GlobeViewer() {
                   try {
                     const ctl = createViewportController(v.scene, v.scene.primitives, { serviceUrl: op.url as string, maxFeatures: SAFETY.MAX_FEATURES })
                     rec.viewportController = ctl
-                    const handler = () => void ctl.update(viewEnvelopeFromCamera(v.scene.camera as never) ?? VIEWPORT_FALLBACK)
+                    const handler = debounce(() => void ctl.update(viewEnvelopeFromCamera(v.scene.camera as never) ?? VIEWPORT_FALLBACK), 250)
                     rec.cameraMoveHandler = handler
                     const moveEnd = (v.camera.moveEnd as unknown as { addEventListener?: (h: () => void) => void } | undefined)
                     moveEnd?.addEventListener?.(handler)
