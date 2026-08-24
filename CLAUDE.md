@@ -187,6 +187,8 @@ earth-viz-hub/
 - **P1–P5 视口驱动管线**（`src/globe/viewport/`）：FeatureLayer 只按相机视口 query（`buildFeatureQueryUrl` 自动补 `/0`、`geometry=envelope`、`f=geojson`），Worker 解析 → Douglas-Peucker 抽稀 → 顶点预算（`MAX_RENDER_VERTICES=200_000`）→ 要素预算（`MAX_RENDER_FEATURES`），Primitive 优先渲染（`buildLayerPrimitive`）、`hasPrimitiveRendering` 失败回退 `GeoJsonDataSource`；相机 `moveEnd` → `viewportController.update` 随视口更新，LRU 缓存视口结果。
 - **VectorTile 内存上限**：`MVTDataProvider` 背靠 tileset 设 `cacheBytes = VECTOR_TILE_MEMORY_LIMIT`（64MB）/`maximumCacheOverflowBytes = VECTOR_TILE_CACHE_OVERFLOW`（16MB），Cesium 自动卸载不在视口内的瓦片（业界 memoryLimitMB 模式）；全局矢量底图仍降级 OSM 栅格；`isGlobalVectorTileLayer` 识别所有 ArcGIS 托管 style 根（含 www.arcgis.com、cdn.arcgis.com 的 `.../items/<id>/resources/styles/root.json`），避免全球矢量底图走 MVTDataProvider 卡死。
 - **KML 预算**：KML → `parseKmlToGeoJSON` → `runViewportProcess`（顶点/要素预算）→ `GeoJsonDataSource`，失败/无要素回退原生 `KmlDataSource.load`，仍受 `KML_MAX_BYTES=2MB` 限制。
+- **业界防卡死全景（跨类型 1–10）**：① FeatureLayer 视口取数；② WFS/OGC/CSV/KML/GeoJSON 走 Worker 预算管线（runViewportProcess）；③ FeatureLayer 用 Primitive 渲染；④ 点聚类 + 线面抽稀；⑤ 全局/逐层顶点与要素上限；⑥ 瓦片缓存 tileCacheSize + LRU + 分页 + 3D LOD 流式；⑦ SSE 分级（大视图更粗）；⑧ FeatureLayer moveEnd 防抖（250ms）；⑨ 全局矢量底图降级栅格；⑩ WebGL context lost 监听 → 优雅提示。
+- 内嵌 FeatureCollection（layerDefinition.featureCollection）走 `runViewportProcess` 预算后 `GeoJsonDataSource` 渲染；WebTiledLayer/urlTemplate 也设 maximumLevel（与 WMS/WMTS 一致）。
 - 健壮性：Feature 服务探测图层 id（非固定 /0） + f=geojson 不支持时回退 f=json 转 GeoJSON；WMTS 解析不到配置不抛错（返回服务根降级）。
 
 ### 6.3 画廊（LayerPanel）
@@ -290,6 +292,8 @@ earth-viz-hub/
 ## 8. 已知限制（Cesium 能力边界）
 
 - ArcGIS VectorTileLayer 使用 Cesium `MVTDataProvider` 动态转 3D Tiles；WebScene 纯 `styleUrl` 会解析 style JSON 的 MVT sources。
+- 当 WebGL 上下文丢失（内存不足/卡死）时触发 `webglcontextlost` 监听，显示降级提示而非白屏；
+- 3D Tiles / I3S 已设 cacheBytes=128MB / overflow=32MB，WMTS、动态 MapServer export 已设 maximumLevel=和业界其他平台一致的预算上限。
 - ArcGIS SceneServer/I3S 使用 Cesium `I3SDataProvider`；3D Tiles 使用 `Cesium3DTileset`。
 - 动态 MapServer/ImageServer 使用 `/export` 的 4326 影像兜底；不依赖 `/tile/`。
 - WMS/WMTS/KML 支持（KML 先转 GeoJSON 走预算，失败回退原生）；Feature/GeoJSON/CSV/WFS/OGC API Features 转 GeoJSON 降级渲染。
