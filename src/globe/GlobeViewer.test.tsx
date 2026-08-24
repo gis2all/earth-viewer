@@ -889,11 +889,37 @@ describe('GlobeViewer 补强', () => {
     expect(v.scene.primitives.add).toHaveBeenCalled()
   })
 
+  it('多图层 Feature Service → 区划层跳过、事件层渲染为 dataSource', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      const u = String(url)
+      if (u.endsWith('/FeatureServer?f=json')) return { ok: true, json: async () => ({ layers: [{ id: 1 }, { id: 2 }], fullExtent: { xmin: -180, ymin: -90, xmax: 180, ymax: 90 }, spatialReference: { wkid: 4326 } }) }
+      if (u.includes('/FeatureServer/1?f=json')) return { ok: true, json: async () => ({ drawingInfo: { renderer: { type: 'simple', symbol: { type: 'esriSFS', color: [100, 100, 255, 255], outline: { color: [0, 0, 0, 255], width: 1 } } } } }) }
+      if (u.includes('/FeatureServer/2?f=json')) return { ok: true, json: async () => ({ drawingInfo: { renderer: { type: 'uniqueValue', field1: 'Event', uniqueValueInfos: [{ value: 'Watch', symbol: { type: 'esriSFS', color: [255, 0, 0, 128] } }] } } }) }
+      if (u.includes('/query')) return { ok: true, json: async () => ({ features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [0, 0] }, properties: { Event: 'Watch' } }] }) }
+      return { ok: true, json: async () => ({}) }
+    }))
+    render(<GlobeViewer />)
+    await flush()
+    const v = viewer()
+    act(() => {
+      useAppStore.getState().addLayer({
+        id: 'mfc', title: 'Multi', kind: 'webmap',
+        webmap: {
+          baseMap: { baseMapLayers: [] },
+          operationalLayers: [{ id: 'l', title: 'Multi', url: 'https://x/FeatureServer', layerType: 'ArcGISFeatureLayer' }],
+        },
+      })
+    })
+    await act(async () => { for (let i = 0; i < 14; i++) await Promise.resolve() })
+    expect(v.dataSources.add).toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
   it('添加 Feature 图层 → 重投影后 GeoJsonDataSource.load', async () => {
     vi.stubGlobal('fetch', vi.fn(async (u: string) => {
       const url = String(u)
       if (url.endsWith('?f=json')) {
-        return { ok: true, json: async () => ({ spatialReference: { wkid: 4326 }, maxRecordCount: 1000, drawingInfo: { renderer: { type: 'simple', symbol: { type: 'esriSMS', color: [255, 0, 0, 255], size: 8 } } } }) }
+        return { ok: true, json: async () => ({ spatialReference: { wkid: 4326 }, maxRecordCount: 1000, drawingInfo: { renderer: { type: 'unsupported' } } }) }
       }
       return { ok: true, json: async () => ({ type: 'FeatureCollection', features: [{ id: 1 }] }) }
     }))

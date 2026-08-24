@@ -9,6 +9,7 @@ import { renderableLayersFromWebmap, skippedBusinessLayers, MAX_BUSINESS_LAYERS 
 import { isGlobalVectorTileLayer, SAFETY, assertUrlWithinLimit, consumeFeatureBudget } from './loadSafety'
 import { applyVertexBudget } from './viewport/budget'
 import { queryViewportData } from './viewport/query'
+import { resolveFeatureQueryBase, resolveFeatureService } from './viewport/featureQuery'
 import { runViewportProcess } from './viewport/worker'
 import { hasPrimitiveRendering } from './viewport/primitive'
 import { createViewportController } from './viewport/viewportController'
@@ -31,7 +32,7 @@ import {
   WORLD_LABELS_TILES,
   WORLD_IMAGERY_WGS84_TILES,
 } from './webmap'
-import { rendererToStyleFn, applyFeatureStyler, reprojectCoordinates } from './vector'
+import { rendererToStyleFn, applyFeatureStyler, reprojectCoordinates, type FeatureStyleSpec } from './vector'
 import { loadI3S, load3DTiles } from './scene'
 import { parseKmlToGeoJSON, kmlStyleToFeatureStyle, type KmlStyleSpec } from './kml'
 import { fetchVectorTileTemplates, toCesiumMvtTemplate, applyVectorTileMemoryLimit } from './vectorTile'
@@ -104,6 +105,32 @@ function debounce<T extends (...args: unknown[]) => void>(fn: T, ms: number): T 
     if (timer !== undefined) clearTimeout(timer)
     timer = setTimeout(() => fn(...args), ms)
   }) as T
+}
+
+/** 将服务 fullExtent 重投影到 4326 */
+function reprojectExtent(e: { west: number; south: number; east: number; north: number; wkid: number }) {
+  if (e.wkid === 4326 || e.wkid === 4269) return e
+  try {
+    const [w, s] = reprojectCoordinates([e.west, e.south], 'EPSG:' + e.wkid, 'EPSG:4326') as [number, number]
+    const [ea, n] = reprojectCoordinates([e.east, e.north], 'EPSG:' + e.wkid, 'EPSG:4326') as [number, number]
+    if ([w, s, ea, n].every(Number.isFinite)) return { west: w, south: s, east: ea, north: n, wkid: 4326 }
+  } catch { /* 重投影失败保留原范围 */ }
+  return e
+}
+function envContainsForFlight(env: { west: number; south: number; east: number; north: number }, ext: { west: number; south: number; east: number; north: number }): boolean {
+  return !(env.east < ext.west || env.west > ext.east || env.north < ext.south || env.south > ext.north)
+}
+const EVENT_LAYER_MAX = 800
+const REF_LAYER_MAX = 150
+
+/** 区划/参考层风格：只描边，透明填充，避免盖住事件层 */
+function referenceStyleFn(renderer?: Record<string, unknown> | null): ((props?: Record<string, unknown>) => FeatureStyleSpec | undefined) {
+  const base = rendererToStyleFn((renderer ?? undefined) as Record<string, unknown> | undefined)
+  return (props?: Record<string, unknown>) => {
+    const s = base(props)
+    if (!s) return undefined
+    return { ...s, fill: [0, 0, 0, 0] }
+  }
 }
 
 // ---- 从 Web Map / Web Scene JSON 解析"初始相机"（ArcGIS viewpoint） ----
@@ -590,57 +617,89 @@ export function GlobeViewer() {
                 setLayerError(a.id, 'CSV 图层加载失败：' + (op.title || op.url))
               })
           } else if (isFeatureLayer(op)) {
-            // ★视口驱动 + Primitive/回退：只取相机可见 + 抽稀/预算，并随相机 moveEnd 持续更新（P1 完整形态）
+            // 视口驱动：解析服务全部可查询层（多层叠加：区划层描边 + 事件层分色），自动飞到数据范围，每层独立预算防卡死
             const env0 = viewEnvelopeFromCamera(v.scene.camera as never) ?? VIEWPORT_FALLBACK
-            Promise.all([fetchFeatureStyle(op.url), fetchFeatureRenderer(op.url)])
-              .then(([style, renderer]) => {
+            resolveFeatureService(op.url as string)
+              .then((svc) => {
                 if (cancelled || v.isDestroyed()) return undefined
-                if (hasPrimitiveRendering()) {
-                  try {
-                    const ctl = createViewportController(v.scene, v.scene.primitives, { serviceUrl: op.url as string, maxFeatures: SAFETY.MAX_FEATURES })
-                    rec.viewportController = ctl
-                    const handler = debounce(() => void ctl.update(viewEnvelopeFromCamera(v.scene.camera as never) ?? VIEWPORT_FALLBACK), 250)
-                    rec.cameraMoveHandler = handler
-                    const moveEnd = (v.camera.moveEnd as unknown as { addEventListener?: (h: () => void) => void } | undefined)
-                    moveEnd?.addEventListener?.(handler)
-                    void ctl.update(env0)
-                    clearLayerError(a.id)
-                    return null
-                  } catch (e) {
-                    console.error('[layer] Primitive 渲染失败，回退 GeoJSON', op.url, e)
-                    return Cesium.GeoJsonDataSource.load({ type: 'FeatureCollection', features: [] } as never)
-                  }
+                const ext = svc.extent ? reprojectExtent(svc.extent) : undefined
+                if (ext && !envContainsForFlight(env0, ext)) {
+                  try { v.camera.flyTo({ destination: Cesium.Rectangle.fromDegrees(ext.west, ext.south, ext.east, ext.north) }) } catch { /* 飞行失败忽略 */ }
                 }
-                const styleFn = rendererToStyleFn((renderer ?? undefined) as Record<string, unknown> | undefined)
-                return queryViewportData(op.url as string, env0, { maxFeatures: SAFETY.MAX_FEATURES, outFields: '*' }, signal)
-                  .then((res) => {
+                const layerBases = svc.layers
+                if (layerBases.length <= 1) {
+                  const base = layerBases[0] ?? (op.url as string)
+                  return Promise.all([fetchFeatureStyle(base), fetchFeatureRenderer(base)]).then(async ([style, renderer]) => {
                     if (cancelled || v.isDestroyed()) return undefined
-                    if (res.capped) setLayerNote('数据量大，已按视口/顶点预算降级显示')
-                    return Cesium.GeoJsonDataSource.load(
-                      { type: 'FeatureCollection', features: res.features } as never,
-                      style
-                        ? {
-                            markerColor: style.markerColor,
-                            markerSize: style.markerSize,
-                            stroke: style.stroke,
-                            strokeWidth: style.strokeWidth,
-                            fill: style.fill,
-                          }
-                        : undefined
-                    )
-                      .then((ds) => {
+                    const rendererType = String((renderer as Record<string, unknown> | null)?.type ?? '')
+                    const hasRendererStyle = !!renderer && ['simple', 'uniqueValue', 'classBreaks'].includes(rendererType)
+                    if (hasPrimitiveRendering() && !hasRendererStyle) {
+                      try {
+                        const base2 = await resolveFeatureQueryBase(op.url as string)
+                        const ctl = createViewportController(v.scene, v.scene.primitives, { serviceUrl: base2, maxFeatures: SAFETY.MAX_FEATURES })
+                        rec.viewportController = ctl
+                        const handler = debounce(() => void ctl.update(viewEnvelopeFromCamera(v.scene.camera as never) ?? VIEWPORT_FALLBACK), 250)
+                        rec.cameraMoveHandler = handler
+                        const moveEnd = (v.camera.moveEnd as unknown as { addEventListener?: (h: () => void) => void } | undefined)
+                        moveEnd?.addEventListener?.(handler)
+                        void ctl.update(env0)
+                        clearLayerError(a.id)
+                        return null
+                      } catch (e) {
+                        console.error('[layer] Primitive 渲染失败，回退 GeoJSON', op.url, e)
+                        return Cesium.GeoJsonDataSource.load({ type: 'FeatureCollection', features: [] } as never)
+                      }
+                    }
+                    const styleFn = rendererToStyleFn((renderer ?? undefined) as Record<string, unknown> | undefined)
+                    return queryViewportData(base, env0, { maxFeatures: SAFETY.MAX_RENDER_FEATURES, outFields: '*' }, signal).then((res) => {
+                      if (cancelled || v.isDestroyed()) return undefined
+                      if (res.capped) setLayerNote('数据量大，已按视口/预算降级显示')
+                      return Cesium.GeoJsonDataSource.load({ type: 'FeatureCollection', features: res.features } as never, style ? { markerColor: style.markerColor, markerSize: style.markerSize, stroke: style.stroke, strokeWidth: style.strokeWidth, fill: style.fill } : undefined).then((ds) => {
                         applyFeatureStyler(ds as never, styleFn)
                         enablePointClustering(ds as Cesium.DataSource)
                         return ds
                       })
+                    })
                   })
+                }
+                // 分层：区划层(simple)仅描边参考，事件层(unique/classBreaks)填充分色且只渲染一个汇总层，每层独立预算不互相挤占
+                const makeLayer = (base: string) => Promise.all([fetchFeatureStyle(base), fetchFeatureRenderer(base)]).then(([style, renderer]) => {
+                  if (cancelled || v.isDestroyed()) return null
+                  const rt = String((renderer as Record<string, unknown> | null)?.type ?? '')
+                  const isRef = rt === 'simple'
+                  // 区划/参考层（simple）可用开关控制：关闭时不渲染，开启时用低预算描边（避免盖住事件层且不卡主线程）
+                  if (isRef && !(effectsRef.current?.showReferenceLayers ?? true)) return null
+                  const maxFeatures = isRef ? REF_LAYER_MAX : EVENT_LAYER_MAX
+                  const styleFn = isRef ? referenceStyleFn(renderer) : rendererToStyleFn((renderer ?? undefined) as Record<string, unknown> | undefined)
+                  return queryViewportData(base, env0, { maxFeatures, outFields: '*' }, signal).then((res) => {
+                    if (cancelled || v.isDestroyed()) return null
+                    if (res.capped) setLayerNote('数据量大，已按视口/预算降级显示')
+                    if (res.features.length === 0) return null
+                    return Cesium.GeoJsonDataSource.load({ type: 'FeatureCollection', features: res.features } as never, style ? { markerColor: style.markerColor, markerSize: style.markerSize, stroke: style.stroke, strokeWidth: style.strokeWidth, fill: style.fill } : undefined).then((ds) => {
+                      applyFeatureStyler(ds as never, styleFn)
+                      return ds
+                    })
+                  })
+                })
+                return Promise.all(layerBases.map(makeLayer)).then((dsList) => {
+                  if (cancelled || v.isDestroyed()) return null
+                  for (const ds of dsList) {
+                    if (!ds) continue
+                    enablePointClustering(ds as Cesium.DataSource)
+                    v.dataSources.add(ds as Cesium.DataSource)
+                    rec.ds.push(ds as Cesium.DataSource)
+                  }
+                  clearLayerError(a.id)
+                  return null
+                })
               })
               .then((ds) => {
                 if (ds === null) return
-                if (!keepAlive() || !ds) return
+                if (!ds) return
+                if (!keepAlive()) return
                 enablePointClustering(ds as Cesium.DataSource)
-                v.dataSources.add(ds)
-                rec.ds.push(ds)
+                v.dataSources.add(ds as Cesium.DataSource)
+                rec.ds.push(ds as Cesium.DataSource)
                 clearLayerError(a.id)
               })
               .catch((e) => {
