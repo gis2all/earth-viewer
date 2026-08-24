@@ -239,6 +239,16 @@ describe('GlobeViewer', () => {
     await act(async () => {})
     expect(v.terrainProvider).toEqual({ terrain: 't' })
   })
+  it('WebGL 上下文丢失 → 显示降级提示', async () => {
+    render(<GlobeViewer />)
+    await flush()
+    const v = viewer()
+    const lost = v.scene.canvas.addEventListener.mock.calls.find((c: unknown[]) => c[0] === 'webglcontextlost')?.[1] as (e: Event) => void
+    expect(lost).toBeTypeOf('function')
+    await act(async () => { lost({ preventDefault: vi.fn() } as unknown as Event) })
+    await act(async () => {})
+    expect(screen.getByText(/WebGL 上下文已丢失/)).toBeInTheDocument()
+  })
 
   it('效果开关映射到 globe 场景（雾/星空/日月/夸张/半透明）', async () => {
     render(<GlobeViewer />)
@@ -908,6 +918,27 @@ describe('GlobeViewer 补强', () => {
     expect(load).not.toHaveBeenCalled()
     expect(v.scene.primitives.add).toHaveBeenCalled()
     vi.unstubAllGlobals()
+  })
+
+  it('内嵌 FeatureCollection 图层 → 走预算管线并加入 dataSources', async () => {
+    render(<GlobeViewer />)
+    await flush()
+    const v = viewer()
+    act(() => {
+      useAppStore.getState().addLayer({
+        id: 'fc',
+        title: 'Embedded',
+        kind: 'webmap',
+        webmap: {
+          baseMap: { baseMapLayers: [] },
+          operationalLayers: [
+            { id: 'fs1', title: 'Embedded', layerType: 'FeatureCollection', layerDefinition: { featureCollection: { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [0, 0] }, properties: {} }] } } },
+          ],
+        },
+      })
+    })
+    await act(async () => { for (let i = 0; i < 10; i++) await Promise.resolve() })
+    expect(v.dataSources.add).toHaveBeenCalled()
   })
 
   it('添加 WFS 图层 → 通过 OGC 适配器读取 GeoJSON 并加入 dataSources', async () => {
