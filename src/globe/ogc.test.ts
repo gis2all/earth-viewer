@@ -85,3 +85,56 @@ describe('fetchOgcFeatureGeoJSON', () => {
     expect(urls.some((url) => url.includes('typeNames=buildings'))).toBe(true)
   })
 })
+
+  it('WFS GetCapabilities 非 ok → 拒绝', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false })))
+    await expect(fetchOgcFeatureGeoJSON('https://x/wfs', { type: 'WFS' })).rejects.toThrow('GetCapabilities')
+  })
+
+  it('WFS 未找到要素类型→ 拒绝', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, text: async () => '<WFS_Capabilities />' })))
+    await expect(fetchOgcFeatureGeoJSON('https://x/wfs', { type: 'WFS' })).rejects.toThrow('未找到')
+  })
+
+  it('WFS 返回非 GeoJSON → 拒绝', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url).includes('GetCapabilities')) return { ok: true, text: async () => '<WFS><Name>r</Name></WFS>' }
+      return { ok: true, json: async () => ({ type: 'NotFC' }) }
+    }))
+    await expect(fetchOgcFeatureGeoJSON('https://x/wfs', { type: 'WFS' })).rejects.toThrow('未返回 GeoJSON')
+  })
+
+  it('读取 OGC /collections/xxx 路径', async () => {
+    const urls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      urls.push(String(url))
+      return { ok: true, json: async () => ({ type: 'FeatureCollection', features: [] }) }
+    }))
+    await fetchOgcFeatureGeoJSON('https://x/collections/roads')
+    expect(urls.some((u) => u.includes('/collections/roads/items'))).toBe(true)
+  })
+
+  it('传入 collectionId 时走 /collections/<id> 分支', async () => {
+    const urls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      urls.push(String(url))
+      return { ok: true, json: async () => ({ type: 'FeatureCollection', features: [] }) }
+    }))
+    await fetchOgcFeatureGeoJSON('https://x/ogc', { collectionId: 'bldg' })
+    expect(urls.some((u) => u.includes('/collections/bldg/items'))).toBe(true)
+  })
+
+  it('OGC collections 无 id → 拒绝', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ collections: [{ name: 'no-id' }] }) })))
+    await expect(fetchOgcFeatureGeoJSON('https://x/ogc')).rejects.toThrow('未找到要素集合')
+  })
+
+  it('OGC 请求非 ok → 拒绝', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false })))
+    await expect(fetchOgcFeatureGeoJSON('https://x/ogc')).rejects.toThrow('请求失败')
+  })
+
+  it('readJson JSON 解析失败回退 reject', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => { throw new Error('bad json') } })))
+    await expect(fetchOgcFeatureGeoJSON('https://x/ogc')).rejects.toThrow('bad json')
+  })
