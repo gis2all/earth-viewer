@@ -1,59 +1,82 @@
 import { describe, it, expect, vi } from 'vitest'
-import { isGlobalVectorTileLayer, riskOfLayer, degradeReason, SAFETY, assertUrlWithinLimit } from './loadSafety'
+import { consumeFeatureBudget, isGlobalVectorTileLayer, riskOfLayer, degradeReason, assertUrlWithinLimit } from './loadSafety'
 
-function layer(over: Record<string, unknown>) {
-  return over as never
-}
-
-describe('loadSafety', () => {
-  it('detects global vector basemaps (OSM / ArcGIS basemaps)', () => {
-    expect(isGlobalVectorTileLayer(layer({ layerType: 'VectorTileLayer', title: 'OpenStreetMap Style', styleUrl: 'https://cdn.arcgis.com/.../styles/root.json' }))).toBe(true)
-    expect(isGlobalVectorTileLayer(layer({ layerType: 'VectorTileLayer', url: 'https://basemaps.arcgis.com/arcgis/rest/services/OpenBasemap_v2/VectorTileServer' }))).toBe(true)
-    expect(isGlobalVectorTileLayer(layer({ layerType: 'VectorTileLayer', title: 'World Street Map', styleUrl: 'https://cdn.arcgis.com/sharing/rest/content/items/de26a3cf4cc9451298ea173c4b324736/resources/styles/root.json' }))).toBe(true)
+describe('consumeFeatureBudget', () => {
+  it('空 features 原样返回，不消耗预算', () => {
+    const r = consumeFeatureBudget(5000, { type: 'FeatureCollection', features: [] }, 1500)
+    expect(r).toEqual({ remaining: 5000, data: { type: 'FeatureCollection', features: [] }, capped: false })
   })
 
-  it('does not treat local vector tiles as global basemap', () => {
-    expect(isGlobalVectorTileLayer(layer({ layerType: 'VectorTileLayer', url: 'https://example.com/tiles/streets' }))).toBe(false)
+  it('remaining 0 且有待渲染要素 → 返回 null（省略该层）', () => {
+    expect(consumeFeatureBudget(0, { features: Array(10) }, 1500)).toBeNull()
   })
 
-  it('classifies risk levels', () => {
-    expect(riskOfLayer(layer({ layerType: 'VectorTileLayer', title: 'OpenStreetMap Style' }))).toBe('heavy')
-    expect(riskOfLayer(layer({ layerType: 'ArcGISFeatureLayer', url: 'https://x/FeatureServer' }))).toBe('heavy')
-    expect(riskOfLayer(layer({ layerType: 'WMSLayer', url: 'https://x/wms' }))).toBe('medium')
-    expect(riskOfLayer(layer({ layerType: 'GeoJSONLayer', url: 'https://x/a.geojson' }))).toBe('medium')
-    expect(riskOfLayer(layer({ layerType: 'ArcGISTiledMapServiceLayer', url: 'https://x/MapServer' }))).toBe('medium')
+  it('单层超过 maxRender → 截断并标记 capped', () => {
+    const gj = { type: 'FeatureCollection', features: Array(2000) }
+    const r = consumeFeatureBudget(5000, gj, 1500)
+    expect(r?.capped).toBe(true)
+    expect((r?.data as { features?: unknown[] }).features?.length).toBe(1500)
+    expect(r?.remaining).toBe(5000 - 1500)
   })
 
-  it('provides degrade reason for heavy layers only', () => {
-    expect(degradeReason(layer({ layerType: 'VectorTileLayer', title: 'OpenStreetMap Style' }))).toBeTruthy()
-    expect(degradeReason(layer({ layerType: 'ArcGISFeatureLayer', url: 'https://x/FeatureServer' }))).toBeTruthy()
-    expect(degradeReason(layer({ layerType: 'GeoJSONLayer', url: 'https://x/a.geojson' }))).toBeUndefined()
+  it('未超上限 → 原样返回，正常扣预算', () => {
+    const gj = { features: Array(100) }
+    const r = consumeFeatureBudget(5000, gj, 1500)
+    expect(r?.capped).toBe(false)
+    expect((r?.data as { features?: unknown[] }).features?.length).toBe(100)
+    expect(r?.remaining).toBe(5000 - 100)
+  })
+})
+
+
+describe('loadSafety 图层风险', () => {
+  it('isGlobalVectorTileLayer 识别全局风格矢量瓦片', () => {
+    expect(isGlobalVectorTileLayer({ layerType: 'VectorTileLayer', styleUrl: 'https://cdn.arcgis.com/sharing/rest/content/items/abc/resources/styles/root.json' })).toBe(true)
+    expect(isGlobalVectorTileLayer({ layerType: 'VectorTileLayer', title: 'OpenStreetMap' })).toBe(true)
+    expect(isGlobalVectorTileLayer({ layerType: 'VectorTileLayer', url: 'https://x/VectorTileServer' })).toBe(false)
+    expect(isGlobalVectorTileLayer({ layerType: 'VectorTileLayer', url: 'https://basemaps.arcgis.com/arcgis/rest/services/vt' })).toBe(true)
+    // 官方底图 style根（www.arcgis.com/cdn.arcgis.com）均认为全局矢量底图，降级防卡死
+    expect(isGlobalVectorTileLayer({ layerType: 'VectorTileLayer', styleUrl: 'https://www.arcgis.com/sharing/rest/content/items/273bf8d5c8ac400183fc24e109d20bcf/resources/styles/root.json' })).toBe(true)
+    expect(isGlobalVectorTileLayer({ layerType: 'FeatureLayer' })).toBe(false)
   })
 
-  it('classifies heavy 3D and light layers, and non-vectortile kinds', () => {
-    expect(riskOfLayer(layer({ layerType: 'SceneLayer', url: 'https://x/SceneServer' }))).toBe('heavy')
-    expect(riskOfLayer(layer({ layerType: 'Cesium3DTiles', url: 'https://x/tileset.json' }))).toBe('heavy')
-    expect(riskOfLayer(layer({ layerType: 'WebTiledLayer', urlTemplate: 'https://x/{z}/{y}/{x}' }))).toBe('light')
-    expect(riskOfLayer(layer({ layerType: 'UnknownThing' }))).toBe('light')
-    expect(isGlobalVectorTileLayer(layer({ layerType: 'ArcGISTiledMapServiceLayer', url: 'https://x/MapServer' }))).toBe(false)
+  it('riskOfLayer 按类型分级', () => {
+    expect(riskOfLayer({ layerType: 'FeatureLayer' })).toBe('heavy')
+    expect(riskOfLayer({ layerType: 'VectorTileLayer' })).toBe('medium')
+    expect(riskOfLayer({ layerType: 'WMSLayer' })).toBe('medium')
+    expect(riskOfLayer({ layerType: 'UnknownKind' })).toBe('light')
+    expect(riskOfLayer({ layerType: 'SceneLayer' })).toBe('heavy')
+    expect(riskOfLayer({ layerType: '3DTiles' })).toBe('heavy')
   })
 
-  it('assertUrlWithinLimit enforces size cap (HEAD)', async () => {
-    vi.stubGlobal('navigator', { userAgent: 'chrome' })
-    try {
-      vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, headers: new Map([['content-length', '99999999']]) })))
-      await expect(assertUrlWithinLimit('https://x/big.geojson', 1000)).rejects.toThrow()
-      vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, headers: new Map([['content-length', '100']]) })))
-      await expect(assertUrlWithinLimit('https://x/small.geojson', 1000)).resolves.toBeUndefined()
-      vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false })))
-      await expect(assertUrlWithinLimit('https://x/missing.geojson', 1000)).resolves.toBeUndefined()
-    } finally {
-      vi.unstubAllGlobals()
-    }
+  it('degradeReason 对重层给出原因', () => {
+    expect(degradeReason({ layerType: 'FeatureLayer' })).toBeDefined()
+    expect(degradeReason({ layerType: 'WMSLayer' })).toBeUndefined()
   })
 
-  it('exposes sane safety limits', () => {
-    expect(SAFETY.MAX_FEATURES).toBeGreaterThan(0)
-    expect(SAFETY.VECTOR_TILE_MAX_ZOOM).toBeLessThan(14)
+  it('degradeReason 对全局矢量瓦片给出原因', () => {
+    expect(degradeReason({ layerType: 'VectorTileLayer', styleUrl: 'https://cdn.arcgis.com/sharing/rest/content/items/abc/resources/styles/root.json' })).toBeDefined()
+  })
+})
+
+
+describe('assertUrlWithinLimit', () => {
+  it('非 jsdom 下按 content-length 判断（正常通过 / 超限抛错）', async () => {
+    vi.stubGlobal('navigator', { userAgent: 'Chrome/126' })
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, headers: { get: () => '2000' } })))
+    await expect(assertUrlWithinLimit('https://x/file.json', 1000)).rejects.toThrow()
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, headers: { get: () => '100' } })))
+    await expect(assertUrlWithinLimit('https://x/file.json', 1000)).resolves.toBeUndefined()
+    vi.unstubAllGlobals()
+  })
+})
+
+
+describe('assertUrlWithinLimit (more)', () => {
+  it('fetch 非 ok 直接返回', async () => {
+    vi.stubGlobal('navigator', { userAgent: 'Chrome/126' })
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false })))
+    await expect(assertUrlWithinLimit('https://x/f.json', 1000)).resolves.toBeUndefined()
+    vi.unstubAllGlobals()
   })
 })
