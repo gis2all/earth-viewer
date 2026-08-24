@@ -92,3 +92,20 @@ export async function fetchVectorTileTemplates(
   }
   return [...new Set(templates)]
 }
+
+/**
+ * 给 MVTDataProvider 背靠的 Cesium3DTileset 设置缓存内存上限。
+ * Cesium 会在 cacheBytes 超限且瓦片不在视口内时自动卸载该瓦片内容（就是业界 memoryLimitMB 模式）。
+ * 返回是否成功设置（provider 尚无 tileset 时为 false）。
+ */
+export function applyVectorTileMemoryLimit(
+  provider: { tileset?: { cacheBytes: number; maximumCacheOverflowBytes: number } | null | undefined } | null | undefined,
+  limitBytes: number,
+  overflowBytes?: number
+): boolean {
+  const tileset = provider?.tileset
+  if (!tileset) return false
+  tileset.cacheBytes = limitBytes
+  if (typeof overflowBytes === 'number' && overflowBytes >= 0) tileset.maximumCacheOverflowBytes = overflowBytes
+  return true
+}

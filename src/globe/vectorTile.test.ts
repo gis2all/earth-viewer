@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { decodeVectorTileLayers, vectorTileUrl, fetchVectorTileGeoJSON, fetchVectorTileTemplates, toCesiumMvtTemplate } from './vectorTile'
+import { decodeVectorTileLayers, vectorTileUrl, fetchVectorTileGeoJSON, fetchVectorTileTemplates, toCesiumMvtTemplate, applyVectorTileMemoryLimit } from './vectorTile'
 
 // 构造一个假 VectorTile（避免真实 pbf 二进制）
 function fakeTile(features: { type: number; props?: Record<string, unknown>; geom?: unknown }[]) {
@@ -78,5 +78,29 @@ describe('fetchVectorTileGeoJSON', () => {
   it('HTTP 失败抛错', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false })))
     await expect(fetchVectorTileGeoJSON('https://x/tile.pbf', 0, 0, 0)).rejects.toThrow('矢量瓦片加载失败')
+  })
+})
+
+describe('applyVectorTileMemoryLimit', () => {
+  it('给存在 tileset 的 provider 设置 cacheBytes 与 maximumCacheOverflowBytes', () => {
+    const tileset = { cacheBytes: 0, maximumCacheOverflowBytes: 0 }
+    const provider = { tileset }
+    const ok = applyVectorTileMemoryLimit(provider as never, 64 * 1024 * 1024, 16 * 1024 * 1024)
+    expect(ok).toBe(true)
+    expect(tileset.cacheBytes).toBe(64 * 1024 * 1024)
+    expect(tileset.maximumCacheOverflowBytes).toBe(16 * 1024 * 1024)
+  })
+
+  it('无 tileset 时返回 false 且不报错', () => {
+    expect(applyVectorTileMemoryLimit({} as never, 1024)).toBe(false)
+    expect(applyVectorTileMemoryLimit(null, 1024)).toBe(false)
+    expect(applyVectorTileMemoryLimit({ tileset: null } as never, 1024)).toBe(false)
+  })
+
+  it('未传 overflowBytes 时不改动它', () => {
+    const tileset = { cacheBytes: 0, maximumCacheOverflowBytes: 5 }
+    applyVectorTileMemoryLimit({ tileset } as never, 2048)
+    expect(tileset.cacheBytes).toBe(2048)
+    expect(tileset.maximumCacheOverflowBytes).toBe(5)
   })
 })
