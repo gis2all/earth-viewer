@@ -113,6 +113,16 @@ vi.mock('cesium', () => {
       fromDegrees: (...a: number[]) => ({ tag: 'fromDegrees', args: a }),
       fromRadians: (...a: number[]) => ({ tag: 'fromRadians', args: a }),
     },
+    PointPrimitiveCollection: vi.fn(function () { return { add: vi.fn() } }),
+    PrimitiveCollection: vi.fn(function () { return { add: vi.fn(), remove: vi.fn() } }),
+    PolylineCollection: vi.fn(function () { return { add: vi.fn() } }),
+    GeometryInstance: vi.fn(function () { return { inst: true } }),
+    PolygonGeometry: vi.fn(function () { return { geom: true } }),
+    PolygonHierarchy: vi.fn(function () { return { hier: true } }),
+    ColorGeometryInstanceAttribute: { fromColor: vi.fn(() => ({ color: true })) },
+    PerInstanceColorAppearance: vi.fn(function () { return { appearance: true } }),
+    Primitive: vi.fn(function () { return { prim: true } }),
+
     UrlTemplateImageryProvider: vi.fn(function (opts: unknown) { return { provider: 'urlTemplate', opts } }),
     GeographicTilingScheme: vi.fn(function () { return { scheme: 'geo' } }),
     ImageryLayer: vi.fn(function (provider: unknown) {
@@ -149,6 +159,7 @@ vi.mock('./vectorTile', () => ({
     u + '/tile/' + (z === undefined ? '{z}/{y}/{x}' : z + '/' + y + '/' + x) + '.pbf'),
   fetchVectorTileTemplates: vi.fn(() => Promise.resolve(['https://x/VectorTileServer/tile/{z}/{y}/{x}.pbf'])),
   toCesiumMvtTemplate: vi.fn((u: string) => u.replace('{z}/{y}/{x}', '{z}/{x}/{y}')),
+  applyVectorTileMemoryLimit: vi.fn(() => true),
 }))
 
 vi.mock('./ogc', () => ({
@@ -207,6 +218,7 @@ describe('GlobeViewer', () => {
   afterEach(() => {
     cleanup()
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
 
   it('创建 Viewer：关闭多余控件、注册相机、添加三层底图、监听事件', async () => {
@@ -352,7 +364,7 @@ describe('GlobeViewer', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
-    expect(v.dataSources.add).toHaveBeenCalled()
+    expect(v.scene.primitives.add).toHaveBeenCalled()
     expect(useAppStore.getState().layerErrors['feat']).toBeUndefined()
   })
 
@@ -419,6 +431,7 @@ describe('GlobeViewer 补强', () => {
   afterEach(() => {
     cleanup()
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
 
   it('无相机 FeatureLayer 添加到球上，并回退 flyToHome（初始位置）', async () => {
@@ -448,7 +461,7 @@ describe('GlobeViewer 补强', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
-    expect(v.dataSources.add).toHaveBeenCalled()
+    expect(v.scene.primitives.add).toHaveBeenCalled()
     // 无相机 → 回退到"程序初始位置"（camera.flyTo 至少被调用一次）
     expect(v.camera.flyTo).toHaveBeenCalled()
   })
@@ -498,6 +511,84 @@ describe('GlobeViewer 补强', () => {
     expect(camCall![0].orientation.pitch).toBeCloseTo((45 - 90) * Math.PI / 180)
   })
 
+  it('业务层超过上限时仅渲染前 N 个并提示', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, json: async () => ({ features: [] }) }))
+    )
+    render(<GlobeViewer />)
+    await flush()
+    const v = viewer()
+    act(() => {
+      useAppStore.getState().addLayer({
+        id: 'many',
+        title: 'Many',
+        kind: 'webmap',
+        webmap: {
+          baseMap: { baseMapLayers: [] },
+          operationalLayers: Array.from({ length: 8 }, (_, i) => ({ id: 'm' + i, title: 'M' + i, url: 'https://x/FeatureServer/0', layerType: 'ArcGISFeatureLayer' })),
+        },
+      })
+    })
+    await flush()
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(v.scene.primitives.add).toHaveBeenCalled()
+    expect(screen.getByText(/仅渲染前 5 个/)).toBeInTheDocument()
+  })
+
+  it('全局矢量瓦片底图降级为 OSM 栅格（不冻结）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ features: [] }) })))
+    render(<GlobeViewer />)
+    await flush()
+    const v = viewer()
+    act(() => {
+      useAppStore.getState().addLayer({
+        id: 'gvt',
+        title: 'Streets',
+        kind: 'webmap',
+        webmap: {
+          baseMap: {
+            baseMapLayers: [{ id: 'vt', title: 'World Street Map', url: '', layerType: 'VectorTileLayer', styleUrl: 'https://cdn.arcgis.com/sharing/rest/content/items/abc/resources/styles/root.json' }],
+          },
+          operationalLayers: [],
+        },
+      })
+    })
+    await flush()
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(v.imageryLayers.add).toHaveBeenCalled()
+  })
+
+  it('非法 webmap（operationalLayers 非数组）触发渲染队列兜底，不阻断后续', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, json: async () => ({ features: [] }) }))
+    )
+    render(<GlobeViewer />)
+    await flush()
+    act(() => {
+      useAppStore.getState().addLayer({
+        id: 'bad',
+        title: 'Bad',
+        kind: 'webmap',
+        // 故意把 operationalLayers 设为普通对象（非数组），collectLayers for..of 会抛
+        webmap: { baseMap: { baseMapLayers: [] }, operationalLayers: { not: 'array' } as unknown as [] },
+      })
+    })
+    await flush()
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(useAppStore.getState().layerErrors.bad).toContain('图层加载失败')
+  })
+
   it('pitch 超出范围时钳制回合法区间', async () => {
     render(<GlobeViewer />)
     await flush()
@@ -532,6 +623,7 @@ describe('GlobeViewer 补强', () => {
   })
 
   it('添加 GeoJSON 图层 → GeoJsonDataSource.load 并加入 dataSources', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ features: [] }) })))
     render(<GlobeViewer />)
     await flush()
     const v = viewer()
@@ -556,7 +648,11 @@ describe('GlobeViewer 补强', () => {
     expect(v.dataSources.add).toHaveBeenCalled()
   })
 
-  it('添加 KML 图层 → KmlDataSource.load 并加入 dataSources', async () => {
+  it('添加 KML 图层 → 转 GeoJSON 预算管线并加入 dataSources', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      text: async () => '<kml xmlns="http://www.opengis.net/kml/2.2"><Document><Placemark><name>P</name><Point><coordinates>1,2</coordinates></Point></Placemark></Document></kml>',
+    })))
     render(<GlobeViewer />)
     await flush()
     const v = viewer()
@@ -573,10 +669,8 @@ describe('GlobeViewer 补强', () => {
         },
       })
     })
-    await flush()
     await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
+      for (let i = 0; i < 12; i++) await Promise.resolve()
     })
     expect(v.dataSources.add).toHaveBeenCalled()
   })
@@ -607,7 +701,8 @@ describe('GlobeViewer 补强', () => {
     expect(h.setInputAction.mock.calls.some((c: unknown[]) => c[1] === 'MIDDLE_DOWN')).toBe(true)
   })
 
-  it('GeoJSON 加载失败 → setLayerError 并提示', async () => {
+  it('GeoJSON \u52a0\u8f7d\u5931\u8d25 \u2192 setLayerError \u5e76\u63d0\u793a', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ features: [] }) })))
     render(<GlobeViewer />)
     await flush()
         const { GeoJsonDataSource } = await import('cesium')
@@ -630,10 +725,11 @@ describe('GlobeViewer 补强', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
-    expect(useAppStore.getState().layerErrors['gj']).toMatch(/GeoJSON 图层加载失败/)
+    expect(useAppStore.getState().layerErrors['gj']).toMatch(/GeoJSON \u56fe\u5c42\u52a0\u8f7d\u5931\u8d25/)
   })
 
-  it('KML 加载失败 → setLayerError 并提示', async () => {
+  it('KML \u52a0\u8f7d\u5931\u8d25 \u2192 setLayerError \u5e76\u63d0\u793a', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('net') }))
     render(<GlobeViewer />)
     await flush()
         const { KmlDataSource } = await import('cesium')
@@ -652,11 +748,35 @@ describe('GlobeViewer 补强', () => {
       })
     })
     await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-      await Promise.resolve()
+      for (let i = 0; i < 12; i++) await Promise.resolve()
     })
-    expect(useAppStore.getState().layerErrors['kml']).toMatch(/KML 图层加载失败/)
+    expect(useAppStore.getState().layerErrors['kml']).toMatch(/KML \u56fe\u5c42\u52a0\u8f7d\u5931\u8d25/)
+  })
+
+  it('KML 转 GeoJSON 失败 → 回退原生 KmlDataSource.load', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, text: async () => '<not-kml' })))
+    render(<GlobeViewer />)
+    await flush()
+    const v = viewer()
+    act(() => {
+      useAppStore.getState().addLayer({
+        id: 'kml2',
+        title: 'Places',
+        kind: 'webmap',
+        webmap: {
+          baseMap: { baseMapLayers: [] },
+          operationalLayers: [
+            { id: 'k1', title: 'Places', url: 'https://x/places.kml', layerType: 'KMLLayer' },
+          ],
+        },
+      })
+    })
+    await act(async () => {
+      for (let i = 0; i < 12; i++) await Promise.resolve()
+    })
+    const { KmlDataSource } = await import('cesium')
+    expect(KmlDataSource.load).toHaveBeenCalled()
+    expect(v.dataSources.add).toHaveBeenCalled()
   })
   it('添加 3D Scene 图层 → I3SDataProvider.fromUrl 并加入 primitives', async () => {
     render(<GlobeViewer />)
@@ -769,7 +889,7 @@ describe('GlobeViewer 补强', () => {
     }))
     render(<GlobeViewer />)
     await flush()
-    viewer()
+    const v = viewer()
     const { GeoJsonDataSource } = await import('cesium')
     const load = GeoJsonDataSource.load as unknown as ReturnType<typeof vi.fn>
     load.mockClear()
@@ -785,7 +905,8 @@ describe('GlobeViewer 补强', () => {
       })
     })
     await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
-    expect(load).toHaveBeenCalled()
+    expect(load).not.toHaveBeenCalled()
+    expect(v.scene.primitives.add).toHaveBeenCalled()
     vi.unstubAllGlobals()
   })
 
@@ -808,8 +929,31 @@ describe('GlobeViewer 补强', () => {
       })
     })
     await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
-    expect(fetchOgc).toHaveBeenCalledWith('https://x/wfs', expect.objectContaining({ type: 'WFS' }))
+    expect(fetchOgc).toHaveBeenCalledWith('https://x/wfs', expect.objectContaining({ type: 'WFS' }), expect.anything())
     expect(v.dataSources.add).toHaveBeenCalled()
+  })
+
+  it('WFS 数据超出单层上限时降级并提示', async () => {
+    const { fetchOgcFeatureGeoJSON } = await import('./ogc')
+    const ogcMock = fetchOgcFeatureGeoJSON as unknown as ReturnType<typeof vi.fn>
+    ogcMock.mockResolvedValueOnce({ type: 'FeatureCollection', features: Array(1600) as never })
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ features: [] }) })))
+    render(<GlobeViewer />)
+    await flush()
+    act(() => {
+      useAppStore.getState().addLayer({
+        id: 'wfs-cap',
+        title: 'WfsCap',
+        kind: 'webmap',
+        webmap: {
+          baseMap: { baseMapLayers: [] },
+          operationalLayers: [{ id: 'w', title: 'Wfs', url: 'https://x/wfs', type: 'WFS' }],
+        },
+      })
+    })
+    await flush()
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(screen.getByText(/数据量大/)).toBeInTheDocument()
   })
 
   it('添加 CSV 图层 → 转为 GeoJSON 并加入 dataSources', async () => {
@@ -831,7 +975,7 @@ describe('GlobeViewer 补强', () => {
       })
     })
     await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
-    expect(fetchCsv).toHaveBeenCalledWith('https://x/points.csv', expect.objectContaining({ layerType: 'CSVLayer' }))
+    expect(fetchCsv).toHaveBeenCalledWith('https://x/points.csv', expect.objectContaining({ layerType: 'CSVLayer' }), expect.anything())
     expect(v.dataSources.add).toHaveBeenCalled()
   })
 
@@ -862,6 +1006,7 @@ describe('GlobeViewer 补强', () => {
       clustering: { enabled: false, pixelRange: 0, minimumClusterSize: 0, clusterBillboards: false },
     } as never
     ;(GeoJsonDataSource.load as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(ds)
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ features: [] }) })))
     render(<GlobeViewer />)
     await flush()
     const v = viewer()
@@ -909,4 +1054,53 @@ describe('viewpointCameraFromWebmap', () => {
     expect(viewpointCameraFromWebmap({ viewpoint: {} } as never)).toBeNull()
     expect(viewpointCameraFromWebmap(undefined)).toBeNull()
   })
+
+
+  it('3D Scene 加载失败 → setLayerError', async () => {
+    render(<GlobeViewer />)
+    await flush()
+    const { I3SDataProvider } = await import('cesium')
+    ;(I3SDataProvider.fromUrl as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('boom'))
+    act(() => {
+      useAppStore.getState().addLayer({ id: 'scene-fail', title: 'B', kind: 'webmap', webmap: { baseMap: { baseMapLayers: [] }, operationalLayers: [{ id: 's1', title: 'B', url: 'https://x/SceneServer/layers/0', layerType: 'ArcGISSceneServiceLayer' }] } })
+    })
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(useAppStore.getState().layerErrors['scene-fail']).toMatch(/3D 场景加载失败/)
+  })
+
+  it('3D Tiles 加载失败 → setLayerError', async () => {
+    render(<GlobeViewer />)
+    await flush()
+    const { Cesium3DTileset } = await import('cesium')
+    ;(Cesium3DTileset.fromUrl as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('boom'))
+    act(() => {
+      useAppStore.getState().addLayer({ id: 'tiles-fail', title: 'T', kind: 'webmap', webmap: { baseMap: { baseMapLayers: [] }, operationalLayers: [{ id: 't1', title: 'T', url: 'https://x/tileset.json', layerType: '3DTilesService' }] } })
+    })
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(useAppStore.getState().layerErrors['tiles-fail']).toMatch(/3D Tiles 加载失败/)
+  })
+
+  it('WFS 加载失败 → setLayerError', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ features: [] }) })))
+    render(<GlobeViewer />)
+    await flush()
+    const { fetchOgcFeatureGeoJSON } = await import('./ogc')
+    ;(fetchOgcFeatureGeoJSON as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('boom'))
+    act(() => {
+      useAppStore.getState().addLayer({ id: 'wfs-fail', title: 'R', kind: 'webmap', webmap: { baseMap: { baseMapLayers: [] }, operationalLayers: [{ id: 'w1', title: 'R', url: 'https://x/wfs', type: 'WFS' }] } })
+    })
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(useAppStore.getState().layerErrors['wfs-fail']).toMatch(/WFS\/OGC 要素图层加载失败/)
+  })
+
+
+
+  it('Viewer 创建失败 → 显示地球初始化失败', async () => {
+    const { Viewer } = await import('cesium')
+    ;(Viewer as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => { throw new Error('boom') })
+    render(<GlobeViewer />)
+    await flush()
+    expect(screen.getByText(/地球初始化失败/)).toBeInTheDocument()
+  })
+
 })

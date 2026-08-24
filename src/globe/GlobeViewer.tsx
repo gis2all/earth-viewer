@@ -5,8 +5,14 @@ import { useAppStore } from '../state/store'
 const useLayerError = () => useAppStore((s) => s.setLayerError)
 const useClearLayerError = () => useAppStore((s) => s.clearLayerError)
 import { registerViewer, unregisterViewer, flyToHome } from './cameraApi'
-import { renderableLayersFromWebmap } from './assess'
-import { isGlobalVectorTileLayer, SAFETY, assertUrlWithinLimit } from './loadSafety'
+import { renderableLayersFromWebmap, skippedBusinessLayers, MAX_BUSINESS_LAYERS } from './assess'
+import { isGlobalVectorTileLayer, SAFETY, assertUrlWithinLimit, consumeFeatureBudget } from './loadSafety'
+import { applyVertexBudget } from './viewport/budget'
+import { queryViewportData } from './viewport/query'
+import { runViewportProcess } from './viewport/worker'
+import { hasPrimitiveRendering } from './viewport/primitive'
+import { createViewportController } from './viewport/viewportController'
+import { viewEnvelopeFromCamera } from './viewport/envelope'
 import {
   providerForWebLayer,
   isFeatureLayer,
@@ -17,16 +23,17 @@ import {
   is3dTilesLayer,
   isWfsLayer,
   isCsvLayer,
-  fetchFeatureGeoJSON,
   fetchFeatureStyle,
   fetchFeatureRenderer,
+  withFetchTimeout,
   WORLD_IMAGERY_TILES,
   WORLD_LABELS_TILES,
   WORLD_IMAGERY_WGS84_TILES,
 } from './webmap'
-import { reprojectFeatureCollection, detectServiceWkid, rendererToStyleFn, applyFeatureStyler, reprojectCoordinates } from './vector'
+import { rendererToStyleFn, applyFeatureStyler, reprojectCoordinates } from './vector'
 import { loadI3S, load3DTiles } from './scene'
-import { fetchVectorTileTemplates, toCesiumMvtTemplate } from './vectorTile'
+import { parseKmlToGeoJSON, kmlStyleToFeatureStyle, type KmlStyleSpec } from './kml'
+import { fetchVectorTileTemplates, toCesiumMvtTemplate, applyVectorTileMemoryLimit } from './vectorTile'
 import { fetchOgcFeatureGeoJSON } from './ogc'
 import { fetchCsvGeoJSON } from './csv'
 
@@ -125,6 +132,8 @@ export function viewpointCameraFromWebmap(wm: Record<string, unknown> | undefine
   return { destination, orientation: { heading, pitch, roll: 0 } }
 }
 
+const VIEWPORT_FALLBACK = { west: -180, south: -90, east: 180, north: 90 }
+
 export function GlobeViewer() {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewerRef = useRef<Cesium.Viewer | null>(null)
@@ -135,8 +144,9 @@ export function GlobeViewer() {
   effectsRef.current = effects
   const setLayerError = useLayerError()
   const clearLayerError = useClearLayerError()
-  const layerMapRef = useRef<Map<string, { layers: Cesium.ImageryLayer[]; ds: Cesium.DataSource[]; prims: unknown[]; flew: boolean }>>(new Map())
+  const layerMapRef = useRef<Map<string, { layers: Cesium.ImageryLayer[]; ds: Cesium.DataSource[]; prims: unknown[]; flew: boolean; abort?: AbortController; viewportController?: { update(env: { west: number; south: number; east: number; north: number }): Promise<void>; dispose(): void }; cameraMoveHandler?: () => void }>>(new Map())
   const [glError, setGlError] = useState<string>('')
+  const [layerNote, setLayerNote] = useState<string>('')
 
   // 创建 viewer（仅一次）
   useEffect(() => {
@@ -363,6 +373,9 @@ export function GlobeViewer() {
     // 移除已删除的 Web Map 图层
     for (const [id, rec] of layerMapRef.current) {
       if (!added.some((a) => a.id === id)) {
+        rec.abort?.abort()
+        if (rec.cameraMoveHandler) (v.camera.moveEnd as unknown as { removeEventListener?: (h: () => void) => void } | undefined)?.removeEventListener?.(rec.cameraMoveHandler)
+        rec.viewportController?.dispose()
         rec.layers.forEach((l) => layers.remove(l, true))
         rec.ds.forEach((d) => v.dataSources.remove(d, true))
         if (v.scene.primitives) rec.prims.forEach((p) => (v.scene.primitives as unknown as { remove: (x: unknown, y?: boolean) => void }).remove(p, true))
@@ -375,11 +388,27 @@ export function GlobeViewer() {
     const renderOperationalLayers = async (
       v: Cesium.Viewer,
       a: (typeof added)[number],
-      rec: { layers: Cesium.ImageryLayer[]; ds: Cesium.DataSource[]; prims: unknown[]; flew: boolean },
+      rec: { layers: Cesium.ImageryLayer[]; ds: Cesium.DataSource[]; prims: unknown[]; flew: boolean; abort?: AbortController; viewportController?: { update(env: { west: number; south: number; east: number; north: number }): Promise<void>; dispose(): void }; cameraMoveHandler?: () => void },
     ) => {
       const wm = a.webmap as Record<string, unknown> | undefined
       if (!wm) return
+      const skippedBusiness = skippedBusinessLayers(wm)
+      if (skippedBusiness > 0) setLayerNote(`此地图含多个业务图层，仅渲染前 ${MAX_BUSINESS_LAYERS} 个（略过 ${skippedBusiness} 个）`)
       const keepAlive = () => !cancelled && !v.isDestroyed() && added.some((x) => x.id === a.id)
+      const signal = rec.abort?.signal
+      const budget: { remaining: number } = { remaining: SAFETY.MAX_TOTAL_FEATURES }
+      // 预算/降级：业务层要素合计超预算则跳过；单层超 MAX_RENDER_FEATURES 则截断，防 OOM/阻塞
+      const consumeBudget = (gj: unknown): { data: unknown; capped: boolean } | null => {
+        // ① 顶点预算：先抽稀再截断（防单个大 polygon 内存爆炸）
+        const raw = gj as { type?: string; features?: Record<string, unknown>[] } | null
+        const features = Array.isArray(raw?.features) ? raw.features : []
+        const vb = applyVertexBudget({ type: 'FeatureCollection', features }, SAFETY.MAX_RENDER_VERTICES)
+        // ② 要素数预算：再限制对象个数
+        const r = consumeFeatureBudget(budget.remaining, vb.data, SAFETY.MAX_RENDER_FEATURES)
+        if (!r) return null
+        budget.remaining = r.remaining
+        return { data: r.data, capped: vb.capped || r.capped }
+      }
       // 相机优先：Web Map/Scene 自带初始相机 → 飞相机；否则回退到"程序初始位置"
       if (!rec.flew) {
         rec.flew = true
@@ -433,6 +462,7 @@ export function GlobeViewer() {
             .then((providers) => {
               if (!keepAlive()) return
               providers.forEach((provider) => {
+                applyVectorTileMemoryLimit(provider as never, SAFETY.VECTOR_TILE_MEMORY_LIMIT, SAFETY.VECTOR_TILE_CACHE_OVERFLOW)
                 v.scene.primitives.add(provider)
                 rec.prims.push(provider)
               })
@@ -471,10 +501,13 @@ export function GlobeViewer() {
               })
           } else if (isWfsLayer(op)) {
             // WFS / OGC API Features：通过协议适配器读取 GeoJSON
-            fetchOgcFeatureGeoJSON(op.url, op)
+            fetchOgcFeatureGeoJSON(op.url, op, signal)
               .then((gj) => {
                 if (cancelled || v.isDestroyed()) return undefined
-                return Cesium.GeoJsonDataSource.load(gj as never)
+                const b = consumeBudget(gj)
+                if (!b) { setLayerNote('数据总量过大，已省略部分图层'); return undefined }
+                if (b.capped) setLayerNote('数据量大，仅显示部分要素')
+                return Cesium.GeoJsonDataSource.load(b.data as never)
               })
               .then((ds) => {
                 if (!keepAlive() || !ds) return
@@ -490,10 +523,13 @@ export function GlobeViewer() {
               })
           } else if (isCsvLayer(op)) {
             // CSV：按位置字段转换为点 GeoJSON
-            fetchCsvGeoJSON(op.url, op)
+            fetchCsvGeoJSON(op.url, op, signal)
               .then((gj) => {
                 if (cancelled || v.isDestroyed()) return undefined
-                return Cesium.GeoJsonDataSource.load(gj as never)
+                const b = consumeBudget(gj)
+                if (!b) { setLayerNote('数据总量过大，已省略部分图层'); return undefined }
+                if (b.capped) setLayerNote('数据量大，仅显示部分要素')
+                return Cesium.GeoJsonDataSource.load(b.data as never)
               })
               .then((ds) => {
                 if (!keepAlive() || !ds) return
@@ -508,33 +544,57 @@ export function GlobeViewer() {
                 setLayerError(a.id, 'CSV 图层加载失败：' + (op.title || op.url))
               })
           } else if (isFeatureLayer(op)) {
-            // 要素/WFS：拉取 GeoJSON + 符号样式 + 服务 wkid，再重投影到 WGS84，并按渲染器逐要素着色
-            Promise.all([fetchFeatureGeoJSON(op.url), fetchFeatureStyle(op.url), detectServiceWkid(op.url), fetchFeatureRenderer(op.url)])
-              .then(([gj, style, wkid, renderer]) => {
+            // ★视口驱动 + Primitive/回退：只取相机可见 + 抽稀/预算，并随相机 moveEnd 持续更新（P1 完整形态）
+            const env0 = viewEnvelopeFromCamera(v.scene.camera as never) ?? VIEWPORT_FALLBACK
+            Promise.all([fetchFeatureStyle(op.url), fetchFeatureRenderer(op.url)])
+              .then(([style, renderer]) => {
                 if (cancelled || v.isDestroyed()) return undefined
-                const data = reprojectFeatureCollection(gj as never, wkid)
+                if (hasPrimitiveRendering()) {
+                  try {
+                    const ctl = createViewportController(v.scene, v.scene.primitives, { serviceUrl: op.url as string, maxFeatures: SAFETY.MAX_FEATURES })
+                    rec.viewportController = ctl
+                    const handler = () => void ctl.update(viewEnvelopeFromCamera(v.scene.camera as never) ?? VIEWPORT_FALLBACK)
+                    rec.cameraMoveHandler = handler
+                    const moveEnd = (v.camera.moveEnd as unknown as { addEventListener?: (h: () => void) => void } | undefined)
+                    moveEnd?.addEventListener?.(handler)
+                    void ctl.update(env0)
+                    clearLayerError(a.id)
+                    return null
+                  } catch (e) {
+                    console.error('[layer] Primitive 渲染失败，回退 GeoJSON', op.url, e)
+                    return Cesium.GeoJsonDataSource.load({ type: 'FeatureCollection', features: [] } as never)
+                  }
+                }
                 const styleFn = rendererToStyleFn((renderer ?? undefined) as Record<string, unknown> | undefined)
-                return Cesium.GeoJsonDataSource.load(data as never, style
-                  ? {
-                      markerColor: style.markerColor,
-                      markerSize: style.markerSize,
-                      stroke: style.stroke,
-                      strokeWidth: style.strokeWidth,
-                      fill: style.fill,
-                    }
-                  : undefined)
-                  .then((ds) => {
-                    applyFeatureStyler(ds as never, styleFn)
-                    enablePointClustering(ds as Cesium.DataSource)
-                    return ds
+                return queryViewportData(op.url as string, env0, { maxFeatures: SAFETY.MAX_FEATURES, outFields: '*' }, signal)
+                  .then((res) => {
+                    if (cancelled || v.isDestroyed()) return undefined
+                    if (res.capped) setLayerNote('数据量大，已按视口/顶点预算降级显示')
+                    return Cesium.GeoJsonDataSource.load(
+                      { type: 'FeatureCollection', features: res.features } as never,
+                      style
+                        ? {
+                            markerColor: style.markerColor,
+                            markerSize: style.markerSize,
+                            stroke: style.stroke,
+                            strokeWidth: style.strokeWidth,
+                            fill: style.fill,
+                          }
+                        : undefined
+                    )
+                      .then((ds) => {
+                        applyFeatureStyler(ds as never, styleFn)
+                        enablePointClustering(ds as Cesium.DataSource)
+                        return ds
+                      })
                   })
               })
               .then((ds) => {
+                if (ds === null) return
                 if (!keepAlive() || !ds) return
                 enablePointClustering(ds as Cesium.DataSource)
                 v.dataSources.add(ds)
                 rec.ds.push(ds)
-
                 clearLayerError(a.id)
               })
               .catch((e) => {
@@ -543,9 +603,17 @@ export function GlobeViewer() {
               })
           } else if (isGeoJsonLayer(op)) {
             try { await assertUrlWithinLimit(op.url, SAFETY.MAX_FILE_BYTES) } catch (e) { console.error('[layer] GeoJSON \u8fc7\u5927', op.url, e); setLayerError(a.id, 'GeoJSON \u6587\u4ef6\u8fc7\u5927\uff0c\u5df2\u9650\u5236\u52a0\u8f7d'); continue }
-            Cesium.GeoJsonDataSource.load(op.url)
+            fetch(op.url, { signal: withFetchTimeout(signal) })
+              .then((r) => r.json().catch(() => null))
+              .then((json) => {
+                if (cancelled || v.isDestroyed()) return undefined
+                return runViewportProcess({ geojson: json }).then((res) => {
+                  if (res.capped) setLayerNote('文件数据量大，已按顶点预算降级显示')
+                  return Cesium.GeoJsonDataSource.load({ type: 'FeatureCollection', features: res.features } as never)
+                })
+              })
               .then((ds) => {
-                if (!keepAlive()) return
+                if (!keepAlive() || !ds) return
                 enablePointClustering(ds as Cesium.DataSource)
                 v.dataSources.add(ds)
                 rec.ds.push(ds)
@@ -557,18 +625,44 @@ export function GlobeViewer() {
                 setLayerError(a.id, 'GeoJSON 图层加载失败：' + (op.title || op.url))
               })
           } else if (isKmlLayer(op)) {
-            try { await assertUrlWithinLimit(op.url, SAFETY.MAX_FILE_BYTES) } catch (e) { console.error('[layer] KML \u8fc7\u5927', op.url, e); setLayerError(a.id, 'KML \u6587\u4ef6\u8fc7\u5927\uff0c\u5df2\u9650\u5236\u52a0\u8f7d'); continue }
-            Cesium.KmlDataSource.load(op.url)
+            const kmlUrl = op.url as string
+            try { await assertUrlWithinLimit(kmlUrl, SAFETY.KML_MAX_BYTES) } catch (e) { console.error('[layer] KML \u8fc7\u5927', kmlUrl, e); setLayerError(a.id, 'KML \u6587\u4ef6\u8fc7\u5927\uff0c\u5df2\u9650\u5236\u52a0\u8f7d'); continue }
+            // KML \u2192 GeoJSON \u2192 Worker \u9876\u70b9/\u8981\u7d20\u9884\u7b97\uff1a\u80fd\u89e3\u6790\u51fa\u8981\u7d20\u7684\u8d70\u9884\u7b97\u7ba1\u7ebf\uff0c\u5426\u5219\u56de\u9000\u539f\u751f KmlDataSource.load\uff08\u4fdd\u7559\u56fe\u6807/\u6837\u5f0f\uff09\u3002
+            const kmlStyleFn = (props?: Record<string, unknown>) => kmlStyleToFeatureStyle((props?.kmlStyle ?? undefined) as KmlStyleSpec | undefined)
+            Promise.resolve()
+              .then(() => fetch(kmlUrl, { signal: withFetchTimeout(signal) }))
+              .then((r) => r.text())
+              .then((kmlText) => {
+                const gj = parseKmlToGeoJSON(kmlText)
+                if (gj.features.length === 0) throw new Error('no features')
+                return runViewportProcess({ geojson: gj, maxVertices: SAFETY.MAX_RENDER_VERTICES, maxFeatures: SAFETY.MAX_RENDER_FEATURES })
+                  .then((res) => {
+                    if (res.capped) setLayerNote('KML \u6570\u636e\u91cf\u5927\uff0c\u5df2\u6309\u9876\u70b9/\u8981\u7d20\u9884\u7b97\u964d\u7ea7\u663e\u793a')
+                    return Cesium.GeoJsonDataSource.load({ type: 'FeatureCollection', features: res.features } as never)
+                  })
+              })
               .then((ds) => {
-                if (!keepAlive()) return
+                if (!keepAlive() || !ds) return
+                applyFeatureStyler(ds as never, kmlStyleFn)
+                enablePointClustering(ds as Cesium.DataSource)
                 v.dataSources.add(ds)
                 rec.ds.push(ds)
-
                 clearLayerError(a.id)
               })
               .catch((e) => {
-                console.error('[layer] KML 图层加载失败', op.url, e)
-                setLayerError(a.id, 'KML 图层加载失败：' + (op.title || op.url))
+                console.warn('[layer] KML \u8f6c GeoJSON \u5931\u8d25\uff0c\u56de\u9000\u539f\u751f', kmlUrl, e)
+                // \u56de\u9000\uff1a\u539f\u751f KML \u6e32\u67d3\uff08\u4fdd\u7559\u56fe\u6807/\u6837\u5f0f\uff09
+                return Cesium.KmlDataSource.load(kmlUrl)
+                  .then((ds) => {
+                    if (!keepAlive() || !ds) return
+                    v.dataSources.add(ds)
+                    rec.ds.push(ds)
+                    clearLayerError(a.id)
+                  })
+                  .catch((e2) => {
+                    console.error('[layer] KML \u56fe\u5c42\u52a0\u8f7d\u5931\u8d25', kmlUrl, e2)
+                    setLayerError(a.id, 'KML \u56fe\u5c42\u52a0\u8f7d\u5931\u8d25\uff1a' + (op.title || kmlUrl))
+                  })
               })
           }
         }
@@ -579,9 +673,11 @@ export function GlobeViewer() {
     let renderQueue: Promise<unknown> = Promise.resolve()
     for (const a of added) {
       if (a.kind !== 'webmap' || !a.webmap || layerMapRef.current.has(a.id)) continue
-      const rec: { layers: Cesium.ImageryLayer[]; ds: Cesium.DataSource[]; prims: unknown[]; flew: boolean } = { layers: [], ds: [], prims: [], flew: false }
+      const rec: { layers: Cesium.ImageryLayer[]; ds: Cesium.DataSource[]; prims: unknown[]; flew: boolean; abort?: AbortController; viewportController?: { update(env: { west: number; south: number; east: number; north: number }): Promise<void>; dispose(): void }; cameraMoveHandler?: () => void } = { layers: [], ds: [], prims: [], flew: false, abort: new AbortController() }
       layerMapRef.current.set(a.id, rec)
-      renderQueue = renderQueue.then(() => renderOperationalLayers(v, a, rec))
+      renderQueue = renderQueue
+        .then(() => renderOperationalLayers(v, a, rec))
+        .catch((e) => { console.error('[layer] webmap 渲染失败', a.id, e); setLayerError(a.id, '图层加载失败：' + (a.title || a.id)) })
     }
 
     return () => {
@@ -595,6 +691,14 @@ export function GlobeViewer() {
       {glError && (
         <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 14, padding: 24, textAlign: 'center', background: 'rgba(0,0,0,0.6)', zIndex: 10 }}>
           {glError}
+        </div>
+      )}
+      {layerNote && (
+        <div
+          style={{ position: 'absolute', left: 12, bottom: 12, maxWidth: '70%', padding: '8px 12px', borderRadius: 8, background: 'rgba(20,24,32,0.85)', color: '#fff', fontSize: 13, zIndex: 9, pointerEvents: 'none' }}
+          role="status"
+        >
+          {layerNote}
         </div>
       )}
     </div>
