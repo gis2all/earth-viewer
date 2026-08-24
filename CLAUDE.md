@@ -184,11 +184,13 @@ earth-viz-hub/
 - 加载失败写入 `layerErrors`（卡片红标）；状态 persist。
 - 防卡死（loadSafety.ts）：风险分级 + 阈值 + 降级（全球矢量底图影像化、矢量 maxZoom 12、Feature/WFS/OGC/CSV 3000、GeoJSON ≤8MB、KML ≤2MB、WMS maximumLevel 16、Scene/3D SSE=16）；点聚合、串行渲染队列、字段裁剪（outFields=1）。
 - ★渲染健壮性（防 OOM/卡死，GlobeViewer）：① 业务层数量上限 `MAX_BUSINESS_LAYERS=5`（超限省略并提示）；② 业务层总要素预算 `MAX_TOTAL_FEATURES=5000`（`consumeFeatureBudget`，超预算略过后续层）；③ 单层 `MAX_RENDER_FEATURES=1500`（数据大只取前 N 个并提示）；④ fetch 可取消（`rec.abort`，移除图层即中止）；⑤ `renderQueue` 加 `.catch` 兜底（单个 webmap 渲染失败不卡整队列）。
-- **P1–P5 视口驱动管线**（`src/globe/viewport/`）：FeatureLayer 只按相机视口 query（`buildFeatureQueryUrl` 自动补 `/0`、`geometry=envelope`、`f=geojson`），Worker 解析 → Douglas-Peucker 抽稀 → 顶点预算（`MAX_RENDER_VERTICES=200_000`）→ 要素预算（`MAX_RENDER_FEATURES`），Primitive 优先渲染（`buildLayerPrimitive`）、`hasPrimitiveRendering` 失败回退 `GeoJsonDataSource`；相机 `moveEnd` → `viewportController.update` 随视口更新，LRU 缓存视口结果。
+- **P1–P5 视口驱动管线**（`src/globe/viewport/`）：FeatureLayer 只按相机视口 query（`resolveFeatureQueryBase` 自动解析第一个可查询层，`buildFeatureQueryUrl` 基于已解析的层号 + `geometry=envelope` + `f=geojson`），Worker 解析 → Douglas-Peucker 抽稀 → 顶点预算（`MAX_RENDER_VERTICES=200_000`）→ 要素预算（`MAX_RENDER_FEATURES`），Primitive 优先渲染（`buildLayerPrimitive`）、`hasPrimitiveRendering` 失败回退 `GeoJsonDataSource`；相机 `moveEnd` → `viewportController.update` 随视口更新，LRU 缓存视口结果。
 - **VectorTile 内存上限**：`MVTDataProvider` 背靠 tileset 设 `cacheBytes = VECTOR_TILE_MEMORY_LIMIT`（64MB）/`maximumCacheOverflowBytes = VECTOR_TILE_CACHE_OVERFLOW`（16MB），Cesium 自动卸载不在视口内的瓦片（业界 memoryLimitMB 模式）；全局矢量底图仍降级 OSM 栅格；`isGlobalVectorTileLayer` 识别所有 ArcGIS 托管 style 根（含 www.arcgis.com、cdn.arcgis.com 的 `.../items/<id>/resources/styles/root.json`），避免全球矢量底图走 MVTDataProvider 卡死。
 - **KML 预算**：KML → `parseKmlToGeoJSON` → `runViewportProcess`（顶点/要素预算）→ `GeoJsonDataSource`，失败/无要素回退原生 `KmlDataSource.load`，仍受 `KML_MAX_BYTES=2MB` 限制。
 - **业界防卡死全景（跨类型 1–10）**：① FeatureLayer 视口取数；② WFS/OGC/CSV/KML/GeoJSON 走 Worker 预算管线（runViewportProcess）；③ FeatureLayer 用 Primitive 渲染；④ 点聚类 + 线面抽稀；⑤ 全局/逐层顶点与要素上限；⑥ 瓦片缓存 tileCacheSize + LRU + 分页 + 3D LOD 流式；⑦ SSE 分级（大视图更粗）；⑧ FeatureLayer moveEnd 防抖（250ms）；⑨ 全局矢量底图降级栅格；⑩ WebGL context lost 监听 → 优雅提示。
 - 内嵌 FeatureCollection（layerDefinition.featureCollection）走 `runViewportProcess` 预算后 `GeoJsonDataSource` 渲染；WebTiledLayer/urlTemplate 也设 maximumLevel（与 WMS/WMTS 一致）。
+- FeatureLayer（多图层 FeatureServer）默认优先解析“分色渲染器（uniqueValue/classBreaks）”的事件层（如 NWS Watch），而非静态 zones；有渲染器时走 GeoJsonDataSource + applyFeatureStyler 分色，避免单一纯色大块。
+- Feature Service（多图层）采用分层渲染：区划/参考层（simple）可由 effects.showReferenceLayers 开关控制（默认开，低预算 REF_LAYER_MAX 描边，避免盖住事件层），事件层（uniqueValue/classBreaks）全部填充分色，每层独立预算不互相挤占，并自动飞到服务数据范围（fit-to-data）。
 - 健壮性：Feature 服务探测图层 id（非固定 /0） + f=geojson 不支持时回退 f=json 转 GeoJSON；WMTS 解析不到配置不抛错（返回服务根降级）。
 
 ### 6.3 画廊（LayerPanel）
