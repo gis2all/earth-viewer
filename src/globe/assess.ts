@@ -1,6 +1,7 @@
 import type { WebLayer } from './webmap'
 
 export type LayerSupport = 'full' | 'partial' | 'none'
+export const MAX_BUSINESS_LAYERS = 5
 export type LayerRole = 'basemap' | 'overlay' | 'business'
 
 export interface LayerAssessment {
@@ -155,14 +156,36 @@ function collectLayers(wm: Record<string, unknown>): { l: WebLayer; role: LayerR
   return out
 }
 
-/** 返回应当渲染的图层：支持（full/partial）且非辅助层（overlay），并展平分组层 */
+/** 返回应当渲染的图层：支持（full/partial）且非辅助层（overlay），并展平分组层；业务层限制为 MAX_BUSINESS_LAYERS 个，防止重 webmap 内存/渲染崩溃。 */
 export function renderableLayersFromWebmap(wm: Record<string, unknown>): WebLayer[] {
-  return collectLayers(wm)
-    .filter(({ l, role }) => {
-      const a = classifyLayer(l, role)
-      return role !== 'overlay' && (a.support === 'full' || a.support === 'partial')
-    })
-    .map(({ l }) => l)
+  const result: WebLayer[] = []
+  let business = 0
+  for (const { l, role } of collectLayers(wm)) {
+    const a = classifyLayer(l, role)
+    if (role === 'overlay' || (a.support !== 'full' && a.support !== 'partial')) continue
+    if (role === 'business') {
+      if (business >= MAX_BUSINESS_LAYERS) continue
+      business++
+    }
+    result.push(l)
+  }
+  return result
+}
+
+/** 业务层中可渲染（full/partial）的数量（不受 MAX_BUSINESS_LAYERS 限制），用于计算省略数 */
+function businessRenderableCount(wm: Record<string, unknown>): number {
+  let n = 0
+  for (const { l, role } of collectLayers(wm)) {
+    if (role !== 'business') continue
+    const a = classifyLayer(l, role)
+    if (a.support === 'full' || a.support === 'partial') n++
+  }
+  return n
+}
+
+/** 渲染时被 MAX_BUSINESS_LAYERS 省略的业务层数（>0 时应提示"部分图层未渲染"） */
+export function skippedBusinessLayers(wm: Record<string, unknown>): number {
+  return Math.max(0, businessRenderableCount(wm) - MAX_BUSINESS_LAYERS)
 }
 
 /** 整体评估一个 webmap 在 Cesium 下的渲染能力（统一入口） */

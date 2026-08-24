@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { assessWebmap, classifyLayer, renderableLayersFromWebmap } from './assess'
+import { assessWebmap, classifyLayer, renderableLayersFromWebmap, skippedBusinessLayers } from './assess'
 import type { WebLayer } from './webmap'
 
 const layer = (l: Partial<WebLayer>): WebLayer => ({ title: 't', ...l })
@@ -195,5 +195,25 @@ describe('renderableLayersFromWebmap', () => {
     }
     const layers = renderableLayersFromWebmap(wm as unknown as Record<string, unknown>)
     expect(layers.map((l) => l.title)).toEqual(['F1', 'F2'])
+  })
+
+  it('超过 MAX_BUSINESS_LAYERS 的业务层被裁剪（保留前 5 个，overlay 仍过滤）', () => {
+    const ops = Array.from({ length: 8 }, (_, i) => layer({ title: 'B' + i, url: 'https://x/FeatureServer/0', layerType: 'ArcGISFeatureLayer' }))
+    const wm = {
+      baseMap: {
+        baseMapLayers: [layer({ title: 'Hillshade', url: 'https://x/Elevation/World_Hillshade/MapServer', layerType: 'ArcGISTiledMapServiceLayer' })],
+      },
+      operationalLayers: ops,
+    }
+    const layers = renderableLayersFromWebmap(wm as unknown as Record<string, unknown>)
+    expect(layers.length).toBe(5)
+    expect(layers.map((l) => l.title)).toEqual(['B0', 'B1', 'B2', 'B3', 'B4'])
+  })
+
+  it('skippedBusinessLayers 返回被省略的业务层数（0 或正数）', () => {
+    const mk = (n: number) => Array.from({ length: n }, (_, i) => layer({ title: 'B' + i, url: 'https://x/FeatureServer/0', layerType: 'ArcGISFeatureLayer' }))
+    expect(skippedBusinessLayers({ baseMap: { baseMapLayers: [] }, operationalLayers: mk(8) } as unknown as Record<string, unknown>)).toBe(3)
+    expect(skippedBusinessLayers({ baseMap: { baseMapLayers: [] }, operationalLayers: mk(2) } as unknown as Record<string, unknown>)).toBe(0)
+    expect(skippedBusinessLayers({ baseMap: { baseMapLayers: [] }, operationalLayers: [] } as unknown as Record<string, unknown>)).toBe(0)
   })
 })
