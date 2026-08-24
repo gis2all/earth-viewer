@@ -253,7 +253,7 @@ function arcgisQueryToFeatureCollection(j: { features?: Array<{ attributes?: Rec
 }
 
 /** FeatureServer -> GeoJSON (paged, capped so huge services don't drag the page) */
-export async function fetchFeatureGeoJSON(url: string, limit: number = SAFETY.MAX_FEATURES): Promise<unknown> {
+export async function fetchFeatureGeoJSON(url: string, limit: number = SAFETY.MAX_FEATURES, signal?: AbortSignal): Promise<unknown> {
   const base = url.replace(/\/+$/, '')
   let pageSize = 2000
   let layerId = 0
@@ -275,14 +275,14 @@ export async function fetchFeatureGeoJSON(url: string, limit: number = SAFETY.MA
   while (offset < limit && guard < 50) {
     guard++
     const geojsonUrl = `${base}/${layerId}/query?where=1%3D1&f=geojson&outFields=1&outSR=4326&resultOffset=${offset}&resultRecordCount=${pageSize}`
-    const r = await fetch(geojsonUrl, { signal: withFetchTimeout() })
+    const r = await fetch(geojsonUrl, { signal: withFetchTimeout(signal) })
     let feats: unknown[]
     if (r.ok) {
       const gj = (await r.json()) as { features?: unknown[] }
       feats = gj.features ?? []
     } else {
       const jsonUrl = `${base}/${layerId}/query?where=1%3D1&f=json&outFields=*&outSR=4326&resultOffset=${offset}&resultRecordCount=${pageSize}`
-      const rj = await fetch(jsonUrl, { signal: withFetchTimeout() })
+      const rj = await fetch(jsonUrl, { signal: withFetchTimeout(signal) })
       if (!rj.ok) throw new Error('要素服务查询失败')
       const jj = (await rj.json()) as { features?: Array<{ attributes?: Record<string, unknown>; geometry?: unknown }>; error?: { message?: string } }
       if (jj.error) throw new Error('要素服务查询失败：' + (jj.error.message ?? ''))
