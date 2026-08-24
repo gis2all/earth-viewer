@@ -123,6 +123,8 @@ export function providerForDynamicMapServer(url: string): Cesium.ImageryProvider
     url: exportUrl,
     // export URL 明确使用 bboxSR/imageSR=4326，必须匹配 GeographicTilingScheme。
     tilingScheme: new Cesium.GeographicTilingScheme(),
+    // 动态 export 也限制最高级别，避免高 zoom 大尺寸图像风暴
+    maximumLevel: SAFETY.IMAGERY_MAX_LEVEL,
   }
   return new Cesium.UrlTemplateImageryProvider(opts)
 }
@@ -146,6 +148,7 @@ export function providerForWmts(layer: WebLayer): Cesium.ImageryProvider | null 
     style: layer.style || '',
     format: layer.format || 'image/png',
     tileMatrixSetID: layer.tileMatrixSetID || layer.tileMatrixSet || 'default028mm',
+    maximumLevel: SAFETY.IMAGERY_MAX_LEVEL,
   })
 }
 
@@ -179,7 +182,7 @@ export async function providerForWebLayer(layer: WebLayer): Promise<Cesium.Image
   }
   // WebTiledLayer：XYZ 模板
   if (/WebTiledLayer/i.test(t) && layer.urlTemplate) {
-    return new Cesium.UrlTemplateImageryProvider({ url: layer.urlTemplate })
+    return new Cesium.UrlTemplateImageryProvider({ url: layer.urlTemplate, maximumLevel: SAFETY.IMAGERY_MAX_LEVEL })
   }
   if (t === 'OpenStreetMap') {
     return new Cesium.UrlTemplateImageryProvider({
@@ -187,7 +190,7 @@ export async function providerForWebLayer(layer: WebLayer): Promise<Cesium.Image
     })
   }
   if (layer.urlTemplate) {
-    return new Cesium.UrlTemplateImageryProvider({ url: layer.urlTemplate })
+    return new Cesium.UrlTemplateImageryProvider({ url: layer.urlTemplate, maximumLevel: SAFETY.IMAGERY_MAX_LEVEL })
   }
   return null
 }
@@ -206,6 +209,10 @@ export function isFeatureLayer(layer: WebLayer): boolean {
 
 export function isGeoJsonLayer(layer: WebLayer): boolean {
   return /GeoJSONLayer/i.test(layerKind(layer))
+}
+
+export function isFeatureCollectionLayer(layer: WebLayer): boolean {
+  return /featureCollection|Feature Collection/i.test(layerKind(layer)) || !!layer.layerDefinition?.featureCollection
 }
 
 export function isKmlLayer(layer: WebLayer): boolean {

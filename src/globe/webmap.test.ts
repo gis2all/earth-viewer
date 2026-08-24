@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
   isFeatureLayer,
   isGeoJsonLayer,
+  isFeatureCollectionLayer,
   isKmlLayer,
   fetchFeatureStyle,
   fetchFeatureGeoJSON,
@@ -31,6 +32,13 @@ describe('图层类型判断', () => {
     expect(isKmlLayer({ type: 'KML Collection' })).toBe(true)
   })
 })
+
+  it('isFeatureCollectionLayer（内嵌要素集）', () => {
+    expect(isFeatureCollectionLayer({ type: 'Feature Collection' })).toBe(true)
+    expect(isFeatureCollectionLayer({ layerType: 'FeatureCollection', layerDefinition: { featureCollection: {} } })).toBe(true)
+    expect(isFeatureCollectionLayer({ layerType: 'GeoJSONLayer' })).toBe(false)
+    expect(isFeatureCollectionLayer({ layerType: 'FeatureLayer' })).toBe(false)
+  })
 
 describe('fetchWebmap', () => {
   afterEach(() => vi.unstubAllGlobals())
@@ -166,7 +174,7 @@ describe('providerForWebLayer', () => {
     const ut = UrlTemplateImageryProvider as unknown as ReturnType<typeof vi.fn>
     ut.mockClear()
     await providerForWebLayer({ url: 'https://x/wm', layerType: 'WebTiledLayer', urlTemplate: 'https://t/{z}/{y}/{x}.png' })
-    expect(ut).toHaveBeenCalledWith({ url: 'https://t/{z}/{y}/{x}.png' })
+    expect(ut).toHaveBeenCalledWith({ url: 'https://t/{z}/{y}/{x}.png', maximumLevel: 16 })
   })
 
   it('layerType 含 MapServer 且带 url → provider', async () => {
@@ -197,7 +205,7 @@ describe('providerForWebLayer', () => {
     expect(ut).toHaveBeenCalled()
     ut.mockClear()
     await providerForWebLayer({ url: 'https://x/t', urlTemplate: 'https://x/{z}/{x}/{y}' })
-    expect(ut).toHaveBeenCalledWith({ url: 'https://x/{z}/{x}/{y}' })
+    expect(ut).toHaveBeenCalledWith({ url: 'https://x/{z}/{x}/{y}', maximumLevel: 16 })
     expect(await providerForWebLayer({ url: 'https://x/unknown', layerType: 'Foo' })).toBeNull()
   })
 })
