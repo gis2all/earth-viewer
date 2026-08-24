@@ -22,9 +22,89 @@ const SEARCH_TYPES: SearchType[] = [...SEARCH_ITEM_TYPES]
 const SEARCH_PAGE = 12
 const GALLERY_PAGE = 24
 const APPEND_STEP = 12
+/** 服务类 item 才需要服务根预检；容器（Web Map/Scene）与文件类走点开后校验。 */
+const PREFLIGHT_TYPES = new Set<string>([
+  'Map Service',
+  'Feature Service',
+  'Image Service',
+  'Scene Service',
+  'Vector Tile Service',
+  'WMS',
+  'WMTS',
+  'WFS',
+  'KML',
+])
+const PREFLIGHT_ABORT_MS = 3000
+const PREFLIGHT_CACHE_KEY = 'earth-viewer:preflight'
+const PREFLIGHT_TTL_MS = 24 * 60 * 60 * 1000
+
+type PreflightState = 'ok' | 'bad'
+
+function readPreflightCache(): Map<string, { s: PreflightState; t: number }> {
+  try {
+    const raw = localStorage.getItem(PREFLIGHT_CACHE_KEY)
+    if (!raw) return new Map()
+    const obj = JSON.parse(raw) as Record<string, { s: PreflightState; t: number }>
+    const now = Date.now()
+    const map = new Map<string, { s: PreflightState; t: number }>()
+    for (const [k, v] of Object.entries(obj)) {
+      if (v && (v.s === 'ok' || v.s === 'bad') && now - v.t < PREFLIGHT_TTL_MS) map.set(k, v)
+    }
+    return map
+  } catch {
+    return new Map()
+  }
+}
+
+function writePreflightCache(map: Map<string, { s: PreflightState; t: number }>) {
+  try {
+    localStorage.setItem(PREFLIGHT_CACHE_KEY, JSON.stringify(Object.fromEntries(map.entries())))
+  } catch {
+    /* 忽略配额/隐私限制 */
+  }
+}
+
+/** 轻量探测服务根：Token Required / Subscription canceled / 403 等 => 不可用。 */
+async function preflightService(url: string): Promise<boolean> {
+  try {
+    const sep = url.includes('?') ? '&' : '?'
+    const r = await fetch(url + sep + 'f=json', {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      signal: AbortSignal.timeout(PREFLIGHT_ABORT_MS),
+    })
+    if (!r.ok) return false
+    const j: unknown = await r.json().catch(() => null)
+    const err = (j as { error?: unknown } | null)?.error
+    return !!j && !err
+  } catch {
+    return false
+  }
+}
+
+
+/** 按 item 类型选择预检方式：容器（Web Map/Scene）走 data（/sharing 代理），服务类走服务根。 */
+async function preflightItem(it: SearchResult): Promise<boolean> {
+  try {
+    if (isWebMapContainer(it.type ?? '')) {
+      const r = await fetch(`/sharing/rest/content/items/${it.id}/data?f=json`, {
+        signal: AbortSignal.timeout(PREFLIGHT_ABORT_MS),
+      })
+      if (!r.ok) return false
+      const j: unknown = await r.json().catch(() => null)
+      return !!j && !(j as { error?: unknown } | null)?.error
+    }
+    if (it.url) return await preflightService(it.url)
+    return true
+  } catch {
+    return false
+  }
+}
+
+const AUTHORITATIVE_FILTER =
+  'AND (contentstatus:"org_authoritative" OR contentstatus:"public_authoritative") NOT contentstatus:"deprecated"'
 
 function buildSearchQuery(type: SearchType, keyword: string): string {
-  const query = `type:"${type}" AND access:public`
+  const query = `type:"${type}" AND access:public ${AUTHORITATIVE_FILTER}`
   return keyword ? query + ' AND (' + keyword + ')' : query
 }
 
@@ -108,6 +188,15 @@ export function LayerPanel() {
   const kwRef = useRef(kw)
   kwRef.current = kw
   const timerRef = useRef<number | null>(null)
+  const [badIds, setBadIds] = useState<Set<string>>(() => {
+    const cache = readPreflightCache()
+    const set = new Set<string>()
+    for (const [id, v] of cache) if (v.s === 'bad') set.add(id)
+    return set
+  })
+  const preflightCacheRef = useRef<Map<string, { s: PreflightState; t: number }>>(readPreflightCache())
+  const preflightGenRef = useRef(0)
+  const preflightInflightRef = useRef<Set<string>>(new Set())
 
   async function loadMore(reset: boolean) {
     if (loadingRef.current && !reset) return
@@ -168,6 +257,7 @@ export function LayerPanel() {
     }
   }
   const runSearch = () => {
+    preflightGenRef.current++
     setItems([])
     setDone(false)
     setErr('')
@@ -190,6 +280,49 @@ export function LayerPanel() {
     if (timerRef.current !== null) clearTimeout(timerRef.current)
     runSearch()
   }
+
+  // 后台异步预检服务类卡片：命中需登录/订阅取消/不可访问 → 自动隐藏（不阻塞首屏）
+  useEffect(() => {
+    const cands = items.filter((it) => {
+      const isContainer = isWebMapContainer(it.type ?? '')
+      const isService = PREFLIGHT_TYPES.has(it.type ?? '')
+      if (!(isContainer || isService)) return false
+      if (isService && !it.url) return false
+      return !preflightInflightRef.current.has(it.id) && !preflightCacheRef.current.has(it.id)
+    })
+    if (cands.length === 0) return
+    const myGen = preflightGenRef.current
+    const con = 4
+    let idx = 0
+    async function worker() {
+      while (true) {
+        const my = idx++
+        if (my >= cands.length) break
+        const it = cands[my]
+        if (preflightInflightRef.current.has(it.id)) continue
+        preflightInflightRef.current.add(it.id)
+        try {
+          const ok = await preflightItem(it)
+          if (myGen !== preflightGenRef.current) return
+          const cache = preflightCacheRef.current
+          cache.set(it.id, { s: ok ? 'ok' : 'bad', t: Date.now() })
+          if (!ok) {
+            setBadIds((prev) => {
+              const n = new Set(prev)
+              n.add(it.id)
+              return n
+            })
+          }
+          writePreflightCache(cache)
+        } catch {
+          // 网络异常忽略，保留卡片（点开再校验）
+        } finally {
+          preflightInflightRef.current.delete(it.id)
+        }
+      }
+    }
+    void Promise.all(Array.from({ length: Math.min(con, cands.length) }, worker))
+  }, [items])
 
   // 取消进行中的搜索（递增序列号，使旧请求彻底失效）
   const cancelSearch = () => {
@@ -315,7 +448,7 @@ export function LayerPanel() {
             )}
           </div>
           <div className="gallery">
-            {items.map((it) => (
+            {items.filter((it) => !badIds.has(it.id)).map((it) => (
               <button
                 key={it.id}
                 className="gallery-card"

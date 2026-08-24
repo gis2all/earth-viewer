@@ -524,4 +524,28 @@ describe('LayerPanel 边界与错误路径', () => {
     expect((added?.webmap as unknown as { operationalLayers?: { layerType?: string }[] })?.operationalLayers?.[0]?.layerType).toBe('ArcGISMapServiceLayer')
   })
 
+  it('服务类预检不可用（Token Required）→ 自动隐藏卡片', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const u = String(url)
+        if (u.includes('/sharing/rest/search')) {
+          return {
+            ok: true,
+            json: async () => ({
+              results: [{ id: 'fs1', title: 'RKI RequireLogin', thumbnail: null, numViews: 20, type: 'Feature Service', url: 'https://x/FeatureServer' }],
+              nextStart: null,
+              total: 1,
+            }),
+          }
+        }
+        if (u.includes('/FeatureServer') && u.includes('f=json')) return { ok: true, json: async () => ({ error: { code: 499, message: 'Token Required' } }) }
+        return { ok: true, json: async () => ({ spatialReference: { wkid: 3857 } }) }
+      })
+    )
+    render(<LayerPanel />)
+    await waitFor(() => expect(screen.getByText('RKI RequireLogin')).toBeInTheDocument(), { timeout: 8000 })
+    await waitFor(() => expect(screen.queryByText('RKI RequireLogin')).not.toBeInTheDocument(), { timeout: 8000 })
+  })
+
 })
