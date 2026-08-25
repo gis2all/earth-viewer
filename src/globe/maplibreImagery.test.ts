@@ -6,7 +6,10 @@ import {
   styleUrlForLayer,
   tileCenterLngLat,
   blockKey,
+  blockCenterIndex,
+  indexToLngLat,
   cropTile,
+  mapLibreRenderPlan,
   ArcGisVectorTileImageryProvider,
   type MapLike,
 } from './maplibreImagery'
@@ -27,7 +30,10 @@ vi.mock('maplibre-gl', () => {
       return this
     }
     triggerRepaint() {
-      queueMicrotask(() => this._emit('render'))
+      queueMicrotask(() => {
+        this._emit('render')
+        this._emit('idle')
+      })
       return this
     }
     jumpTo() {
@@ -59,10 +65,14 @@ function fakeMap() {
       return map
     }),
     triggerRepaint: vi.fn(() => {
-      queueMicrotask(() => listeners['render']?.forEach((cb) => cb()))
+      queueMicrotask(() => {
+        listeners['render']?.forEach((cb) => cb())
+        listeners['idle']?.forEach((cb) => cb())
+      })
       return map
     }),
     jumpTo: vi.fn(() => map),
+    resize: vi.fn(() => map),
     getCanvas: vi.fn(() => document.createElement('canvas')),
     remove: vi.fn(),
     _emit(ev: string, ...args: unknown[]) {
@@ -72,6 +82,7 @@ function fakeMap() {
   }
   return map as unknown as MapLike & {
     jumpTo: ReturnType<typeof vi.fn>
+    resize: ReturnType<typeof vi.fn>
     triggerRepaint: ReturnType<typeof vi.fn>
     getCanvas: ReturnType<typeof vi.fn>
     remove: ReturnType<typeof vi.fn>
@@ -145,15 +156,16 @@ describe('normalizeArcGisStyle', () => {
     expect(src.url).toBeUndefined()
   })
 
-  it('已有 tiles 的 vector source 保留并解析相对模板', () => {
+  it('已有 tiles 的 vector source 保留并解析相对模板，移除 MapLibre 不支持的 tileSize', () => {
     const style = normalizeArcGisStyle(
       {
-        sources: { vt: { type: 'vector', tiles: ['tiles/{z}/{y}/{x}.pbf'] } },
+        sources: { vt: { type: 'vector', tiles: ['tiles/{z}/{y}/{x}.pbf'], tileSize: 512 } },
       },
       'https://cdn.example/styles/root.json'
     )
-    const src = (style.sources as Record<string, { tiles?: string[] }>).vt
+    const src = (style.sources as Record<string, { tiles?: string[]; tileSize?: number }>).vt
     expect(src.tiles?.[0]).toBe('https://cdn.example/styles/tiles/{z}/{y}/{x}.pbf')
+    expect(src.tileSize).toBeUndefined()
   })
 
   it('非 VectorTileServer 的 vector url 保持为 url 并解析绝对', () => {
@@ -166,6 +178,21 @@ describe('normalizeArcGisStyle', () => {
     const src = (style.sources as Record<string, { url?: string; tiles?: string[] }>).tilejson
     expect(src.url).toBe('https://cdn.example/data/tiles.json')
     expect(src.tiles).toBeUndefined()
+  })
+
+  it('相对 VectorTileServer url 解析后转换为 XYZ tiles 模板', () => {
+    const style = normalizeArcGisStyle(
+      {
+        sources: { esri: { type: 'vector', url: '../../' } },
+      },
+      'https://basemaps.arcgis.com/arcgis/rest/services/World_Basemap_v2/VectorTileServer/resources/styles/root.json'
+    )
+    const src = (style.sources as Record<string, { url?: string; tiles?: string[]; tileSize?: number }>).esri
+    expect(src.url).toBeUndefined()
+    expect(src.tiles?.[0]).toBe(
+      'https://basemaps.arcgis.com/arcgis/rest/services/World_Basemap_v2/VectorTileServer/tile/{z}/{y}/{x}.pbf'
+    )
+    expect(src.tileSize).toBeUndefined()
   })
 
   it('非 vector 源 / 空值源原样保留', () => {
@@ -204,32 +231,138 @@ describe('tileCenterLngLat', () => {
 })
 
 describe('blockKey / cropTile', () => {
+  it('原生 512px 输出让 Cesium 与 MapLibre 使用相同 zoom，避免缩放时坐标层级混用', () => {
+    expect(mapLibreRenderPlan(0, 512)).toEqual({ mapZoom: 0, sourceScale: 1, viewportSize: 1536 })
+    expect(mapLibreRenderPlan(4, 512)).toEqual({ mapZoom: 4, sourceScale: 1, viewportSize: 1536 })
+  })
+
   it('blockKey 按 3x3 分块', () => {
     expect(blockKey(0, 0, 5)).toBe('5/0/0')
     expect(blockKey(3, 3, 5)).toBe('5/1/1')
     expect(blockKey(2, 8, 5)).toBe('5/0/2')
   })
-  it('cropTile 裁剪正确瓦片；越界返回透明片', () => {
-    const mk = (i: number) => {
-      const c = document.createElement('canvas')
-      c.width = 256
-      c.height = 256
-      const ctx = c.getContext('2d')
-      if (ctx) ctx.fillStyle = 'rgb(' + i + ',0,0)'
-      if (ctx) ctx.fillRect(0, 0, 256, 256)
-      return c
+  it('cropTile 按块中心计算裁剪偏移（内部块与边缘块）', () => {
+    const snap = document.createElement('canvas')
+    snap.width = 768
+    snap.height = 768
+    const drawCalls: number[][] = []
+    const fakeCtx = {
+      drawImage: (_src: unknown, sx: number, sy: number, ...rest: number[]) => {
+        drawCalls.push([sx, sy, ...rest])
+      },
     }
-    const block = [0, 1, 2, 3, 4, 5, 6, 7, 8].map(mk)
-    // z=4 的 (4,4) → 块 (3,3)，局部 (1,1) → idx 4
-    const out = cropTile(block, 4, 4, 4, 256, 256)
-    expect(out.width).toBe(256)
-    // z=4 的 (7,7) 越界（2^4=16 不越界…验证块内裁剪到 idx 8）
-    const out2 = cropTile(block, 5, 5, 4, 256, 256)
-    expect(out2.width).toBe(256)
-    // 越界瓦片 → 透明
-    const out3 = cropTile(block, 20, 20, 4, 256, 256)
-    expect(out3.width).toBe(256)
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(fakeCtx as unknown as CanvasRenderingContext2D)
+    try {
+      // 内部块 z=4：瓦片 (4,4) → gx=3, cx=4.5 → sx=(4-3)*256=256, sy=256
+      const out = cropTile(snap, 4, 4, 4, 256, 256)
+      expect(out.width).toBe(256)
+      expect(drawCalls[0]?.[0]).toBe(256)
+      expect(drawCalls[0]?.[1]).toBe(256)
+      drawCalls.length = 0
+      // 内部块 z=4 瓦片 (3,0) → sx=0, sy=0
+      cropTile(snap, 3, 0, 4, 256, 256)
+      expect(drawCalls[0]?.[0]).toBe(0)
+      expect(drawCalls[0]?.[1]).toBe(0)
+      drawCalls.length = 0
+      // 世界边缘块 z=2：瓦片 (3,3) → gx=3, cx=3.5（clamp 到唯一瓦片中心）→ sx=256, sy=256
+      cropTile(snap, 3, 3, 2, 256, 256)
+      expect(drawCalls[0]?.[0]).toBe(256)
+      expect(drawCalls[0]?.[1]).toBe(256)
+      drawCalls.length = 0
+      // MapLibre 标准矢量瓦片为 512 CSS px：从 1536 快照裁 512px 并缩小为 Cesium 256px 瓦片
+      const highRes = document.createElement('canvas')
+      highRes.width = 1536
+      highRes.height = 1536
+      cropTile(highRes, 4, 4, 4, 256, 256, 2)
+      expect(drawCalls[0]).toEqual([512, 512, 512, 512, 0, 0, 256, 256])
+      drawCalls.length = 0
+      // z2 东南边缘：1536px 视口无法以 tile (3,3) 的几何中心显示，MapLibre 会收拢到连续索引 (2.5,2.5)。
+      // 必须按实际中心从 1024px 开始取 tile (3,3)，否则会错误取到 tile (2,2)。
+      cropTile(highRes, 3, 3, 2, 512, 512, 1, { cx: 2.5, cy: 2.5 } as never)
+      expect(drawCalls[0]).toEqual([1024, 1024, 512, 512, 0, 0, 512, 512])
+      drawCalls.length = 0
+      // 越界瓦片 → 透明（不调用 drawImage）
+      cropTile(snap, 20, 20, 4, 256, 256)
+      expect(drawCalls.length).toBe(0)
+    } finally {
+      vi.restoreAllMocks()
+    }
   })
+  it('blockCenterIndex：内部块中心 = 中间瓦片；边缘块 clamp', () => {
+    expect(blockCenterIndex(0, 0, 4)).toEqual({ cx: 1.5, cy: 1.5 })
+    expect(blockCenterIndex(3, 3, 4)).toEqual({ cx: 4.5, cy: 4.5 })
+    // z=2 东/南边缘块 gx=3：有效瓦片只有 3 → cx=3.5（瓦片 3 中心）
+    expect(blockCenterIndex(3, 3, 2)).toEqual({ cx: 3.5, cy: 3.5 })
+    // z=1 块 (0,0) 含瓦片 0,1：cx = (0+1+1)/2 = 1.0
+    expect(blockCenterIndex(0, 0, 1)).toEqual({ cx: 1, cy: 1 })
+  })
+  it('indexToLngLat：连续索引 → 经纬度（0.5 = 瓦片 0 中心）', () => {
+    expect(indexToLngLat(0.5, 0.5, 0)).toEqual({ lng: 0, lat: 0 })
+    const c = indexToLngLat(1.5, 0.5, 1)
+    expect(c.lng).toBeCloseTo(90, 5)
+    expect(c.lat).toBeCloseTo(66.51326, 3)
+  })
+  it('块渲染中心 = 中间瓦片中心（不偏移半瓦片）', async () => {
+    stubStyleFetch()
+    const m = fakeMap()
+    setTimeout(() => m._emit('load'), 0)
+    const provider = new ArcGisVectorTileImageryProvider({ styleUrl: 'https://x/root.json', createMap: () => m })
+    await provider.readyPromise
+    await provider.requestImage(0, 0, 2)
+    const center = m.jumpTo.mock.calls[0][0].center as [number, number]
+    const expectCenter = tileCenterLngLat(1, 1, 2)
+    expect(center[0]).toBeCloseTo(expectCenter.lng, 5)
+    expect(center[1]).toBeCloseTo(expectCenter.lat, 5)
+    provider.destroy()
+  })
+
+  it('默认原生 512px 瓦片保持 MapLibre 视口和样式 zoom 与 Cesium 请求一致', async () => {
+    stubStyleFetch()
+    const m = fakeMap()
+    let container: HTMLElement | undefined
+    setTimeout(() => m._emit('load'), 0)
+    const provider = new ArcGisVectorTileImageryProvider({
+      styleUrl: 'https://x/root.json',
+      createMap: (node) => {
+        container = node
+        return m
+      },
+    })
+    await provider.readyPromise
+    await provider.requestImage(4, 4, 4)
+    expect(provider.tileWidth).toBe(512)
+    expect(container?.style.width).toBe('1536px')
+    expect(container?.style.height).toBe('1536px')
+    expect(m.resize).not.toHaveBeenCalled()
+    expect(m.jumpTo).toHaveBeenCalledWith({ center: expect.anything(), zoom: 4 })
+    provider.destroy()
+  })
+
+  it('世界边缘被 MapLibre 收拢时，provider 按实际中心裁剪而非请求中心', async () => {
+    stubStyleFetch()
+    const m = fakeMap()
+    const drawCalls: number[][] = []
+    const fakeCtx = {
+      drawImage: (_src: unknown, sx: number, sy: number, ...rest: number[]) => {
+        drawCalls.push([sx, sy, ...rest])
+      },
+    }
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(fakeCtx as unknown as CanvasRenderingContext2D)
+    // 对 z2 的末行/末列，1536px 视口将请求中心 (3.5,3.5) 收拢为 (2.5,2.5)。
+    m.getCenter = vi.fn(() => ({ lng: 45, lat: -40.97989806962013 }))
+    setTimeout(() => m._emit('load'), 0)
+    const provider = new ArcGisVectorTileImageryProvider({ styleUrl: 'https://x/root.json', createMap: () => m })
+    try {
+      await provider.readyPromise
+      await provider.requestImage(3, 3, 2)
+      expect(m.getCenter).toHaveBeenCalled()
+      expect(drawCalls).toContainEqual([1024, 1024, 512, 512, 0, 0, 512, 512])
+    } finally {
+      provider.destroy()
+      vi.restoreAllMocks()
+    }
+  })
+
   it('requestImage 命中块缓存直接返回裁剪结果', async () => {
     stubStyleFetch()
     const m = fakeMap()
@@ -261,8 +394,8 @@ describe('ArcGisVectorTileImageryProvider', () => {
     })
     await expect(provider.readyPromise).resolves.toBe(true)
     expect(provider.ready).toBe(true)
-    expect(provider.tileWidth).toBe(256)
-    expect(provider.tileHeight).toBe(256)
+    expect(provider.tileWidth).toBe(512)
+    expect(provider.tileHeight).toBe(512)
     expect(provider.minimumLevel).toBe(0)
     expect(provider.maximumLevel).toBe(16)
     expect(provider.rectangle).toBeDefined()
@@ -273,9 +406,31 @@ describe('ArcGisVectorTileImageryProvider', () => {
     const m = createMap()
     const canvas = await provider.requestImage(1, 0, 1)
     expect(canvas).toBeDefined()
-    expect((canvas as HTMLCanvasElement).width).toBe(256)
-    expect((canvas as HTMLCanvasElement).height).toBe(256)
+    expect((canvas as HTMLCanvasElement).width).toBe(512)
+    expect((canvas as HTMLCanvasElement).height).toBe(512)
     expect(m.jumpTo).toHaveBeenCalledWith({ center: expect.anything(), zoom: 1 })
+    provider.destroy()
+  })
+
+  it('MapLibre 使用 3x3 原生 512px 视口，读取原生 1x 快照后原尺寸裁剪为 Cesium 瓦片', async () => {
+    const m = fakeMap()
+    let container: HTMLElement | undefined
+    let renderPixelRatio: number | undefined
+    const provider = new ArcGisVectorTileImageryProvider({
+      styleUrl: 'https://x/root.json',
+      createMap: (node, _style, pixelRatio) => {
+        container = node
+        renderPixelRatio = pixelRatio
+        setTimeout(() => m._emit('load'), 0)
+        return m
+      },
+    })
+    await provider.readyPromise
+    expect(container?.style.width).toBe('1536px')
+    expect(container?.style.height).toBe('1536px')
+    expect(provider.tileWidth).toBe(512)
+    expect(provider.tileHeight).toBe(512)
+    expect(renderPixelRatio).toBe(1)
     provider.destroy()
   })
 
@@ -345,13 +500,39 @@ describe('ArcGisVectorTileImageryProvider', () => {
     provider.destroy()
   })
 
+  it('等待 MapLibre idle 后才截取块快照，避免缓存尚未下载的透明区域', async () => {
+    const m = fakeMap()
+    let repaints = 0
+    m.triggerRepaint = vi.fn(() => {
+      repaints += 1
+      queueMicrotask(() => {
+        m._emit('render')
+        // 初始化预热可以完成；请求瓦片时故意不发 idle。
+        if (repaints === 1) m._emit('idle')
+      })
+      return m
+    }) as never
+    setTimeout(() => m._emit('load'), 0)
+    const provider = new ArcGisVectorTileImageryProvider({ styleUrl: 'https://x/root.json', createMap: () => m })
+    try {
+      await provider.readyPromise
+      const pending = provider.requestImage(0, 0, 2)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(m.getCanvas).not.toHaveBeenCalled()
+      m._emit('idle')
+      await expect(pending).resolves.toBeDefined()
+    } finally {
+      provider.destroy()
+    }
+  })
+
   it('默认 createMap 走真实 MapLibre 构造路径（离屏渲染）', async () => {
     const provider = new ArcGisVectorTileImageryProvider({ styleUrl: 'https://x/root.json' })
     await provider.readyPromise
     expect(provider.ready).toBe(true)
     const canvas = await provider.requestImage(0, 0, 0)
     expect(canvas).toBeDefined()
-    expect((canvas as HTMLCanvasElement).width).toBe(256)
+    expect((canvas as HTMLCanvasElement).width).toBe(512)
     provider.destroy()
   })
 
@@ -388,7 +569,10 @@ describe('ArcGisVectorTileImageryProvider', () => {
       calls += 1
       queueMicrotask(() => {
         if (calls === 2) m._emit('error', new Error('render boom'))
-        else m._emit('render')
+        else {
+          m._emit('render')
+          m._emit('idle')
+        }
       })
       return m
     }) as never
