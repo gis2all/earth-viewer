@@ -55,7 +55,7 @@ export function classifyLayer(l: WebLayer, role: LayerRole): LayerAssessment {
   // 无服务地址：仅样式驱动的 VectorTile / 内嵌 featureCollection 可尝试渲染
   if (!url) {
     if (/VectorTileLayer/i.test(kind) && l.styleUrl) {
-      return { ...base, support: 'partial', reason: '矢量瓦片由样式驱动，客户端按 MVT 解码渲染' }
+      return { ...base, support: 'full', reason: '矢量瓦片用 MapLibre 按官方样式渲染' }
     }
     if (/featureCollection|Feature Collection/i.test(kind) || l.layerDefinition) {
       return { ...base, support: 'partial', reason: '内嵌要素集按 GeoJSON 渲染' }
@@ -63,9 +63,9 @@ export function classifyLayer(l: WebLayer, role: LayerRole): LayerAssessment {
     return { ...base, support: 'none', reason: '图层缺少可加载的服务地址' }
   }
 
-  // 矢量切片：ArcGIS MVT，Cesium 无原生渲染 → 客户端解码 GeoJSON
+  // 矢量切片：MapLibre GL 按 ArcGIS 官方样式（root.json）渲染 → Cesium ImageryProvider
   if (/VectorTileLayer/i.test(kind)) {
-    return { ...base, support: 'partial', reason: '矢量瓦片按客户端解码 GeoJSON 渲染（样式/性能有限）' }
+    return { ...base, support: 'full', reason: '矢量瓦片用 MapLibre 按官方样式渲染' }
   }
   // 3D 场景：ArcGIS SceneServer / I3S
   if (/SceneLayer|ArcGISSceneServiceLayer|ArcGISSceneLayer|I3S|IntegratedMesh|PointCloud|3DObject|BuildingScene/i.test(kind)) {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { consumeFeatureBudget, isGlobalVectorTileLayer, riskOfLayer, degradeReason, assertUrlWithinLimit } from './loadSafety'
+import { consumeFeatureBudget, riskOfLayer, degradeReason, assertUrlWithinLimit } from './loadSafety'
 
 describe('consumeFeatureBudget', () => {
   it('空 features 原样返回，不消耗预算', () => {
@@ -30,16 +30,6 @@ describe('consumeFeatureBudget', () => {
 
 
 describe('loadSafety 图层风险', () => {
-  it('isGlobalVectorTileLayer 识别全局风格矢量瓦片', () => {
-    expect(isGlobalVectorTileLayer({ layerType: 'VectorTileLayer', styleUrl: 'https://cdn.arcgis.com/sharing/rest/content/items/abc/resources/styles/root.json' })).toBe(true)
-    expect(isGlobalVectorTileLayer({ layerType: 'VectorTileLayer', title: 'OpenStreetMap' })).toBe(true)
-    expect(isGlobalVectorTileLayer({ layerType: 'VectorTileLayer', url: 'https://x/VectorTileServer' })).toBe(false)
-    expect(isGlobalVectorTileLayer({ layerType: 'VectorTileLayer', url: 'https://basemaps.arcgis.com/arcgis/rest/services/vt' })).toBe(true)
-    // 官方底图 style根（www.arcgis.com/cdn.arcgis.com）均认为全局矢量底图，降级防卡死
-    expect(isGlobalVectorTileLayer({ layerType: 'VectorTileLayer', styleUrl: 'https://www.arcgis.com/sharing/rest/content/items/273bf8d5c8ac400183fc24e109d20bcf/resources/styles/root.json' })).toBe(true)
-    expect(isGlobalVectorTileLayer({ layerType: 'FeatureLayer' })).toBe(false)
-  })
-
   it('riskOfLayer 按类型分级', () => {
     expect(riskOfLayer({ layerType: 'FeatureLayer' })).toBe('heavy')
     expect(riskOfLayer({ layerType: 'VectorTileLayer' })).toBe('medium')
@@ -54,8 +44,8 @@ describe('loadSafety 图层风险', () => {
     expect(degradeReason({ layerType: 'WMSLayer' })).toBeUndefined()
   })
 
-  it('degradeReason 对全局矢量瓦片给出原因', () => {
-    expect(degradeReason({ layerType: 'VectorTileLayer', styleUrl: 'https://cdn.arcgis.com/sharing/rest/content/items/abc/resources/styles/root.json' })).toBeDefined()
+  it('degradeReason 不再降级矢量瓦片（MapLibre 直接样式渲染）', () => {
+    expect(degradeReason({ layerType: 'VectorTileLayer', styleUrl: 'https://cdn.arcgis.com/sharing/rest/content/items/abc/resources/styles/root.json' })).toBeUndefined()
   })
 })
 

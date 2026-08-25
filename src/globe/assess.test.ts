@@ -16,11 +16,11 @@ describe('classifyLayer 能力表', () => {
     expect(classifyLayer(layer({ url: 'https://x/ImageServer', layerType: 'ArcGISImageServiceLayer' }), 'basemap').support).toBe('full')
     expect(classifyLayer(layer({ url: 'https://x/ImageServer', layerType: 'ArcGISTiledImageServiceLayer' }), 'business').support).toBe('full')
   })
-  it('VectorTile 无 url 默认不支持；有 url 或有 styleUrl → partial', () => {
+  it('VectorTile 无 url 默认不支持；有 url 或有 styleUrl → full（MapLibre 官方样式）', () => {
     const none = classifyLayer(layer({ url: '', layerType: 'VectorTileLayer' }), 'basemap')
     expect(none.support).toBe('none')
     expect(none.reason).toBeTruthy()
-    expect(classifyLayer(layer({ url: 'https://x/VectorTileServer', layerType: 'VectorTileLayer', styleUrl: 'https://x/style' }), 'basemap').support).toBe('partial')
+    expect(classifyLayer(layer({ url: 'https://x/VectorTileServer', layerType: 'VectorTileLayer', styleUrl: 'https://x/style' }), 'basemap').support).toBe('full')
   })
   it('3D Scene / I3S → partial（客户端 I3S 渲染）', () => {
     const a = classifyLayer(layer({ url: 'https://x/SceneServer/0', layerType: 'ArcGISSceneServiceLayer' }), 'business')
@@ -95,14 +95,14 @@ describe('assessWebmap 整体评估', () => {
     }
     expect(assessWebmap(wm as unknown as Record<string, unknown>).renderable).toBe(false)
   })
-  it('纯 VectorTile 底图（带 styleUrl）→ 可渲染 partial', () => {
+  it('纯 VectorTile 底图（带 styleUrl）→ 可渲染 full（MapLibre 官方样式）', () => {
     const wm = {
       baseMap: { baseMapLayers: [layer({ title: 'Streets', url: 'https://x/VectorTileServer', layerType: 'VectorTileLayer', styleUrl: 'https://x/style' })] },
       operationalLayers: [],
     }
     const a = assessWebmap(wm as unknown as Record<string, unknown>)
     expect(a.renderable).toBe(true)
-    expect(a.fidelity).toBe('partial')
+    expect(a.fidelity).toBe('full')
   })
   it('只有 Hillshade 辅助层 → 不可渲染', () => {
     const wm = {

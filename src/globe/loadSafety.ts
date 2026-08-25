@@ -14,36 +14,19 @@ export const SAFETY = {
   MAX_FILE_BYTES: 8_000_000,
   // KML：更严格（KmlDataSource 解析开销大）
   KML_MAX_BYTES: 2_000_000,
-  // Vector tile: max zoom we request (avoid exploding geometry at high zoom)
-  VECTOR_TILE_MAX_ZOOM: 12,
-  // Vector tile 背靠的 Cesium3DTileset 缓存内存上限（超出视口的瓦片会被自动卸载，防内存膨胀）
-  VECTOR_TILE_MEMORY_LIMIT: 64 * 1024 * 1024,
-  // Vector tile 缓存溢出允许的额外内存（达到最大 SSE 所需瓦片超过 cacheBytes 时可用）
-  VECTOR_TILE_CACHE_OVERFLOW: 16 * 1024 * 1024,
+  // Vector tile (MapLibre 栅格化): 最大请求级别（MapLibre 逐瓦片 GPU 渲染，预算放宽到 16）
+  VECTOR_TILE_MAX_ZOOM: 16,
   // Scene / 3D Tiles: cap LOD (kept conservative)
   SCENE_MAX_LOD: 15,
   // WMS / imagery providers: cap detail level to avoid tile storms
   IMAGERY_MAX_LEVEL: 16,
 } as const
 
-// Large global vector basemaps are the worst offenders (OpenStreetMap / ArcGIS basemaps).
-// For these we degrade to raster tiles so they never freeze the viewer.
-export function isGlobalVectorTileLayer(op: WebLayer): boolean {
-  const kind = op.layerType || op.type || ''
-  if (!/VectorTileLayer/i.test(kind)) return false
-  const hay = ((op.url || '') + ' ' + (op.styleUrl || '') + ' ' + (op.title || '')).toLowerCase()
-  if (/openstreetmap|openbasemap|basemaps\.arcgis\.com|vector tileserver/i.test(hay)) return true
-  // ArcGIS-hosted global basemap style (e.g. Streets / World Street Map)
-  if (/\/sharing\/rest\/content\/items\/[^/]+\/resources\/styles\/root\.json/i.test(op.styleUrl || '')) return true
-  return false
-}
-
 export type LoadRisk = 'light' | 'medium' | 'heavy'
 
 // Classify a layer's load risk; heavy layers are degraded / limited before rendering.
 export function riskOfLayer(op: WebLayer): LoadRisk {
   const kind = op.layerType || op.type || ''
-  if (isGlobalVectorTileLayer(op)) return 'heavy'
   if (/featurelayer|featureserver|wfs|scenelayer|3dtiles|cesium3dtiles|integratedmesh|pointcloud|3dobject|buildingscene/i.test(kind)) return 'heavy'
   if (/vectortilelayer|wmtslayer|wmslayer|mapservice|imageservice|mapserver|imageserver|kmllayer|geojsonlayer|csvlayer/i.test(kind)) return 'medium'
   return 'light'
@@ -51,7 +34,6 @@ export function riskOfLayer(op: WebLayer): LoadRisk {
 
 // Human-readable reason when a layer is degraded (shown via toast / label).
 export function degradeReason(op: WebLayer): string | undefined {
-  if (isGlobalVectorTileLayer(op)) return '全局矢量底图已降级为栅格图像'
   if (riskOfLayer(op) === 'heavy') return '重负载图层已限制视口/预算'
   return undefined
 }
