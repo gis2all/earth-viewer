@@ -13,7 +13,11 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@mapbox/vector-tile": "^3.0.0",
     "cesium": "1.144.0",
+    "maplibre-gl": "^6.6.0",
+    "pbf": "^5.1.2",
+    "proj4": "^2.21.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "zustand": "^4.5.5"
@@ -36,5 +40,8 @@
     "vite": "^5.4.11",
     "vite-plugin-cesium": "^1.2.23",
     "vitest": "^4.1.11"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

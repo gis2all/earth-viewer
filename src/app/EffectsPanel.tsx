@@ -35,7 +35,10 @@ const GROUPS: { name: string; items: Item[] }[] = [
   },
   {
     name: '视图',
-    items: [{ key: 'autoRotate', label: '自动环绕', kind: 'switch' }],
+    items: [
+      { key: 'autoRotate', label: '自动环绕', kind: 'switch' },
+      { key: 'showReferenceLayers', label: '区划网格', kind: 'switch', note: '显示区划/参考层描边' },
+    ],
   },
 ]
 

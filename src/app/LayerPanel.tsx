@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAppStore } from '../state/store'
-import { fetchWebmap, detectMapService, withFetchTimeout } from '../globe/webmap'
-import { assessWebmap, type WebmapAssessment } from '../globe/assess'
+import { fetchWebmap, withFetchTimeout } from '../globe/webmap'
+import { assessWebmap } from '../globe/assess'
+import { SEARCH_ITEM_TYPES, isWebMapContainer } from '../globe/itemTypes'
+import { resolveServiceItem } from '../globe/serviceItem'
 
 interface SearchResult {
   id: string
@@ -10,10 +12,152 @@ interface SearchResult {
   snippet?: string
   numViews?: number
   fidelity?: 'full' | 'partial' | 'none'
+  url?: string
+  type?: string
 }
 
-const DEFAULT_QUERY = 'type:"Web Map" AND access:public'
-const PAGE = 24
+type SearchType = (typeof SEARCH_ITEM_TYPES)[number]
+
+const SEARCH_TYPES: SearchType[] = [...SEARCH_ITEM_TYPES]
+const SEARCH_PAGE = 12
+const GALLERY_PAGE = 24
+const APPEND_STEP = 12
+/** 服务类 item 才需要服务根预检；容器（Web Map/Scene）与文件类走点开后校验。 */
+const PREFLIGHT_TYPES = new Set<string>([
+  'Map Service',
+  'Feature Service',
+  'Image Service',
+  'Scene Service',
+  'Vector Tile Service',
+  'WMS',
+  'WMTS',
+  'WFS',
+  'KML',
+])
+const PREFLIGHT_ABORT_MS = 3000
+const PREFLIGHT_CACHE_KEY = 'earth-viewer:preflight'
+const PREFLIGHT_TTL_MS = 24 * 60 * 60 * 1000
+
+type PreflightState = 'ok' | 'bad'
+
+function readPreflightCache(): Map<string, { s: PreflightState; t: number }> {
+  try {
+    const raw = localStorage.getItem(PREFLIGHT_CACHE_KEY)
+    if (!raw) return new Map()
+    const obj = JSON.parse(raw) as Record<string, { s: PreflightState; t: number }>
+    const now = Date.now()
+    const map = new Map<string, { s: PreflightState; t: number }>()
+    for (const [k, v] of Object.entries(obj)) {
+      if (v && (v.s === 'ok' || v.s === 'bad') && now - v.t < PREFLIGHT_TTL_MS) map.set(k, v)
+    }
+    return map
+  } catch {
+    return new Map()
+  }
+}
+
+function writePreflightCache(map: Map<string, { s: PreflightState; t: number }>) {
+  try {
+    localStorage.setItem(PREFLIGHT_CACHE_KEY, JSON.stringify(Object.fromEntries(map.entries())))
+  } catch {
+    /* 忽略配额/隐私限制 */
+  }
+}
+
+/** 轻量探测服务根：Token Required / Subscription canceled / 403 等 => 不可用。 */
+async function preflightService(url: string): Promise<boolean> {
+  try {
+    const sep = url.includes('?') ? '&' : '?'
+    const r = await fetch(url + sep + 'f=json', {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      signal: AbortSignal.timeout(PREFLIGHT_ABORT_MS),
+    })
+    if (!r.ok) return false
+    const j: unknown = await r.json().catch(() => null)
+    const err = (j as { error?: unknown } | null)?.error
+    return !!j && !err
+  } catch {
+    return false
+  }
+}
+
+
+/** 按 item 类型选择预检方式：容器（Web Map/Scene）走 data（/sharing 代理），服务类走服务根。 */
+async function preflightItem(it: SearchResult): Promise<boolean> {
+  try {
+    if (isWebMapContainer(it.type ?? '')) {
+      const r = await fetch(`/sharing/rest/content/items/${it.id}/data?f=json`, {
+        signal: AbortSignal.timeout(PREFLIGHT_ABORT_MS),
+      })
+      if (!r.ok) return false
+      const j: unknown = await r.json().catch(() => null)
+      return !!j && !(j as { error?: unknown } | null)?.error
+    }
+    if (it.url) return await preflightService(it.url)
+    return true
+  } catch {
+    return false
+  }
+}
+
+const AUTHORITATIVE_FILTER =
+  'AND (contentstatus:"org_authoritative" OR contentstatus:"public_authoritative") NOT contentstatus:"deprecated"'
+
+function buildSearchQuery(type: SearchType, keyword: string): string {
+  const query = `type:"${type}" AND access:public ${AUTHORITATIVE_FILTER}`
+  return keyword ? query + ' AND (' + keyword + ')' : query
+}
+
+function mergeSearchResults(groups: SearchResult[][]): SearchResult[] {
+  const seen = new Set<string>()
+  return groups
+    .flat()
+    .filter((item) => {
+      if (!item.id || seen.has(item.id)) return false
+      seen.add(item.id)
+      return true
+    })
+    .sort((a, b) => {
+      const views = (b.numViews ?? 0) - (a.numViews ?? 0)
+      return views || a.id.localeCompare(b.id)
+    })
+}
+
+async function fetchSearchPage(
+  type: SearchType,
+  keyword: string,
+  start: number,
+  signal: AbortSignal
+): Promise<{ results: SearchResult[]; nextStart?: number | null }> {
+  const q = buildSearchQuery(type, keyword)
+  const r = await fetch(
+    '/sharing/rest/search?q=' +
+      encodeURIComponent(q) +
+      '&f=json&num=' +
+      SEARCH_PAGE +
+      '&start=' +
+      start +
+      '&sortField=numViews&sortOrder=desc',
+    { signal: withFetchTimeout(signal) }
+  )
+  if (!r.ok) throw new Error('ArcGIS 搜索失败')
+  const j = (await r.json()) as {
+    results?: SearchResult[]
+    nextStart?: number
+  }
+  return {
+    results: (j.results ?? []).map((it) => ({
+      id: it.id,
+      title: it.title,
+      thumbnail: it.thumbnail,
+      snippet: it.snippet,
+      numViews: it.numViews,
+      url: it.url,
+      type: it.type,
+    })),
+    nextStart: j.nextStart,
+  }
+}
 
 function thumbUrl(id: string, t?: string): string | undefined {
   if (!t) return undefined
@@ -34,89 +178,29 @@ export function LayerPanel() {
   const [done, setDone] = useState(false)
   const [err, setErr] = useState('')
   const [addingId, setAddingId] = useState<string | null>(null)
-  const nextStart = useRef(1)
   const loadingRef = useRef(false)
   const abortRef = useRef<AbortController | null>(null)
   const requestIdRef = useRef(0)
-  const assessCache = useRef(new Map<string, WebmapAssessment>())
+  const nextStartsRef = useRef<Record<string, number>>({})
+  const doneTypesRef = useRef<Record<string, boolean>>({})
+  const pendingRef = useRef<SearchResult[]>([])
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const kwRef = useRef(kw)
   kwRef.current = kw
   const timerRef = useRef<number | null>(null)
-
-  /** 判断 webmap 是否至少有一个可渲染图层（带 url 的 MapServer/ImageServer/Feature/GeoJSON） */
-  async function assessItem(it: SearchResult, signal?: AbortSignal): Promise<WebmapAssessment | null> {
-    const cached = assessCache.current.get(it.id)
-    if (cached) return cached
-    try {
-      const wm = await fetchWebmap(it.id, signal)
-      const a = assessWebmap(wm as Record<string, unknown>)
-      // 探测 MapServer/ImageServer 是否为动态服务（无 tileInfo）：动态服务无法用 /tile/ 渲染，降级为不可渲染
-      await refineAssessment(a)
-      assessCache.current.set(it.id, a)
-      return a
-    } catch {
-      return null
-    }
-  }
-
-  /** 对评估结果做异步精化：动态 MapServer 标为 none */
-  async function refineAssessment(a: WebmapAssessment) {
-    const tileLayers = a.layers.filter(
-      (l) => l.support === 'full' && /\/MapServer\/?$|\/ImageServer\/?$/i.test(l.url ?? '')
-    )
-    if (tileLayers.length === 0) return
-    const checks = await Promise.all(tileLayers.map((l) => detectMapService(l.url as string)))
-    tileLayers.forEach((l, i) => {
-      const info = checks[i]
-      if (info && !info.tiled) {
-        l.support = 'none'
-        l.reason = '动态 MapServer（无缓存瓦片），暂不支持'
-      }
-    })
-    // 重算 renderable / fidelity
-    const renderable = a.layers.some(
-      (l) => (l.role === 'basemap' || l.role === 'business') && (l.support === 'full' || l.support === 'partial')
-    )
-    a.renderable = renderable
-    a.fidelity = renderable
-      ? a.layers.some((l) => l.support !== 'full')
-        ? 'partial'
-        : 'full'
-      : 'none'
-    if (!renderable) {
-      const first = a.layers.find((l) => l.reason)
-      a.reason = first?.reason ?? '无可渲染图层'
-    }
-  }
-
-  /** 分批检查（每批 6 个），控制并发避免触发限流；保留评估结果用于能力角标 */
-  async function filterRenderable(
-    items: SearchResult[],
-    signal?: AbortSignal,
-    onBatch?: (batch: SearchResult[]) => void
-  ): Promise<SearchResult[]> {
-    const out: SearchResult[] = []
-    const BATCH = 6
-    for (let i = 0; i < items.length; i += BATCH) {
-      const batch = items.slice(i, i + BATCH)
-      const flags = await Promise.all(batch.map((it) => assessItem(it, signal)))
-      const ok: SearchResult[] = []
-      batch.forEach((it, idx) => {
-        const a = flags[idx]
-        if (a?.renderable) ok.push({ ...it, fidelity: a.fidelity })
-      })
-      out.push(...ok)
-      onBatch?.(ok)
-    }
-    return out
-  }
+  const [badIds, setBadIds] = useState<Set<string>>(() => {
+    const cache = readPreflightCache()
+    const set = new Set<string>()
+    for (const [id, v] of cache) if (v.s === 'bad') set.add(id)
+    return set
+  })
+  const preflightCacheRef = useRef<Map<string, { s: PreflightState; t: number }>>(readPreflightCache())
+  const preflightGenRef = useRef(0)
+  const preflightInflightRef = useRef<Set<string>>(new Set())
 
   async function loadMore(reset: boolean) {
-    if (loadingRef.current) return
-    // 请求序列号：只有最新一次请求才允许更新 UI，彻底消除旧请求覆盖新结果的风险
+    if (loadingRef.current && !reset) return
     const requestId = ++requestIdRef.current
-    // 取消上一个未完成的请求（防抖/新搜索时避免旧结果覆盖）
     abortRef.current?.abort()
     const controller = new AbortController()
     abortRef.current = controller
@@ -124,56 +208,43 @@ export function LayerPanel() {
     setLoading(true)
     setErr('')
     try {
-      let start = reset ? 1 : nextStart.current
-      const usable: SearchResult[] = []
-      let guard = 0
-      // 预取 + 过滤：翻页直到凑够 PAGE 个可渲染的，或搜索到底
-      const sortByViews = (arr: SearchResult[]) => arr.slice().sort((a, b) => (b.numViews ?? 0) - (a.numViews ?? 0))
-      while (guard < 12) {
-        guard++
-        const q = DEFAULT_QUERY + (kwRef.current ? ' AND ' + kwRef.current : '')
-        const r = await fetch(
-          '/sharing/rest/search?q=' + encodeURIComponent(q) + '&f=json&num=' + PAGE + '&start=' + start + '&sortField=numViews&sortOrder=desc',
-          { signal: withFetchTimeout(controller.signal) }
-        )
-        const j = (await r.json()) as {
-          results?: SearchResult[]
-          nextStart?: number
-          total?: number
-        }
-        const results = (j.results ?? []).map((it) => ({
-          id: it.id,
-          title: it.title,
-          thumbnail: it.thumbnail,
-          snippet: it.snippet,
-          numViews: it.numViews,
-        }))
-        nextStart.current = j.nextStart ?? start + results.length
-        if (results.length === 0) {
-          setDone(true)
-          break
-        }
-        // 每批评估完立即上屏（第一屏不必等凑满 24 项）
-        const pageAcc: SearchResult[] = []
-        const ok = await filterRenderable(results, controller.signal, (partial) => {
-          pageAcc.push(...partial)
-          if (requestId !== requestIdRef.current) return
-          // reset=true：usable（跨页累积）+ pageAcc（本页累积）；追加模式：prev + 本批 partial（避免 pageAcc 累积导致重复）
-          if (reset) setItems(sortByViews([...usable, ...pageAcc]))
-          else setItems((prev) => sortByViews([...prev, ...partial]))
-        })
-        usable.push(...ok)
-        if (usable.length >= PAGE) break
-        if (!j.nextStart) {
-          setDone(true)
-          break
-        }
-        start = j.nextStart
+      if (reset) {
+        SEARCH_TYPES.forEach((t) => (nextStartsRef.current[t] = 1))
+        SEARCH_TYPES.forEach((t) => (doneTypesRef.current[t] = false))
+        pendingRef.current = []
       }
-      // 已通过 onBatch 增量渲染；此处兜底（如首屏无结果时无批次触发）
-      if (requestId === requestIdRef.current && reset) setItems(sortByViews(usable))
-      // 翻页上限耗尽仍未凑满时标记到底（避免静默停止）
-      if (requestId === requestIdRef.current && usable.length < PAGE) setDone(true)
+      // consume cached candidates, else fetch one page per unfinished type
+      const needFetch = reset || pendingRef.current.length < APPEND_STEP
+      if (needFetch) {
+        const activeTypes = SEARCH_TYPES.filter((type) => !doneTypesRef.current[type])
+        const pages = await Promise.all(
+          activeTypes.map(async (type) => {
+            const page = await fetchSearchPage(type, kwRef.current, nextStartsRef.current[type], controller.signal)
+            if (requestId !== requestIdRef.current) return []
+            if (!page.results.length || !page.nextStart) {
+              doneTypesRef.current[type] = true
+            } else {
+              nextStartsRef.current[type] = page.nextStart
+            }
+            return page.results
+          })
+        )
+        if (requestId !== requestIdRef.current) return
+        const results = mergeSearchResults(pages)
+        pendingRef.current = mergeSearchResults([pendingRef.current, results])
+      }
+      // ★ 旧请求即使 Abort 不及时，也不能让它污染新搜索的分页游标 / 待渲染缓冲
+      if (requestId !== requestIdRef.current) return
+      const take = reset ? GALLERY_PAGE : APPEND_STEP
+      const toShow = pendingRef.current.slice(0, take)
+      pendingRef.current = pendingRef.current.slice(take)
+      if (requestId === requestIdRef.current && toShow.length > 0) {
+        if (reset) setItems(toShow)
+        else setItems((prev) => mergeSearchResults([prev, toShow]))
+      }
+      if (requestId === requestIdRef.current && SEARCH_TYPES.every((type) => doneTypesRef.current[type]) && pendingRef.current.length === 0) {
+        setDone(true)
+      }
     } catch (e) {
       if ((e as Error).name === 'AbortError') return
       if (requestId !== requestIdRef.current) return
@@ -185,12 +256,11 @@ export function LayerPanel() {
       }
     }
   }
-
   const runSearch = () => {
+    preflightGenRef.current++
     setItems([])
     setDone(false)
     setErr('')
-    nextStart.current = 1
     void loadMore(true)
   }
 
@@ -211,6 +281,49 @@ export function LayerPanel() {
     runSearch()
   }
 
+  // 后台异步预检服务类卡片：命中需登录/订阅取消/不可访问 → 自动隐藏（不阻塞首屏）
+  useEffect(() => {
+    const cands = items.filter((it) => {
+      const isContainer = isWebMapContainer(it.type ?? '')
+      const isService = PREFLIGHT_TYPES.has(it.type ?? '')
+      if (!(isContainer || isService)) return false
+      if (isService && !it.url) return false
+      return !preflightInflightRef.current.has(it.id) && !preflightCacheRef.current.has(it.id)
+    })
+    if (cands.length === 0) return
+    const myGen = preflightGenRef.current
+    const con = 4
+    let idx = 0
+    async function worker() {
+      while (true) {
+        const my = idx++
+        if (my >= cands.length) break
+        const it = cands[my]
+        if (preflightInflightRef.current.has(it.id)) continue
+        preflightInflightRef.current.add(it.id)
+        try {
+          const ok = await preflightItem(it)
+          if (myGen !== preflightGenRef.current) return
+          const cache = preflightCacheRef.current
+          cache.set(it.id, { s: ok ? 'ok' : 'bad', t: Date.now() })
+          if (!ok) {
+            setBadIds((prev) => {
+              const n = new Set(prev)
+              n.add(it.id)
+              return n
+            })
+          }
+          writePreflightCache(cache)
+        } catch {
+          // 网络异常忽略，保留卡片（点开再校验）
+        } finally {
+          preflightInflightRef.current.delete(it.id)
+        }
+      }
+    }
+    void Promise.all(Array.from({ length: Math.min(con, cands.length) }, worker))
+  }, [items])
+
   // 取消进行中的搜索（递增序列号，使旧请求彻底失效）
   const cancelSearch = () => {
     requestIdRef.current++
@@ -227,23 +340,43 @@ export function LayerPanel() {
     toastTimer.current = window.setTimeout(() => setToast(''), 4000)
   }
 
-  async function addWebmap(it: SearchResult) {
+  async function addItem(it: SearchResult) {
     if (addingId) return
     setAddingId(it.id)
     try {
-      const wm = await fetchWebmap(it.id)
-      addLayer({
-        id: it.id,
-        title: it.title,
-        thumb: thumbUrl(it.id, it.thumbnail),
-        itemId: it.id,
-        webmap: wm as Record<string, unknown>,
-        kind: 'webmap',
-      })
-      const a = assessWebmap(wm as Record<string, unknown>)
-      const skipped = a.layers.filter((l) => l.support === 'none').map((l) => l.title).filter(Boolean)
-      if (a.fidelity === 'partial' && skipped.length > 0) {
-        notify('已添加，但部分图层不支持：' + skipped.join('、'))
+      if (isWebMapContainer(it.type ?? '')) {
+        const wm = await fetchWebmap(it.id)
+        addLayer({
+          id: it.id,
+          title: it.title,
+          thumb: thumbUrl(it.id, it.thumbnail),
+          itemId: it.id,
+          webmap: wm as Record<string, unknown>,
+          kind: 'webmap',
+        })
+        const a = assessWebmap(wm as Record<string, unknown>)
+        const skipped = a.layers.filter((l) => l.support === 'none').map((l) => l.title).filter(Boolean)
+        if (a.fidelity === 'partial' && skipped.length > 0) {
+          notify('已添加，但部分图层不支持：' + skipped.join('、'))
+        }
+      } else {
+        const layer = await resolveServiceItem({ id: it.id, type: it.type ?? '', url: it.url, title: it.title })
+        if (!layer) {
+          notify('暂不支持直接添加：' + (it.title || it.id))
+          return
+        }
+        const wm = {
+          baseMap: { baseMapLayers: [] },
+          operationalLayers: [layer],
+        }
+        addLayer({
+          id: it.id,
+          title: it.title,
+          thumb: thumbUrl(it.id, it.thumbnail),
+          itemId: it.id,
+          webmap: wm as unknown as Record<string, unknown>,
+          kind: 'webmap',
+        })
       }
     } catch (e) {
       notify('添加失败：' + String(e))
@@ -251,7 +384,6 @@ export function LayerPanel() {
       setAddingId(null)
     }
   }
-
   const onScroll = () => {
     const el = scrollRef.current
     if (!el) return
@@ -316,11 +448,11 @@ export function LayerPanel() {
             )}
           </div>
           <div className="gallery">
-            {items.map((it) => (
+            {items.filter((it) => !badIds.has(it.id)).map((it) => (
               <button
                 key={it.id}
                 className="gallery-card"
-                onClick={() => addWebmap(it)}
+                onClick={() => addItem(it)}
                 disabled={addingId === it.id}
                 title={it.snippet}
               >
@@ -336,9 +468,6 @@ export function LayerPanel() {
                   <div className="gc-ph" />
                 )}
                 <span className="gc-title">{it.title}</span>
-                {it.fidelity === 'partial' && (
-                  <span className="gc-badge" title="部分图层暂不支持，添加时会跳过">部分支持</span>
-                )}
               </button>
             ))}
           </div>
