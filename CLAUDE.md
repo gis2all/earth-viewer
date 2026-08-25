@@ -47,13 +47,14 @@
 | TypeScript | 5.6.x（strict） |
 | zustand | 4.5.x（全局状态 + persist localStorage `earth-viewer`） |
 | proj4 / @mapbox/vector-tile / pbf | ArcGIS 数据转换：坐标重投影 / MVT 矢量瓦片解码 |
+| maplibre-gl | 6.6.x：矢量瓦片官方样式（root.json）离屏渲染 → 自定义 ImageryProvider 喂给 Cesium |
 | Vitest / Testing Library | 单测 + 覆盖率（v8 provider） |
 | Playwright | E2E |
 | Node.js | **≥ 22**（CI/Docker 统一 + package.json `engines` 与 .npmrc `engine-strict` 本地强制；Cesium 要求） |
 | Docker | 两阶段镜像（node:22-alpine），Compose 运行 |
 | Cloudflare Pages + wrangler | 生产部署 |
 
-- 渲染引擎**只有 Cesium**；无 MapLibre、无时间轴（已删除）。
+- 渲染引擎是 **Cesium**；矢量瓦片样式渲染用 **MapLibre GL**（离屏 3×3 块栅格化后经自定义 ImageryProvider 贴到 Cesium 球上，见 `maplibreImagery.ts`）；无时间轴（已删除）。
 - 端口统一 **5173**（dev / node proxy / nginx / Docker）；CSP 唯一来源 `public/_headers`。
 
 ---
@@ -68,6 +69,9 @@ npm run dev        # http://localhost:5173
 vite 内置 `/sharing` 代理（转发 `www.arcgis.com`，绕 CORS）。★5173 被占时 vite 自动递增（5174/5175），常见是残留 dev server 进程，先清理（§13）。
 
 ### 3.2 生产构建 + Node 代理（自托管）
+> ★构建注意：maplibre 的 worker 通过 new URL(..., import.meta.url) 动态加载，vite 无法静态解析。
+> 已用 import ... from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url' + vite.config.ts 的 worker.format='es'
+> 把它打包成**自包含 ESM worker**（否则生产构建只复制单文件、缺 maplibre-gl-shared.mjs 依赖 → 样式永不 load）。
 ```text
 npm run build               # dist/
 node server/proxy.mjs 5173  # 静态托管 dist + /sharing 代理（默认 5173）
@@ -160,6 +164,7 @@ earth-viz-hub/
 | `src/globe/itemTypes.ts` | 可搜索 item type 白名单与容器判定 | `SEARCH_ITEM_TYPES`/`isWebMapContainer` |
 | `src/globe/serviceItem.ts` | 单图层服务 item 包装为可渲染 webmap | `resolveServiceItem` |
 | `src/globe/csv.ts / vector.ts / vectorTile.ts / ogc.ts / scene.ts / loadSafety.ts` | 各数据源→GeoJSON/Provider/防卡死 | `fetch*GeoJSON`/`loadI3S`/`load3DTiles`/`fetchVectorTileTemplates`/`riskOfLayer` |
+| `src/globe/maplibreImagery.ts` | ★VectorTile 官方样式渲染（方案 A）：MapLibre 离屏 3×3 块批量栅格化 → Cesium `ImageryProvider` | `ArcGisVectorTileImageryProvider`/`normalizeArcGisStyle`/`tileCenterLngLat`/`cropTile` |
 | `src/globe/viewport/` | 视口驱动渲染管线：按相机视口查询 FeatureLayer + Worker 解析/抽稀/顶点与要素预算 + LRU 缓存 + Primitive 渲染 | `queryViewportData`/`runViewportProcess`/`createViewportController`/`applyVertexBudget`/`clusterPoints`/`buildLayerPrimitive`/`viewportCacheKey` |
 | `src/globe/kml.ts` | KML → GeoJSON 轻量转换（走 Worker 预算管线），失败回退原生 KmlDataSource | `parseKmlToGeoJSON`/`kmlStyleToFeatureStyle` |
 | `scripts/badge.mjs` | 从数据文件生成徽章 JSON | 读 coverage-summary / audit / test-results / e2e-results |
@@ -176,7 +181,7 @@ earth-viz-hub/
 ### 6.2 图层管理（★统一评估器 assess.ts）
 - `added: AddedLayer[]`，`kind: 'webmap' | 'fallback'`，webmap 存完整 JSON。
 - `assessWebmap(wm)` 输出 `{ renderable, fidelity: 'full'|'partial'|'none', reason?, layers }`；**过滤与渲染共用**（LayerPanel 用 renderable，GlobeViewer 用 renderableLayersFromWebmap）。
-- 能力表 `classifyLayer`：`full`（MapServer/ImageServer 瓦片、动态服务 export、带名 WMS/WMTS、KML）/ `partial`（FeatureLayer/GeoJSON/CSV/WFS/OGC 降级、VectorTile MVT、I3S、3D Tiles、WMS 缺名）/ `none`（无地址或明确不支持，带原因）。
+- 能力表 `classifyLayer`：`full`（MapServer/ImageServer 瓦片、动态服务 export、带名 WMS/WMTS、KML、**VectorTile（MapLibre 官方样式）**）/ `partial`（FeatureLayer/GeoJSON/CSV/WFS/OGC 降级、I3S、3D Tiles、WMS 缺名）/ `none`（无地址或明确不支持，带原因）。
 - tiled/dynamic 区分：`detectMapService` 读 `tileInfo`；动态 MapServer/ImageServer 无 `/tile/` 模板 → 用 `/export?bbox={westDegrees}...` 出图（支持）。
 - 角色：`basemap`/`overlay`/`business`；★overlay 用 URL 黑名单（Hillshade 等）且**不渲染**（否则灰度盖住彩色底图=全白）。
 - 投影自动探测 `detectCrs`：4326 → Geographic；其余/失败 → Web Mercator；`CRS_CACHE` 缓存。
@@ -185,9 +190,9 @@ earth-viz-hub/
 - 防卡死（loadSafety.ts）：风险分级 + 阈值 + 降级（全球矢量底图影像化、矢量 maxZoom 12、Feature/WFS/OGC/CSV 3000、GeoJSON ≤8MB、KML ≤2MB、WMS maximumLevel 16、Scene/3D SSE=16）；点聚合、串行渲染队列、字段裁剪（outFields=1）。
 - ★渲染健壮性（防 OOM/卡死，GlobeViewer）：① 业务层数量上限 `MAX_BUSINESS_LAYERS=5`（超限省略并提示）；② 业务层总要素预算 `MAX_TOTAL_FEATURES=5000`（`consumeFeatureBudget`，超预算略过后续层）；③ 单层 `MAX_RENDER_FEATURES=1500`（数据大只取前 N 个并提示）；④ fetch 可取消（`rec.abort`，移除图层即中止）；⑤ `renderQueue` 加 `.catch` 兜底（单个 webmap 渲染失败不卡整队列）。
 - **P1–P5 视口驱动管线**（`src/globe/viewport/`）：FeatureLayer 只按相机视口 query（`resolveFeatureQueryBase` 自动解析第一个可查询层，`buildFeatureQueryUrl` 基于已解析的层号 + `geometry=envelope` + `f=geojson`），Worker 解析 → Douglas-Peucker 抽稀 → 顶点预算（`MAX_RENDER_VERTICES=200_000`）→ 要素预算（`MAX_RENDER_FEATURES`），Primitive 优先渲染（`buildLayerPrimitive`）、`hasPrimitiveRendering` 失败回退 `GeoJsonDataSource`；相机 `moveEnd` → `viewportController.update` 随视口更新，LRU 缓存视口结果。
-- **VectorTile 内存上限**：`MVTDataProvider` 背靠 tileset 设 `cacheBytes = VECTOR_TILE_MEMORY_LIMIT`（64MB）/`maximumCacheOverflowBytes = VECTOR_TILE_CACHE_OVERFLOW`（16MB），Cesium 自动卸载不在视口内的瓦片（业界 memoryLimitMB 模式）；全局矢量底图仍降级 OSM 栅格；`isGlobalVectorTileLayer` 识别所有 ArcGIS 托管 style 根（含 www.arcgis.com、cdn.arcgis.com 的 `.../items/<id>/resources/styles/root.json`），避免全球矢量底图走 MVTDataProvider 卡死。
+- **VectorTile（方案 A，maplibreImagery.ts）**：不再用 `MVTDataProvider` 裸几何、也不降级 OSM 栅格——用真实 MapLibre 按官方 `root.json` 离屏渲染（sprite/glyphs/386 层 paint 全支持）。防卡死手段：① **3×3 块批量渲染**（一帧出 9 片，`requestImage` 按块合并、块缓存 LRU 48）；② **先整块快照到 2D canvas 再裁剪**（每块仅 1 次 GPU readPixels，避免与 Cesium 抢 GPU）；③ 串行队列 + 单块失败不阻塞；④ `VECTOR_TILE_MAX_ZOOM=16`；⑤ 销毁时拒绝所有未决瓦片请求。已知：headless 软件渲染下单帧绘制重矢量数据偏慢（真机 GPU 正常），渐进填充不阻塞主线程。
 - **KML 预算**：KML → `parseKmlToGeoJSON` → `runViewportProcess`（顶点/要素预算）→ `GeoJsonDataSource`，失败/无要素回退原生 `KmlDataSource.load`，仍受 `KML_MAX_BYTES=2MB` 限制。
-- **业界防卡死全景（跨类型 1–10）**：① FeatureLayer 视口取数；② WFS/OGC/CSV/KML/GeoJSON 走 Worker 预算管线（runViewportProcess）；③ FeatureLayer 用 Primitive 渲染；④ 点聚类 + 线面抽稀；⑤ 全局/逐层顶点与要素上限；⑥ 瓦片缓存 tileCacheSize + LRU + 分页 + 3D LOD 流式；⑦ SSE 分级（大视图更粗）；⑧ FeatureLayer moveEnd 防抖（250ms）；⑨ 全局矢量底图降级栅格；⑩ WebGL context lost 监听 → 优雅提示。
+- **业界防卡死全景（跨类型 1–10）**：① FeatureLayer 视口取数；② WFS/OGC/CSV/KML/GeoJSON 走 Worker 预算管线（runViewportProcess）；③ FeatureLayer 用 Primitive 渲染；④ 点聚类 + 线面抽稀；⑤ 全局/逐层顶点与要素上限；⑥ 瓦片缓存 tileCacheSize + LRU + 分页 + 3D LOD 流式；⑦ SSE 分级（大视图更粗）；⑧ FeatureLayer moveEnd 防抖（250ms）；⑨ 矢量瓦片用 MapLibre 离屏 3×3 块批量栅格化（不再降级 OSM）；⑩ WebGL context lost 监听 → 优雅提示。
 - 内嵌 FeatureCollection（layerDefinition.featureCollection）走 `runViewportProcess` 预算后 `GeoJsonDataSource` 渲染；WebTiledLayer/urlTemplate 也设 maximumLevel（与 WMS/WMTS 一致）。
 - FeatureLayer（多图层 FeatureServer）默认优先解析“分色渲染器（uniqueValue/classBreaks）”的事件层（如 NWS Watch），而非静态 zones；有渲染器时走 GeoJsonDataSource + applyFeatureStyler 分色，避免单一纯色大块。
 - Feature Service（多图层）采用分层渲染：区划/参考层（simple）可由 effects.showReferenceLayers 开关控制（默认开，低预算 REF_LAYER_MAX 描边，避免盖住事件层），事件层（uniqueValue/classBreaks）全部填充分色，每层独立预算不互相挤占，并自动飞到服务数据范围（fit-to-data）。
@@ -274,16 +279,17 @@ earth-viz-hub/
 ### 6.7.4 测试
 
 - `src/app/LayerPanel.test.tsx`：关键词防抖、Web Map/Scene 并行合并去重、Map Service 解析包装、**服务类预检不可用→自动隐藏**。
-- `src/globe/loadSafety.test.ts`：`consumeFeatureBudget`（空/超预算/降级）、`isGlobalVectorTileLayer`、`riskOfLayer`、`degradeReason`、`assertUrlWithinLimit`。
-- `src/globe/GlobeViewer.test.tsx`：业务层超限提示、非法 webmap 触发渲染队列兜底、全局矢量瓦片降级、WFS/CSV/Feature 预算降级与 `signal`、KML 转 GeoJSON/回退、VectorTile 内存上限。
+- `src/globe/loadSafety.test.ts`：`consumeFeatureBudget`（空/超预算/降级）、`riskOfLayer`、`degradeReason`、`assertUrlWithinLimit`。
+- `src/globe/maplibreImagery.test.ts`：样式规范化（sprite/glyphs/VectorTileServer→tiles 模板）、块键/裁剪、块缓存命中、readyPromise 成功/失败/销毁、串行队列吞错、销毁拒绝未决请求、默认 createMap 走真实 MapLibre 构造。
+- `src/globe/GlobeViewer.test.tsx`：业务层超限提示、非法 webmap 触发渲染队列兜底、VectorTile 走 MapLibre 样式 provider（含失败销毁）、WFS/CSV/Feature 预算降级与 `signal`、KML 转 GeoJSON/回退。
 - 新增请求/预检逻辑务必同步补测试；维持覆盖率门槛（statements/lines ≥ 90）。
 - 每次改动跑：`npm run lint` → `npm run test:coverage` → `npm run build` → `git diff --check`。
 ---
 
 ## 7. 测试与质量门禁
 
-- **单测**：Vitest（jsdom），281 个用例（含 store/cameraApi/AppShell/assess/webmap/LayerPanel/EffectsPanel/GlobeViewer/geo/itemTypes/serviceItem/VectorTile/OGC/CSV/vector/loadSafety）。`npm run test:coverage`
-- **覆盖率门槛**（vitest.config.ts）：★statements ≥90 / lines ≥90 / functions ≥85 / branches ≥70（当前 90.57% / 96.12% / 93.76% / 80.72%）；include **全 src**（含 GlobeViewer），exclude 入口壳与测试文件——真实口径，不玩数字。
+- **单测**：Vitest（jsdom），305 个用例（含 store/cameraApi/AppShell/assess/webmap/LayerPanel/EffectsPanel/GlobeViewer/geo/itemTypes/serviceItem/VectorTile/OGC/CSV/vector/loadSafety/**maplibreImagery**）。`npm run test:coverage`
+- **覆盖率门槛**（vitest.config.ts）：★statements ≥90 / lines ≥90 / functions ≥85 / branches ≥70（当前 90.54% / 95.84% / 93.75% / 80.88%）；include **全 src**（含 GlobeViewer），exclude 入口壳与测试文件——真实口径，不玩数字。
 - **E2E**：Playwright 28 项（冒烟 mock / WebScene UI / UI 交互 mock / 真实 ArcGIS 集成 request）。
 - ★**E2E 轻量模式**：`e2e/app.spec.ts`、`e2e/ui.spec.ts` 注入 `window.__E2E__`，GlobeViewer 跳过 Cesium 创建（CI 无头软件渲染极慢会拖垮交互测试）；「球真实渲染+图层上球」由线上/容器验证覆盖（headless 测不准渲染）。
 - **徽章**：6 个（CI / License / Coverage / Deps / Tests / E2E）；`scripts/badge.mjs` 从 coverage-summary/audit/test-results/e2e-results 生成 JSON → GitHub Actions 发布到 GitHub Pages → shields endpoint 渲染，**每次 CI 实时生成**。
@@ -293,7 +299,7 @@ earth-viz-hub/
 
 ## 8. 已知限制（Cesium 能力边界）
 
-- ArcGIS VectorTileLayer 使用 Cesium `MVTDataProvider` 动态转 3D Tiles；WebScene 纯 `styleUrl` 会解析 style JSON 的 MVT sources。
+- ArcGIS VectorTileLayer 用 MapLibre 按官方样式离屏渲染（`maplibreImagery.ts`），不依赖 `MVTDataProvider`；WebScene 纯 `styleUrl` 直接用 `styleUrlForLayer` 取样式。低缩放/高密度区域（如 z3 亚洲）单帧绘制耗时偏高，headless 软件渲染更明显，真机 GPU 正常。
 - 当 WebGL 上下文丢失（内存不足/卡死）时触发 `webglcontextlost` 监听，显示降级提示而非白屏；
 - 3D Tiles / I3S 已设 cacheBytes=128MB / overflow=32MB，WMTS、动态 MapServer export 已设 maximumLevel=和业界其他平台一致的预算上限。
 - ArcGIS SceneServer/I3S 使用 Cesium `I3SDataProvider`；3D Tiles 使用 `Cesium3DTileset`。
@@ -328,6 +334,7 @@ earth-viz-hub/
 | 品牌图标黑白斜切地球 | 硬线条 ArcGIS 风、简洁；深浅主题反转，favicon 同步 |
 | Cloudflare Pages 而非 Workers | 本项目是静态站点+Functions 代理；Workers 项目类型会导致 wrangler pages deploy 报"项目不存在" |
 | 相机优先 / 用户位置回退 | Web Map/Scene 有 `viewpoint` 就用作者视角；无相机数据回退到 userHome，避免"加了却看不到"或飞到任意 extent 乱跳 |
+| 矢量瓦片用 MapLibre 栅格化而非 MVTDataProvider | 样式要"和 ArcGIS 一样完整"（sprite/字体/386 层 paint），裸几何解码做不到；MVTDataProvider 全球矢量还会内存爆炸。取舍：栅格化贴球（ImageryLayer）+ 3×3 块批量 + 单次快照读回，避免卡死 |
 | 用户定位用 /api/geo（国家质心）+ 硬编码兜底 | 自托管、不弹浏览器授权、不把用户 IP 给第三方；本地 dev 无 Cloudflare 走兜底 |
 | 多数据类型统一支持（ArcGIS→Cesium） | 统一评估器 + 分类型 provider/DataSource，避免"发现一个问题打一个补丁" |
 | 防卡死 loadSafety | 超大服务/全球矢量会拖垮页面，风险分级+阈值降级 |
