@@ -6,7 +6,7 @@ const useLayerError = () => useAppStore((s) => s.setLayerError)
 const useClearLayerError = () => useAppStore((s) => s.clearLayerError)
 import { registerViewer, unregisterViewer, flyToHome } from './cameraApi'
 import { renderableLayersFromWebmap, skippedBusinessLayers, MAX_BUSINESS_LAYERS } from './assess'
-import { isGlobalVectorTileLayer, SAFETY, assertUrlWithinLimit, consumeFeatureBudget } from './loadSafety'
+import { SAFETY, assertUrlWithinLimit, consumeFeatureBudget } from './loadSafety'
 import { applyVertexBudget } from './viewport/budget'
 import { queryViewportData } from './viewport/query'
 import { resolveFeatureQueryBase, resolveFeatureService } from './viewport/featureQuery'
@@ -35,8 +35,8 @@ import {
 import { rendererToStyleFn, applyFeatureStyler, reprojectCoordinates, type FeatureStyleSpec } from './vector'
 import { loadI3S, load3DTiles } from './scene'
 import { parseKmlToGeoJSON, kmlStyleToFeatureStyle, type KmlStyleSpec } from './kml'
-import { fetchVectorTileTemplates, toCesiumMvtTemplate, applyVectorTileMemoryLimit } from './vectorTile'
 import { fetchOgcFeatureGeoJSON } from './ogc'
+import { ArcGisVectorTileImageryProvider } from './maplibreImagery'
 import { fetchCsvGeoJSON } from './csv'
 
 // 地形：Terrain3D (GCSv2, EPSG:4326)，覆盖 ±90°（3857 版只到 ±85.05°，会导致极区无 globe tile）
@@ -181,7 +181,7 @@ export function GlobeViewer() {
   effectsRef.current = effects
   const setLayerError = useLayerError()
   const clearLayerError = useClearLayerError()
-  const layerMapRef = useRef<Map<string, { layers: Cesium.ImageryLayer[]; ds: Cesium.DataSource[]; prims: unknown[]; flew: boolean; abort?: AbortController; viewportController?: { update(env: { west: number; south: number; east: number; north: number }): Promise<void>; dispose(): void }; cameraMoveHandler?: () => void }>>(new Map())
+  const layerMapRef = useRef<Map<string, { layers: Cesium.ImageryLayer[]; ds: Cesium.DataSource[]; prims: unknown[]; vec: ArcGisVectorTileImageryProvider[]; flew: boolean; abort?: AbortController; viewportController?: { update(env: { west: number; south: number; east: number; north: number }): Promise<void>; dispose(): void }; cameraMoveHandler?: () => void }>>(new Map())
   const [glError, setGlError] = useState<string>('')
   const [layerNote, setLayerNote] = useState<string>('')
 
@@ -421,6 +421,7 @@ export function GlobeViewer() {
         if (rec.cameraMoveHandler) (v.camera.moveEnd as unknown as { removeEventListener?: (h: () => void) => void } | undefined)?.removeEventListener?.(rec.cameraMoveHandler)
         rec.viewportController?.dispose()
         rec.layers.forEach((l) => layers.remove(l, true))
+        rec.vec.forEach((p) => p.destroy())
         rec.ds.forEach((d) => v.dataSources.remove(d, true))
         if (v.scene.primitives) rec.prims.forEach((p) => (v.scene.primitives as unknown as { remove: (x: unknown, y?: boolean) => void }).remove(p, true))
         layerMapRef.current.delete(id)
@@ -432,7 +433,7 @@ export function GlobeViewer() {
     const renderOperationalLayers = async (
       v: Cesium.Viewer,
       a: (typeof added)[number],
-      rec: { layers: Cesium.ImageryLayer[]; ds: Cesium.DataSource[]; prims: unknown[]; flew: boolean; abort?: AbortController; viewportController?: { update(env: { west: number; south: number; east: number; north: number }): Promise<void>; dispose(): void }; cameraMoveHandler?: () => void },
+      rec: { layers: Cesium.ImageryLayer[]; ds: Cesium.DataSource[]; prims: unknown[]; vec: ArcGisVectorTileImageryProvider[]; flew: boolean; abort?: AbortController; viewportController?: { update(env: { west: number; south: number; east: number; north: number }): Promise<void>; dispose(): void }; cameraMoveHandler?: () => void },
     ) => {
       const wm = a.webmap as Record<string, unknown> | undefined
       if (!wm) return
@@ -477,44 +478,31 @@ export function GlobeViewer() {
           rec.layers.push(il)
           layers.add(il)
         } else if (isVectorTileLayer(op)) {
-          // OpenStreetMap vectortile basemap: global vector decode/render hangs -> fallback to OSM raster tiles
-          if (isGlobalVectorTileLayer(op)) {
-            const basemapRaster = /openstreetmap/i.test(op.title || '')
-              ? 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
-              : /world street map|streets/i.test(op.title || '')
-                ? 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}'
-                : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
-            const osm = new Cesium.ImageryLayer(
-              new Cesium.UrlTemplateImageryProvider({ url: basemapRaster })
-            )
-            rec.layers.push(osm)
-            layers.add(osm)
-            clearLayerError(a.id)
-            continue
-          }
-
-          // VectorTileLayer 可能只有 styleUrl；从样式源解析全部 MVT 模板并交给 Cesium 动态切片。
-          fetchVectorTileTemplates(op)
-            .then((templates) => {
-              if (templates.length === 0) throw new Error('未找到 VectorTile MVT 源')
-              return Promise.all(
-                templates.map((template) =>
-                  Cesium.MVTDataProvider.fromUrl(toCesiumMvtTemplate(template), { minZoom: 0, maxZoom: SAFETY.VECTOR_TILE_MAX_ZOOM })
-                )
-              )
-            })
-            .then((providers) => {
-              if (!keepAlive()) return
-              providers.forEach((provider) => {
-                applyVectorTileMemoryLimit(provider as never, SAFETY.VECTOR_TILE_MEMORY_LIMIT, SAFETY.VECTOR_TILE_CACHE_OVERFLOW)
-                v.scene.primitives.add(provider)
-                rec.prims.push(provider)
-              })
+          // 方案 A：MapLibre GL 按 ArcGIS 官方样式渲染矢量瓦片 → Cesium ImageryProvider
+          // （不再用 MVTDataProvider 裸几何渲染，也不再降级 OSM 栅格；样式与 ArcGIS Map Viewer 一致）
+          const provider = new ArcGisVectorTileImageryProvider({
+            styleUrl: op.styleUrl,
+            url: op.url,
+            title: op.title,
+            signal,
+          })
+          provider.readyPromise
+            .then(() => {
+              if (!keepAlive()) {
+                provider.destroy()
+                return
+              }
+              const il = new Cesium.ImageryLayer(provider as unknown as Cesium.ImageryProvider)
+              if (typeof op.opacity === 'number') il.alpha = op.opacity
+              rec.layers.push(il)
+              rec.vec.push(provider)
+              layers.add(il)
               clearLayerError(a.id)
             })
-            .catch((e) => {
-              console.error('[layer] 矢量瓦片加载失败', op.url || op.styleUrl, e)
-              setLayerError(a.id, '矢量瓦片加载失败：' + (op.title || op.url || op.styleUrl))
+            .catch((e: unknown) => {
+              console.error('[layer] 矢量瓦片样式渲染失败', op.url || op.styleUrl, e)
+              provider.destroy()
+              setLayerError(a.id, '矢量瓦片渲染失败：' + (op.title || op.url || op.styleUrl))
             })
         } else if (isFeatureCollectionLayer(op)) {
           // 内嵌 FeatureCollection（layerDefinition.featureCollection）：走 Worker 预算管线，防大内嵌数据集卡死
@@ -778,7 +766,7 @@ export function GlobeViewer() {
     let renderQueue: Promise<unknown> = Promise.resolve()
     for (const a of added) {
       if (a.kind !== 'webmap' || !a.webmap || layerMapRef.current.has(a.id)) continue
-      const rec: { layers: Cesium.ImageryLayer[]; ds: Cesium.DataSource[]; prims: unknown[]; flew: boolean; abort?: AbortController; viewportController?: { update(env: { west: number; south: number; east: number; north: number }): Promise<void>; dispose(): void }; cameraMoveHandler?: () => void } = { layers: [], ds: [], prims: [], flew: false, abort: new AbortController() }
+      const rec: { layers: Cesium.ImageryLayer[]; ds: Cesium.DataSource[]; prims: unknown[]; vec: ArcGisVectorTileImageryProvider[]; flew: boolean; abort?: AbortController; viewportController?: { update(env: { west: number; south: number; east: number; north: number }): Promise<void>; dispose(): void }; cameraMoveHandler?: () => void } = { layers: [], ds: [], prims: [], vec: [], flew: false, abort: new AbortController() }
       layerMapRef.current.set(a.id, rec)
       renderQueue = renderQueue
         .then(() => renderOperationalLayers(v, a, rec))

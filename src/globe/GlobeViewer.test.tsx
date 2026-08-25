@@ -152,15 +152,34 @@ vi.mock('cesium', () => {
   }
 })
 
-// 矢量瓦片解码：mock，避免真实网络
-vi.mock('./vectorTile', () => ({
-  fetchVectorTileGeoJSON: vi.fn(() => Promise.resolve({ type: 'FeatureCollection', features: [] })),
-  vectorTileUrl: vi.fn((u: string, z?: number, y?: number, x?: number) =>
-    u + '/tile/' + (z === undefined ? '{z}/{y}/{x}' : z + '/' + y + '/' + x) + '.pbf'),
-  fetchVectorTileTemplates: vi.fn(() => Promise.resolve(['https://x/VectorTileServer/tile/{z}/{y}/{x}.pbf'])),
-  toCesiumMvtTemplate: vi.fn((u: string) => u.replace('{z}/{y}/{x}', '{z}/{x}/{y}')),
-  applyVectorTileMemoryLimit: vi.fn(() => true),
-}))
+// MapLibre 矢量瓦片 provider：mock 掉真实 MapLibre，避免 jsdom 无 WebGL
+const maplibreMock = vi.hoisted(() => {
+  const instances: Array<{
+    opts: Record<string, unknown>
+    destroy: ReturnType<typeof vi.fn>
+    readyPromise: Promise<boolean>
+  }> = []
+  return { instances }
+})
+
+vi.mock('./maplibreImagery', () => {
+  class MockVectorProvider {
+    ready = false
+    readyPromise: Promise<boolean>
+    destroy = vi.fn()
+    constructor(public opts: Record<string, unknown>) {
+      this.readyPromise = opts.styleUrl === 'https://fail'
+        ? Promise.reject(new Error('fail'))
+        : Promise.resolve(true).then(() => { this.ready = true; return true })
+      maplibreMock.instances.push(this as never)
+    }
+  }
+  return {
+    ArcGisVectorTileImageryProvider: MockVectorProvider,
+    normalizeArcGisStyle: vi.fn((st: unknown) => st),
+    tileCenterLngLat: vi.fn((x: number, y: number) => ({ lng: x, lat: y })),
+  }
+})
 
 vi.mock('./ogc', () => ({
   fetchOgcFeatureGeoJSON: vi.fn(() => Promise.resolve({ type: 'FeatureCollection', features: [] })),
@@ -550,7 +569,8 @@ describe('GlobeViewer 补强', () => {
     expect(screen.getByText(/仅渲染前 5 个/)).toBeInTheDocument()
   })
 
-  it('全局矢量瓦片底图降级为 OSM 栅格（不冻结）', async () => {
+  it('全局矢量瓦片底图按官方样式渲染（不再降级 OSM 栅格）', async () => {
+    maplibreMock.instances.length = 0
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ features: [] }) })))
     render(<GlobeViewer />)
     await flush()
@@ -570,6 +590,8 @@ describe('GlobeViewer 补强', () => {
     })
     await flush()
     await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(maplibreMock.instances.length).toBe(1)
+    expect(maplibreMock.instances[0].opts.styleUrl).toContain('root.json')
     expect(v.imageryLayers.add).toHaveBeenCalled()
   })
 
@@ -837,13 +859,11 @@ describe('GlobeViewer 补强', () => {
     expect(v.scene.primitives.add).toHaveBeenCalled()
   })
 
-  it('添加 VectorTile 图层 → Cesium MVTDataProvider 加入 primitives', async () => {
+  it('添加 VectorTile 图层 → MapLibre 样式 provider 渲染为 ImageryLayer', async () => {
+    maplibreMock.instances.length = 0
     render(<GlobeViewer />)
     await flush()
     const v = viewer()
-    const { MVTDataProvider } = await import('cesium')
-    const fn = MVTDataProvider.fromUrl as unknown as ReturnType<typeof vi.fn>
-    fn.mockClear()
     act(() => {
       useAppStore.getState().addLayer({
         id: 'vt', title: 'Streets', kind: 'webmap',
@@ -856,18 +876,17 @@ describe('GlobeViewer 补强', () => {
       })
     })
     await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
-    expect(fn).toHaveBeenCalled()
-    expect(fn).toHaveBeenCalledWith('https://x/VectorTileServer/tile/{z}/{x}/{y}.pbf', expect.anything())
-    expect(v.scene.primitives.add).toHaveBeenCalled()
+    expect(maplibreMock.instances.length).toBe(1)
+    expect(maplibreMock.instances[0].opts.styleUrl).toBe('https://x/style')
+    expect(maplibreMock.instances[0].opts.url).toBe('https://x/VectorTileServer')
+    expect(v.imageryLayers.add).toHaveBeenCalled()
   })
 
-  it('WebScene 只有 styleUrl 的 VectorTileLayer → 解析样式源并加入 primitives', async () => {
+  it('WebScene 只有 styleUrl 的 VectorTileLayer → provider 直接用样式地址渲染', async () => {
+    maplibreMock.instances.length = 0
     render(<GlobeViewer />)
     await flush()
     const v = viewer()
-    const { fetchVectorTileTemplates } = await import('./vectorTile')
-    const templates = fetchVectorTileTemplates as unknown as ReturnType<typeof vi.fn>
-    templates.mockClear()
     act(() => {
       useAppStore.getState().addLayer({
         id: 'scene-vt', title: 'Scene Basemap', kind: 'webmap',
@@ -885,8 +904,29 @@ describe('GlobeViewer 补强', () => {
       })
     })
     await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
-    expect(templates).toHaveBeenCalledWith(expect.objectContaining({ styleUrl: 'https://cdn.example/root.json' }))
-    expect(v.scene.primitives.add).toHaveBeenCalled()
+    expect(maplibreMock.instances.length).toBe(1)
+    expect(maplibreMock.instances[0].opts.styleUrl).toBe('https://cdn.example/root.json')
+    expect(v.imageryLayers.add).toHaveBeenCalled()
+  })
+
+  it('VectorTile 样式加载失败 → 报错并销毁 provider', async () => {
+    maplibreMock.instances.length = 0
+    render(<GlobeViewer />)
+    await flush()
+    act(() => {
+      useAppStore.getState().addLayer({
+        id: 'vt-fail', title: 'Fail', kind: 'webmap',
+        webmap: {
+          baseMap: { baseMapLayers: [] },
+          operationalLayers: [
+            { id: 'v1', title: 'Fail', url: 'https://x/VectorTileServer', layerType: 'VectorTileLayer', styleUrl: 'https://fail' },
+          ],
+        },
+      })
+    })
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(maplibreMock.instances.length).toBe(1)
+    expect(maplibreMock.instances[0].destroy).toHaveBeenCalled()
   })
 
   it('多图层 Feature Service → 区划层跳过、事件层渲染为 dataSource', async () => {
