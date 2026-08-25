@@ -6,6 +6,7 @@ import { useAppStore } from '../state/store'
 // ---- Cesium mock（fake Viewer，可断言创建/底图/图层/相机/效果） ----
 const cesiumMock = vi.hoisted(() => {
   const viewers: any[] = []
+  const viewerOptions: any[] = []
   const imageryLayerInstances: any[] = []
   const handlerInstances: any[] = []
   const terrainProviders: any[] = []
@@ -56,6 +57,7 @@ const cesiumMock = vi.hoisted(() => {
       moon: { show: true },
       fog: { enabled: false },
       verticalExaggeration: 1,
+      requestRender: vi.fn(),
       primitives: { add: vi.fn(), remove: vi.fn() },
     }
     const camera = {
@@ -87,13 +89,16 @@ const cesiumMock = vi.hoisted(() => {
     return v
   }
 
-  return { viewers, imageryLayerInstances, handlerInstances, terrainProviders, makeViewer }
+  return { viewers, viewerOptions, imageryLayerInstances, handlerInstances, terrainProviders, makeViewer }
 })
 
 vi.mock('cesium', () => {
   const CM = cesiumMock
   return {
-    Viewer: vi.fn(function () { return CM.makeViewer() }),
+    Viewer: vi.fn(function (_container: unknown, options: unknown) {
+      CM.viewerOptions.push(options)
+      return CM.makeViewer()
+    }),
     Math: {
       toRadians: (d: number) => (d * Math.PI) / 180,
       toDegrees: (r: number) => (r * 180) / Math.PI,
@@ -220,6 +225,7 @@ function flush() {
 describe('GlobeViewer', () => {
   beforeEach(() => {
     cesiumMock.viewers.length = 0
+    cesiumMock.viewerOptions.length = 0
     cesiumMock.imageryLayerInstances.length = 0
     cesiumMock.handlerInstances.length = 0
     useAppStore.setState({
@@ -257,6 +263,19 @@ describe('GlobeViewer', () => {
     // 地形异步设置
     await act(async () => {})
     expect(v.terrainProvider).toEqual({ terrain: 't' })
+  })
+
+  it('静止时使用按需渲染，效果变化时请求一帧刷新', async () => {
+    render(<GlobeViewer />)
+    await flush()
+    const v = viewer()
+    expect(cesiumMock.viewerOptions[0]).toMatchObject({
+      requestRenderMode: true,
+      maximumRenderTimeChange: Infinity,
+    })
+    const requestsBeforeEffect = v.scene.requestRender.mock.calls.length
+    act(() => useAppStore.getState().setEffect('fog', true))
+    expect(v.scene.requestRender.mock.calls.length).toBe(requestsBeforeEffect + 1)
   })
   it('WebGL 上下文丢失 → 显示降级提示', async () => {
     render(<GlobeViewer />)
@@ -327,6 +346,20 @@ describe('GlobeViewer', () => {
     nowSpy.mockRestore()
   })
 
+  it('初始已开启自动环绕时，空闲阈值到达后唤醒按需渲染', async () => {
+    vi.useFakeTimers()
+    const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(0)
+    useAppStore.setState({ effects: { ...freshEffects, autoRotate: true } })
+    render(<GlobeViewer />)
+    await flush()
+    const v = viewer()
+    const before = v.scene.requestRender.mock.calls.length
+    act(() => vi.advanceTimersByTime(3000))
+    expect(v.scene.requestRender.mock.calls.length).toBeGreaterThan(before)
+    nowSpy.mockRestore()
+    vi.useRealTimers()
+  })
+
   it('双击 → flyTo 到点击点一半高度', async () => {
     render(<GlobeViewer />)
     await flush()
@@ -338,7 +371,7 @@ describe('GlobeViewer', () => {
     expect(v.camera.flyTo).toHaveBeenCalled()
   })
 
-  it('添加 MapServer webmap → 创建 ImageryLayer 并叠加', async () => {
+  it('添加 MapServer webmap → 创建 ImageryLayer、叠加并请求刷新', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => ({
@@ -350,6 +383,7 @@ describe('GlobeViewer', () => {
     await flush()
     const v = viewer()
     const before = v.imageryLayers.length
+    const requestsBeforeLayer = v.scene.requestRender.mock.calls.length
     act(() => {
       useAppStore.getState().addLayer({
         id: 'wm1',
@@ -365,6 +399,7 @@ describe('GlobeViewer', () => {
     })
     await flush()
     expect(v.imageryLayers.length).toBe(before + 1)
+    expect(v.scene.requestRender.mock.calls.length).toBeGreaterThan(requestsBeforeLayer)
   })
 
   it('添加 FeatureLayer → GeoJsonDataSource 加载并加入 dataSources', async () => {
