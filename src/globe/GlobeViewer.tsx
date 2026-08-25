@@ -235,7 +235,10 @@ export function GlobeViewer() {
     registerViewer(v)
     // WebGL 上下文丢失预案（内存不足/卡死时不白屏：易加载并提示）
     const onCtxLost = (e: Event) => { e.preventDefault(); setGlError('WebGL 上下文已丢失（可能内存不足，正在尝试恢复…）') }
-    const onCtxRestored = () => setGlError('')
+    const onCtxRestored = () => {
+      setGlError('')
+      requestSceneRender(v)
+    }
     v.scene.canvas.addEventListener('webglcontextlost', onCtxLost)
     v.scene.canvas.addEventListener('webglcontextrestored', onCtxRestored)
     // 首次进入：加载完成后自动居中到用户大概位置
@@ -510,6 +513,7 @@ export function GlobeViewer() {
         if (cam) {
           try {
             v.camera.flyTo(cam)
+            requestSceneRender(v)
           } catch {
             // ignore
           }
@@ -668,7 +672,10 @@ export function GlobeViewer() {
                 if (cancelled || v.isDestroyed()) return undefined
                 const ext = svc.extent ? reprojectExtent(svc.extent) : undefined
                 if (ext && !envContainsForFlight(env0, ext)) {
-                  try { v.camera.flyTo({ destination: Cesium.Rectangle.fromDegrees(ext.west, ext.south, ext.east, ext.north) }) } catch { /* 飞行失败忽略 */ }
+                  try {
+                    v.camera.flyTo({ destination: Cesium.Rectangle.fromDegrees(ext.west, ext.south, ext.east, ext.north) })
+                    requestSceneRender(v)
+                  } catch { /* 飞行失败忽略 */ }
                 }
                 const layerBases = svc.layers
                 if (layerBases.length <= 1) {

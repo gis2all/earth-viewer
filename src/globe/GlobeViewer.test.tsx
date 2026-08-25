@@ -286,6 +286,11 @@ describe('GlobeViewer', () => {
     await act(async () => { lost({ preventDefault: vi.fn() } as unknown as Event) })
     await act(async () => {})
     expect(screen.getByText(/WebGL 上下文已丢失/)).toBeInTheDocument()
+    const requestsBeforeRestore = v.scene.requestRender.mock.calls.length
+    const restored = v.scene.canvas.addEventListener.mock.calls.find((c: unknown[]) => c[0] === 'webglcontextrestored')?.[1] as () => void
+    expect(restored).toBeTypeOf('function')
+    act(() => { restored() })
+    expect(v.scene.requestRender.mock.calls.length).toBe(requestsBeforeRestore + 1)
   })
 
   it('效果开关映射到 globe 场景（雾/星空/日月/夸张/半透明）', async () => {

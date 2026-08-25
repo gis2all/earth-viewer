@@ -15,6 +15,7 @@ vi.mock('./geo', () => ({
 
 function makeViewer() {
   const flyTo = vi.fn()
+  const requestRender = vi.fn()
   return {
     camera: {
       flyTo,
@@ -23,6 +24,7 @@ function makeViewer() {
       pitch: -0.5,
       roll: 3,
     },
+    scene: { requestRender },
     isDestroyed: () => false,
   }
 }
@@ -49,6 +51,7 @@ describe('cameraApi', () => {
     expect(opts.destination).toEqual({ tag: 'fromDegrees', args: [121, 31, 20000000] })
     expect(opts.orientation.heading).toBe(0)
     expect(opts.orientation.pitch).toBe(-Math.PI / 2)
+    expect(v.scene.requestRender).toHaveBeenCalledTimes(1)
   })
 
   it('registerViewer 时抓取初始高度，resetView 使用该高度', async () => {
@@ -70,6 +73,7 @@ describe('cameraApi', () => {
         orientation: expect.objectContaining({ heading: 0, roll: 0 }),
       })
     )
+    expect(v.scene.requestRender).toHaveBeenCalledTimes(1)
   })
 
   it('unregisterViewer 后不再触发飞行', async () => {

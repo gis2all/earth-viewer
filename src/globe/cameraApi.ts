@@ -6,6 +6,10 @@ let viewer: Cesium.Viewer | null = null
 // 程序默认启动时的相机高度（用于"回到用户位置"的缩放）
 let initialHeight = 20000000
 
+function requestViewerRender(v: Cesium.Viewer) {
+  if (!v.isDestroyed?.()) v.scene?.requestRender?.()
+}
+
 export function registerViewer(v: Cesium.Viewer) {
   viewer = v
   try {
@@ -39,6 +43,7 @@ export async function flyToHome(v?: Cesium.Viewer) {
     destination: Cesium.Cartesian3.fromDegrees(home.lon, home.lat, initialHeight),
     orientation: { heading: 0, pitch: Cesium.Math.toRadians(-90), roll: 0 },
   })
+  requestViewerRender(target)
 }
 
 /** 复位：异步取用户位置后飞回初始视角（不再写死坐标）。 */
@@ -55,6 +60,7 @@ export function orientView() {
     destination: c.position,
     orientation: { heading: 0, pitch: Cesium.Math.toRadians(-90), roll: 0 },
   })
+  requestViewerRender(v)
 }
 
 /** 测试用：重置内部初始高度。 */
