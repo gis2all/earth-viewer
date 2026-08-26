@@ -419,7 +419,8 @@ export function GlobeViewer() {
     globe.showGroundAtmosphere = effects.atmosphere
     // 背景与星空跟随主题：白天白底（无星空），深色深空（可选星空）
     const dark = theme === 'dark'
-    scene.backgroundColor = Cesium.Color.fromCssColorString(dark ? '#05070d' : '#f4f5f7')
+    // 与 theme.css 中的 --globe-bg 保持一致；直接由主题状态决定，避免读取 data-theme 时序造成旧主题背景闪回。
+    scene.backgroundColor = Cesium.Color.fromCssColorString(dark ? '#05070d' : '#ffffff')
     if (scene.skyBox) scene.skyBox.show = dark && effects.stars
     if (scene.sun) scene.sun.show = effects.sunMoon
     if (scene.moon) scene.moon.show = effects.sunMoon

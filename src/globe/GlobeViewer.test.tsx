@@ -242,6 +242,7 @@ describe('GlobeViewer', () => {
 
   afterEach(() => {
     cleanup()
+    document.documentElement.style.removeProperty('--globe-bg')
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
@@ -276,6 +277,12 @@ describe('GlobeViewer', () => {
     const requestsBeforeEffect = v.scene.requestRender.mock.calls.length
     act(() => useAppStore.getState().setEffect('fog', true))
     expect(v.scene.requestRender.mock.calls.length).toBe(requestsBeforeEffect + 1)
+  })
+  it('浅色主题场景背景使用统一的球体背景主题变量', async () => {
+    useAppStore.setState({ theme: 'light' })
+    render(<GlobeViewer />)
+    await flush()
+    expect(viewer().scene.backgroundColor).toEqual({ css: '#ffffff' })
   })
   it('WebGL 上下文丢失 → 显示降级提示', async () => {
     render(<GlobeViewer />)
