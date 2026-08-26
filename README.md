@@ -37,7 +37,7 @@ npm install
 npm run dev
 ```
 
-启动后访问 http://localhost:5173 。开发态已内置 `/sharing` 代理（vite 中间件转发到 `www.arcgis.com`，绕开浏览器 CORS）。
+启动后访问 http://127.0.0.1:5173 。开发态已内置 `/sharing` 代理（vite 中间件转发到 `www.arcgis.com`，绕开浏览器 CORS）。
 
 ### 二、Docker 方式
 
@@ -47,7 +47,7 @@ npm run dev
 docker compose up --build
 ```
 
-构建镜像会先执行 `npm ci && npm run build` 生成生产产物，再由内置 Node 服务同时托管静态文件与 `/sharing` ArcGIS 代理。启动后访问 http://localhost:5173 。停止：`docker compose down`；需要改端口时，修改 `docker-compose.yml` 的 `ports` 映射。
+构建镜像会先执行 `npm ci && npm run build` 生成生产产物，再由内置 Node 服务同时托管静态文件与 `/sharing` ArcGIS 代理。启动后访问 http://127.0.0.1:5173 。停止：`docker compose down`；需要改端口时，修改 `docker-compose.yml` 的 `ports` 映射。
 
 ## 常用命令
 
@@ -81,7 +81,7 @@ GlobeViewer（Cesium）
 ## 目录结构
 
 ```text
-src/app/              UI：顶栏、左右面板（AppShell / LayerPanel / EffectsPanel）
+src/app/              UI：顶栏（主题、GitHub、沉浸模式）、左右面板（AppShell / LayerPanel / EffectsPanel）
 src/globe/            Cesium 核心：GlobeViewer、cameraApi、geo(用户定位)、webmap、assess 与各数据源适配
 src/state/            zustand 全局状态（theme / collapsed / added / effects / userHome）
 src/styles/           全部样式（直角、深浅主题 CSS 变量）
