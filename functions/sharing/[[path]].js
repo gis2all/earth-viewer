@@ -4,6 +4,7 @@
 const ALLOWED_PATHS = [
   /^\/sharing\/rest\/search($|\?)/,
   /^\/sharing\/rest\/content\/items\/[^/]+\/data($|\?)/,
+  /^\/sharing\/rest\/content\/items\/[^/]+($|\?)/,
 ]
 
 const RATE_WINDOW_MS = 60000

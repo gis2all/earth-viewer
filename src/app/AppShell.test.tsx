@@ -50,4 +50,35 @@ describe('AppShell', () => {
     fireEvent.click(screen.getByTitle('复位视角'))
     fireEvent.click(screen.getByTitle('回正视角'))
   })
+
+  it('显示 GitHub 导航链接并在新标签页打开', () => {
+    render(<AppShell />)
+    const githubLink = screen.getByRole('link', { name: 'GitHub' })
+    expect(githubLink).toHaveAttribute('href', 'https://github.com/gis2all/earth-viewer')
+    expect(githubLink).toHaveAttribute('target', '_blank')
+    expect(githubLink).toHaveAttribute('rel', 'noreferrer')
+  })
+
+  it('进入沉浸模式后显示退出入口，并可恢复普通模式', () => {
+    render(<AppShell />)
+    const app = document.querySelector('.app')
+
+    fireEvent.click(screen.getByTitle('进入沉浸模式'))
+    expect(app).toHaveClass('immersive')
+    expect(screen.getByTitle('退出沉浸模式')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTitle('退出沉浸模式'))
+    expect(app).not.toHaveClass('immersive')
+    expect(screen.getByTitle('进入沉浸模式')).toBeInTheDocument()
+  })
+
+  it('沉浸模式支持 Esc 退出', () => {
+    render(<AppShell />)
+    const app = document.querySelector('.app')
+
+    fireEvent.click(screen.getByTitle('进入沉浸模式'))
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(app).not.toHaveClass('immersive')
+  })
 })
