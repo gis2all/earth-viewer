@@ -72,7 +72,7 @@ function LivingAtlasIcon() {
 }
 
 function DetailIcon() {
-  return <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="5.8" /><path d="M8 7.1v4M8 4.7h.01" /></svg>
+  return <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 4h8M5 8h8M5 12h8" /><path d="M2.5 4h.01M2.5 8h.01M2.5 12h.01" /></svg>
 }
 
 function AddIcon({ added }: { added: boolean }) {
@@ -81,7 +81,7 @@ function AddIcon({ added }: { added: boolean }) {
 }
 
 function FoldIcon({ collapsed }: { collapsed: boolean }) {
-  return <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="square" strokeLinejoin="miter" aria-hidden="true"><path d={collapsed ? 'm6.5 5 3.5 3-3.5 3' : 'm9.5 5-3.5 3 3.5 3'} /></svg>
+  return <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="square" strokeLinejoin="miter" aria-hidden="true"><path d={collapsed ? 'm6 4 4 4-4 4' : 'm10 4-4 4 4 4'} /></svg>
 }
 
 function itemDetailsUrl(id: string): string {
@@ -601,6 +601,14 @@ export function LayerPanel() {
                       />
                     ) : null}
                     <div className="gc-ph" hidden={Boolean(it.thumbnail)} aria-hidden="true"><TypeIcon type={it.type} /></div>
+                  </div>
+                  <div className="gc-title" title={it.title}><span>{it.title}</span></div>
+                  <div className="gc-foot">
+                    <div className="gc-status" aria-label="图层状态">
+                      <span className="gc-status-icon gc-type" title={it.type ?? '图层'} aria-label={it.type ?? '图层'}><TypeIcon type={it.type} /></span>
+                      {isAuthoritative(it) && <span className="gc-status-icon gc-authoritative" title="权威数据" aria-label="权威数据"><AuthorityIcon /></span>}
+                      {isLivingAtlas(it) && <span className="gc-status-icon gc-living" title="Living Atlas" aria-label="Living Atlas"><LivingAtlasIcon /></span>}
+                    </div>
                     <a
                       className="gc-detail"
                       href={itemDetailsUrl(it.id)}
@@ -611,14 +619,6 @@ export function LayerPanel() {
                     >
                       <DetailIcon />
                     </a>
-                  </div>
-                  <div className="gc-title" title={it.title}><span>{it.title}</span></div>
-                  <div className="gc-foot">
-                    <div className="gc-status" aria-label="图层状态">
-                      <span className="gc-status-icon gc-type" title={it.type ?? '图层'} aria-label={it.type ?? '图层'}><TypeIcon type={it.type} /></span>
-                      {isAuthoritative(it) && <span className="gc-status-icon gc-authoritative" title="权威数据" aria-label="权威数据"><AuthorityIcon /></span>}
-                      {isLivingAtlas(it) && <span className="gc-status-icon gc-living" title="Living Atlas" aria-label="Living Atlas"><LivingAtlasIcon /></span>}
-                    </div>
                     <button
                       className={'gc-add' + (addedItem ? ' is-added' : '') + (loadingItem ? ' is-loading' : '')}
                       onClick={() => void addItem(it)}

@@ -37,6 +37,8 @@ describe('AppShell', () => {
   it('面板折叠时显示展开按钮，点击展开', () => {
     useAppStore.setState({ collapsed: true, collapsedRight: true })
     render(<AppShell />)
+    expect(screen.getByTitle('展开面板').querySelector('svg')).toHaveAttribute('width', '16')
+    expect(screen.getByTitle('展开效果面板').querySelector('svg')).toHaveAttribute('height', '16')
     fireEvent.click(screen.getByTitle('展开面板'))
     expect(useAppStore.getState().collapsed).toBe(false)
     fireEvent.click(screen.getByTitle('展开效果面板'))
@@ -51,12 +53,46 @@ describe('AppShell', () => {
     fireEvent.click(screen.getByTitle('回正视角'))
   })
 
+  it('回正/复位图标使用留白矩形框并保持顶栏图标尺寸', () => {
+    render(<AppShell />)
+    const orientIcon = screen.getByTitle('回正视角').querySelector('svg')
+    const resetIcon = screen.getByTitle('复位视角').querySelector('svg')
+    const orientFrame = orientIcon?.querySelector('rect')
+    const resetFrame = resetIcon?.querySelector('rect')
+    expect(orientIcon).toHaveAttribute('width', '15')
+    expect(orientIcon).toHaveAttribute('height', '15')
+    expect(orientFrame).toHaveAttribute('x', '1')
+    expect(orientFrame).toHaveAttribute('y', '1')
+    expect(orientFrame).toHaveAttribute('width', '14')
+    expect(orientFrame).toHaveAttribute('height', '14')
+    expect(resetIcon).toHaveAttribute('width', '15')
+    expect(resetIcon).toHaveAttribute('height', '15')
+    expect(resetFrame).toHaveAttribute('x', '1')
+    expect(resetFrame).toHaveAttribute('y', '1')
+    expect(resetFrame).toHaveAttribute('width', '14')
+    expect(resetFrame).toHaveAttribute('height', '14')
+  })
+
   it('显示 GitHub 导航链接并在新标签页打开', () => {
     render(<AppShell />)
     const githubLink = screen.getByRole('link', { name: 'GitHub' })
     expect(githubLink).toHaveAttribute('href', 'https://github.com/gis2all/earth-viewer')
     expect(githubLink).toHaveAttribute('target', '_blank')
     expect(githubLink).toHaveAttribute('rel', 'noreferrer')
+  })
+
+  it('主题、沉浸模式与 GitHub 图标使用 14px 绘制尺寸', () => {
+    render(<AppShell />)
+    const controls = [
+      screen.getByTitle('切换主题'),
+      screen.getByTitle('进入沉浸模式'),
+      screen.getByRole('link', { name: 'GitHub' }),
+    ]
+
+    controls.forEach((control) => {
+      expect(control.querySelector('svg')).toHaveAttribute('width', '14')
+      expect(control.querySelector('svg')).toHaveAttribute('height', '14')
+    })
   })
 
   it('进入沉浸模式后显示退出入口，并可恢复普通模式', () => {

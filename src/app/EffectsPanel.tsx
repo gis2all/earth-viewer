@@ -15,7 +15,7 @@ type Item =
   }
 
 function FoldIcon({ collapsed }: { collapsed: boolean }) {
-  return <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="square" strokeLinejoin="miter" aria-hidden="true"><path d={collapsed ? 'm6.5 5 3.5 3-3.5 3' : 'm9.5 5-3.5 3 3.5 3'} /></svg>
+  return <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="square" strokeLinejoin="miter" aria-hidden="true"><path d={collapsed ? 'm6 4 4 4-4 4' : 'm10 4-4 4 4 4'} /></svg>
 }
 
 const GROUPS: { name: string; items: Item[] }[] = [

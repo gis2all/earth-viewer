@@ -110,7 +110,12 @@ describe('LayerPanel', () => {
     expect(screen.getByLabelText('Web Map')).toBeInTheDocument()
     expect(screen.getByLabelText('权威数据')).toBeInTheDocument()
     expect(screen.getByLabelText('Living Atlas')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: '查看 Test Imagery 详情' })).toHaveAttribute('href', expect.stringContaining('wm1'))
+    const detailLink = screen.getByRole('link', { name: '查看 Test Imagery 详情' })
+    expect(detailLink).toHaveAttribute('href', expect.stringContaining('wm1'))
+    expect(detailLink.parentElement).toHaveClass('gc-foot')
+    expect(detailLink.nextElementSibling).toHaveClass('gc-add')
+    expect(detailLink.closest('.gc-title')).toBeNull()
+    expect(detailLink.closest('.gc-thumb-wrap')).toBeNull()
 
     fireEvent.click(screen.getByText('Test Imagery'))
     expect(useAppStore.getState().added).toHaveLength(0)
