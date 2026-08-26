@@ -5,6 +5,10 @@ import { EffectsPanel } from './EffectsPanel'
 import { useAppStore } from '../state/store'
 import { resetView, orientView } from '../globe/cameraApi'
 
+function PanelChevronIcon({ direction }: { direction: 'left' | 'right' }) {
+  return <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="square" strokeLinejoin="miter" aria-hidden="true"><path d={direction === 'right' ? 'm6.5 5 3.5 3-3.5 3' : 'm9.5 5-3.5 3 3.5 3'} /></svg>
+}
+
 export function AppShell() {
   const theme = useAppStore((s) => s.theme)
   const toggleTheme = useAppStore((s) => s.toggleTheme)
@@ -97,13 +101,13 @@ export function AppShell() {
         </a>
       </header>
       <div className="workspace">
-        <LayerPanel />
-        <main className="globe-wrap">
+          <LayerPanel />
+          <main className="globe-wrap">
           {!immersive && collapsed && (
-            <button className="expand-btn" onClick={toggleCollapsed} title="展开面板">›</button>
+            <button className="expand-btn" onClick={toggleCollapsed} title="展开面板"><PanelChevronIcon direction="right" /></button>
           )}
           {!immersive && collapsedRight && (
-            <button className="expand-btn expand-right" onClick={toggleCollapsedRight} title="展开效果面板">‹</button>
+            <button className="expand-btn expand-right" onClick={toggleCollapsedRight} title="展开效果面板"><PanelChevronIcon direction="left" /></button>
           )}
           {immersive && (
             <button className="immersive-exit icon-btn" onClick={() => setImmersive(false)} title="退出沉浸模式" aria-label="退出沉浸模式">
