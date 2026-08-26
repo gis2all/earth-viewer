@@ -453,7 +453,7 @@ npx wrangler pages deploy --project-name=earth-viewer
 
 - ★**未经用户明确准许，不得执行 `git add` / `git commit` / `git push`**（含「提交并推送」类自动操作）；只有用户明确说「提交/推送」才执行。
 - `docs/` 不入 git；`coverage/`、`test-results.json`、`e2e-results.json`、`audit.json`、`*.log`、`*.tsbuildinfo`、`node_modules/`、`dist/` 已忽略。
-- 开发日志不要输出到项目根目录；后台启动重定向到系统临时目录（如 `$env:TEMP\earthviz-dev.log`）。
+- 开发日志和临时测试输出不要写入项目根目录；统一放到 `output/`（如 `output/earthviz-dev.log`）。`output/` 已加入 `.gitignore`，无需提交这些产物。
 - ★开发服务器端口固定为 5173：启动前执行 `Get-NetTCPConnection -LocalPort 5173 -State Listen`，确认占用进程后用 `taskkill /PID <listenerPid> /T /F` 停止对应进程树，再执行 `npm run dev -- --host 127.0.0.1 --port 5173 --strictPort`；禁止默默使用 5174/5175。
 - Windows 写文件用 Python/Node（utf-8、LF）；编码敏感文件别用 PowerShell 重定向写。
 - 用户全中文交流，回复用中文。
