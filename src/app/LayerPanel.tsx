@@ -14,6 +14,96 @@ interface SearchResult {
   fidelity?: 'full' | 'partial' | 'none'
   url?: string
   type?: string
+  contentStatus?: string
+  groupDesignations?: string | string[]
+  typeKeywords?: string[]
+  tags?: string[]
+}
+
+type ItemMetadata = Pick<SearchResult, 'contentStatus' | 'groupDesignations'>
+
+function textTerms(value: string | string[] | undefined): string[] {
+  return (Array.isArray(value) ? value : value ? [value] : [])
+    .map((term) => term.trim().toLowerCase())
+    .filter(Boolean)
+}
+
+function isAuthoritative(item: SearchResult): boolean {
+  const status = item.contentStatus?.trim().toLowerCase()
+  return status === 'public_authoritative' || status === 'org_authoritative'
+}
+
+function isLivingAtlas(item: SearchResult): boolean {
+  return textTerms(item.groupDesignations).includes('livingatlas')
+}
+
+function typeIconKind(type?: string): 'map' | 'scene' | 'feature' | 'image' | 'vector' | 'document' | 'table' | 'service' {
+  const normalized = (type ?? '').toLowerCase()
+  if (normalized.includes('web scene') || normalized.includes('scene service')) return 'scene'
+  if (normalized.includes('feature')) return 'feature'
+  if (normalized.includes('image') || normalized.includes('raster')) return 'image'
+  if (normalized.includes('vector tile')) return 'vector'
+  if (normalized.includes('kml') || normalized.includes('geojson')) return 'document'
+  if (normalized.includes('csv')) return 'table'
+  if (normalized.includes('map') || normalized.includes('wms') || normalized.includes('wmts') || normalized.includes('wfs')) return 'map'
+  if (normalized.includes('service')) return 'service'
+  return 'map'
+}
+
+function TypeIcon({ type }: { type?: string }) {
+  const kind = typeIconKind(type)
+  const common = { viewBox: '0 0 16 16', width: 15, height: 15, fill: 'none', stroke: 'currentColor', strokeWidth: 1.25, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true }
+  if (kind === 'scene') return <svg {...common}><path d="M2.2 5.1 8 2l5.8 3.1v5.8L8 14l-5.8-3.1V5.1Z" /><path d="m2.5 5.2 5.5 3 5.5-3M8 8.2V14" /></svg>
+  if (kind === 'feature') return <svg {...common}><path d="m8 2.2 5.3 3.1v5.4L8 13.8l-5.3-3.1V5.3L8 2.2Z" /><circle cx="8" cy="8" r="1.35" /><path d="M8 4.4v1M8 10.6v1M4.4 8h1M10.6 8h1" /></svg>
+  if (kind === 'image') return <svg {...common}><rect x="2.3" y="2.3" width="11.4" height="11.4" rx=".5" /><path d="m3.2 11.5 2.6-2.7 2.1 2 2.1-3 2.8 3.2M5.3 5.4h.01" /></svg>
+  if (kind === 'vector') return <svg {...common}><path d="M3 3.2h4v4H3zM9 8.8h4v4H9zM7 5.2h2M5 7.2v1.6M7 10.8h2" /></svg>
+  if (kind === 'document') return <svg {...common}><path d="M4 1.9h5l3 3v9.2H4V1.9Z" /><path d="M9 1.9v3h3M6 8h4M6 10.5h4" /></svg>
+  if (kind === 'table') return <svg {...common}><rect x="2.3" y="2.3" width="11.4" height="11.4" /><path d="M2.5 6h11M2.5 9.5h11M6 2.5v11M10 2.5v11" /></svg>
+  if (kind === 'service') return <svg {...common}><circle cx="8" cy="8" r="5.7" /><path d="M2.7 8h10.6M8 2.3c1.5 1.5 2.2 3.4 2.2 5.7S9.5 12.2 8 13.7C6.5 12.2 5.8 10.3 5.8 8S6.5 3.8 8 2.3Z" /></svg>
+  return <svg {...common}><path d="m2.3 3.4 3.7-1.3 4 1.3 3.7-1.3v10.5l-3.7 1.3-4-1.3-3.7 1.3V3.4Z" /><path d="M6 2.2v10.4M10 3.4v10.5" /></svg>
+}
+
+function AuthorityIcon() {
+  return <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m8 1.9 1.6 1.7 2.4.2.2 2.4 1.7 1.8-1.7 1.8-.2 2.4-2.4.2L8 14.1l-1.6-1.7-2.4-.2-.2-2.4-1.7-1.8 1.7-1.8.2-2.4 2.4-.2L8 1.9Z" /><path d="m5.2 8.3 1.7 1.7 3.8-4" /></svg>
+}
+
+function LivingAtlasIcon() {
+  return <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12.9 2.6C8.3 2.4 4.6 4.1 4.2 8c-.3 2.7 1.5 4.5 4.2 4.2 3.8-.5 4.6-5.5 4.5-9.6Z" /><path d="M3.1 13.5c1.1-3 3.2-5.2 6.2-6.4" /></svg>
+}
+
+function DetailIcon() {
+  return <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 4h8M5 8h8M5 12h8" /><path d="M2.5 4h.01M2.5 8h.01M2.5 12h.01" /></svg>
+}
+
+function AddIcon({ added }: { added: boolean }) {
+  if (added) return <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m3.2 8.4 3.1 3.1 6.5-7" /></svg>
+  return <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg>
+}
+
+function FoldIcon({ collapsed }: { collapsed: boolean }) {
+  return <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="square" strokeLinejoin="miter" aria-hidden="true"><path d={collapsed ? 'm6 4 4 4-4 4' : 'm10 4-4 4 4 4'} /></svg>
+}
+
+function itemDetailsUrl(id: string): string {
+  return 'https://www.arcgis.com/home/item.html?id=' + encodeURIComponent(id)
+}
+
+async function fetchItemMetadata(id: string, signal: AbortSignal): Promise<ItemMetadata | null> {
+  try {
+    const r = await fetch(`/sharing/rest/content/items/${encodeURIComponent(id)}?f=json`, { signal: withFetchTimeout(signal) })
+    if (!r.ok) return null
+    const value = (await r.json().catch(() => null)) as Record<string, unknown> | null
+    if (!value || value.error) return null
+    const contentStatus = typeof value.contentStatus === 'string' ? value.contentStatus : undefined
+    const groupDesignations = Array.isArray(value.groupDesignations)
+      ? value.groupDesignations.filter((v): v is string => typeof v === 'string')
+      : typeof value.groupDesignations === 'string'
+        ? value.groupDesignations
+        : undefined
+    return { contentStatus, groupDesignations }
+  } catch {
+    return null
+  }
 }
 
 type SearchType = (typeof SEARCH_ITEM_TYPES)[number]
@@ -154,6 +244,10 @@ async function fetchSearchPage(
       numViews: it.numViews,
       url: it.url,
       type: it.type,
+      contentStatus: it.contentStatus,
+      groupDesignations: it.groupDesignations,
+      typeKeywords: it.typeKeywords,
+      tags: it.tags,
     })),
     nextStart: j.nextStart,
   }
@@ -197,6 +291,9 @@ export function LayerPanel() {
   const preflightCacheRef = useRef<Map<string, { s: PreflightState; t: number }>>(readPreflightCache())
   const preflightGenRef = useRef(0)
   const preflightInflightRef = useRef<Set<string>>(new Set())
+  const metadataGenRef = useRef(0)
+  const metadataAttemptedRef = useRef<Set<string>>(new Set())
+  const metadataInflightRef = useRef<Set<string>>(new Set())
 
   async function loadMore(reset: boolean) {
     if (loadingRef.current && !reset) return
@@ -258,6 +355,8 @@ export function LayerPanel() {
   }
   const runSearch = () => {
     preflightGenRef.current++
+    metadataGenRef.current++
+    metadataAttemptedRef.current.clear()
     setItems([])
     setDone(false)
     setErr('')
@@ -322,6 +421,35 @@ export function LayerPanel() {
       }
     }
     void Promise.all(Array.from({ length: Math.min(con, cands.length) }, worker))
+  }, [items])
+
+  // 搜索结果缺少状态字段时，后台补充 item 元数据；状态图标不会依赖标题或 typeKeywords 猜测。
+  useEffect(() => {
+    const cands = items.filter((it) => {
+      const missingMetadata = !it.contentStatus || !it.groupDesignations
+      return missingMetadata && !metadataAttemptedRef.current.has(it.id) && !metadataInflightRef.current.has(it.id)
+    })
+    if (cands.length === 0) return
+    const myGen = metadataGenRef.current
+    let idx = 0
+    async function worker() {
+      while (true) {
+        const my = idx++
+        if (my >= cands.length) break
+        const it = cands[my]
+        metadataAttemptedRef.current.add(it.id)
+        metadataInflightRef.current.add(it.id)
+        try {
+          const metadata = await fetchItemMetadata(it.id, abortRef.current?.signal ?? new AbortController().signal)
+          if (myGen !== metadataGenRef.current || !metadata) continue
+          if (!metadata.contentStatus && !metadata.groupDesignations) continue
+          setItems((prev) => prev.map((current) => (current.id === it.id ? { ...current, ...metadata } : current)))
+        } finally {
+          metadataInflightRef.current.delete(it.id)
+        }
+      }
+    }
+    void Promise.all(Array.from({ length: Math.min(4, cands.length) }, worker))
   }, [items])
 
   // 取消进行中的搜索（递增序列号，使旧请求彻底失效）
@@ -392,12 +520,18 @@ export function LayerPanel() {
     }
   }
 
+  const scrollPage = (direction: -1 | 1) => {
+    const el = scrollRef.current
+    if (!el) return
+    el.scrollBy({ top: direction * Math.max(120, el.clientHeight * 0.8), behavior: 'smooth' })
+  }
+
   return (
     <aside className={'panel' + (collapsed ? ' collapsed' : '')}>
       <div className="side-head">
         <span className="side-title">图层</span>
         <button className="fold" onClick={toggleCollapsed} title={collapsed ? '展开面板' : '收起面板'}>
-          {collapsed ? '›' : '‹'}
+          <FoldIcon collapsed={collapsed} />
         </button>
       </div>
       <div className="panel-inner" ref={scrollRef} onScroll={onScroll}>
@@ -448,28 +582,56 @@ export function LayerPanel() {
             )}
           </div>
           <div className="gallery">
-            {items.filter((it) => !badIds.has(it.id)).map((it) => (
-              <button
-                key={it.id}
-                className="gallery-card"
-                onClick={() => addItem(it)}
-                disabled={addingId === it.id}
-                title={it.snippet}
-              >
-                {it.thumbnail ? (
-                  <img
-                    className="gc-thumb"
-                    src={thumbUrl(it.id, it.thumbnail)}
-                    alt={it.title}
-                    loading="lazy"
-                    onError={(e) => (e.currentTarget.style.display = 'none')}
-                  />
-                ) : (
-                  <div className="gc-ph" />
-                )}
-                <span className="gc-title">{it.title}</span>
-              </button>
-            ))}
+            {items.filter((it) => !badIds.has(it.id)).map((it) => {
+              const addedItem = added.some((layer) => layer.id === it.id)
+              const loadingItem = addingId === it.id
+              return (
+                <article key={it.id} className="gallery-card" aria-label={it.title}>
+                  <div className="gc-thumb-wrap">
+                    {it.thumbnail ? (
+                      <img
+                        className="gc-thumb"
+                        src={thumbUrl(it.id, it.thumbnail)}
+                        alt={it.title}
+                        loading="lazy"
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none'
+                          e.currentTarget.nextElementSibling?.removeAttribute('hidden')
+                        }}
+                      />
+                    ) : null}
+                    <div className="gc-ph" hidden={Boolean(it.thumbnail)} aria-hidden="true"><TypeIcon type={it.type} /></div>
+                  </div>
+                  <div className="gc-title" title={it.title}><span>{it.title}</span></div>
+                  <div className="gc-foot">
+                    <div className="gc-status" aria-label="图层状态">
+                      <span className="gc-status-icon gc-type" title={it.type ?? '图层'} aria-label={it.type ?? '图层'}><TypeIcon type={it.type} /></span>
+                      {isAuthoritative(it) && <span className="gc-status-icon gc-authoritative" title="权威数据" aria-label="权威数据"><AuthorityIcon /></span>}
+                      {isLivingAtlas(it) && <span className="gc-status-icon gc-living" title="Living Atlas" aria-label="Living Atlas"><LivingAtlasIcon /></span>}
+                    </div>
+                    <a
+                      className="gc-detail"
+                      href={itemDetailsUrl(it.id)}
+                      target="_blank"
+                      rel="noreferrer"
+                      title="查看详情"
+                      aria-label={'查看 ' + it.title + ' 详情'}
+                    >
+                      <DetailIcon />
+                    </a>
+                    <button
+                      className={'gc-add' + (addedItem ? ' is-added' : '') + (loadingItem ? ' is-loading' : '')}
+                      onClick={() => void addItem(it)}
+                      disabled={addedItem || loadingItem}
+                      title={addedItem ? '已添加' : loadingItem ? '正在添加' : '添加数据'}
+                      aria-label={addedItem ? '已添加 ' + it.title : '添加 ' + it.title}
+                    >
+                      {loadingItem ? <span className="gc-spinner" aria-hidden="true" /> : <AddIcon added={addedItem} />}
+                    </button>
+                  </div>
+                </article>
+              )
+            })}
           </div>
           {loading && (
             <div className="gallery-hint"><span className="dot" />加载中…</div>
@@ -480,6 +642,8 @@ export function LayerPanel() {
           {err && <div className="gallery-hint err">{err}</div>}
         </section>
       </div>
+      <button className="scroll-arrow scroll-arrow-up" type="button" aria-label="向上滚动" onClick={() => scrollPage(-1)} />
+      <button className="scroll-arrow scroll-arrow-down" type="button" aria-label="向下滚动" onClick={() => scrollPage(1)} />
       {toast && (
         <div className="layer-toast" role="status" aria-live="polite">
           {toast}

@@ -59,6 +59,135 @@ describe('LayerPanel', () => {
     expect(screen.getByAltText('Test Imagery')).toBeInTheDocument()
   })
 
+  it('长标题使用独立文本节点承载省略号样式和完整 tooltip', async () => {
+    const title = 'A very long layer title that should be truncated inside the card'
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (String(url).includes('/sharing/rest/search')) {
+          return { ok: true, json: async () => ({ ...searchResponse, results: [{ id: 'wm1', title, thumbnail: null, numViews: 1 }] }) }
+        }
+        return { ok: true, json: async () => webmapData }
+      })
+    )
+    render(<LayerPanel />)
+    await waitFor(() => expect(screen.getByText(title)).toBeInTheDocument(), { timeout: 8000 })
+    const titleBox = screen.getByText(title).parentElement
+    expect(titleBox).toHaveClass('gc-title')
+    expect(titleBox).toHaveAttribute('title', title)
+  })
+
+  it('卡片按 ArcGIS 元数据显示状态图标，详情与添加操作彼此独立', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const u = String(url)
+        if (u.includes('/sharing/rest/search')) {
+          return {
+            ok: true,
+            json: async () => ({
+              results: [{
+                id: 'wm1',
+                title: 'Test Imagery',
+                thumbnail: null,
+                numViews: 1,
+                type: 'Web Map',
+                contentStatus: 'public_authoritative',
+                groupDesignations: 'livingatlas',
+              }],
+              nextStart: null,
+              total: 1,
+            }),
+          }
+        }
+        return { ok: true, json: async () => webmapData }
+      })
+    )
+    render(<LayerPanel />)
+    await waitFor(() => expect(screen.getByText('Test Imagery')).toBeInTheDocument(), { timeout: 8000 })
+
+    expect(screen.getByRole('article', { name: 'Test Imagery' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Web Map')).toBeInTheDocument()
+    expect(screen.getByLabelText('权威数据')).toBeInTheDocument()
+    expect(screen.getByLabelText('Living Atlas')).toBeInTheDocument()
+    const detailLink = screen.getByRole('link', { name: '查看 Test Imagery 详情' })
+    expect(detailLink).toHaveAttribute('href', expect.stringContaining('wm1'))
+    expect(detailLink.parentElement).toHaveClass('gc-foot')
+    expect(detailLink.nextElementSibling).toHaveClass('gc-add')
+    expect(detailLink.closest('.gc-title')).toBeNull()
+    expect(detailLink.closest('.gc-thumb-wrap')).toBeNull()
+
+    fireEvent.click(screen.getByText('Test Imagery'))
+    expect(useAppStore.getState().added).toHaveLength(0)
+    fireEvent.click(screen.getByRole('button', { name: '添加 Test Imagery' }))
+    await waitFor(() => expect(useAppStore.getState().added.some((item) => item.id === 'wm1')).toBe(true))
+  })
+
+  it('搜索结果缺少状态时补充 item 元数据，并且不把普通 Living Atlas 标签当作状态', async () => {
+    const urls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const u = String(url)
+        urls.push(u)
+        if (u.includes('/sharing/rest/search')) {
+          return {
+            ok: true,
+            json: async () => ({
+              results: [{
+                id: 'wm1',
+                title: 'Metadata Item',
+                thumbnail: null,
+                numViews: 1,
+                type: 'Web Map',
+                typeKeywords: ['ArcGIS Online', 'Web Map'],
+                tags: ['Living Atlas'],
+              }],
+              nextStart: null,
+              total: 1,
+            }),
+          }
+        }
+        if (u.includes('/content/items/wm1?f=json')) {
+          return { ok: true, json: async () => ({ contentStatus: 'public_authoritative', groupDesignations: ['livingatlas'] }) }
+        }
+        return { ok: true, json: async () => webmapData }
+      })
+    )
+    render(<LayerPanel />)
+    await waitFor(() => expect(screen.getByText('Metadata Item')).toBeInTheDocument(), { timeout: 8000 })
+    expect(urls.some((url) => url.includes('/content/items/wm1?f=json'))).toBe(true)
+    await waitFor(() => expect(screen.getByLabelText('权威数据')).toBeInTheDocument(), { timeout: 8000 })
+    expect(screen.getByLabelText('Living Atlas')).toBeInTheDocument()
+  })
+
+  it('没有明确 groupDesignations 时不显示 Living Atlas 图标', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const u = String(url)
+        if (u.includes('/sharing/rest/search')) {
+          return {
+            ok: true,
+            json: async () => ({
+              results: [{ id: 'wm1', title: 'Plain Item', thumbnail: null, numViews: 1, type: 'Web Map', tags: ['Living Atlas'] }],
+              nextStart: null,
+              total: 1,
+            }),
+          }
+        }
+        if (u.includes('/content/items/wm1?f=json')) {
+          return { ok: true, json: async () => ({ contentStatus: 'public_authoritative' }) }
+        }
+        return { ok: true, json: async () => webmapData }
+      })
+    )
+    render(<LayerPanel />)
+    await waitFor(() => expect(screen.getByText('Plain Item')).toBeInTheDocument(), { timeout: 8000 })
+    await waitFor(() => expect(screen.getByLabelText('权威数据')).toBeInTheDocument(), { timeout: 8000 })
+    expect(screen.queryByLabelText('Living Atlas')).not.toBeInTheDocument()
+  })
+
   it('默认搜索同时获取 Web Map 和 Web Scene，并合并为不重复的画廊结果', async () => {
     const queries: string[] = []
     vi.stubGlobal(

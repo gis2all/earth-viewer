@@ -19,6 +19,9 @@ test('冒烟：加载、搜索、添加、删除图层', async ({ page }) => {
       },
     })
   )
+  await page.route('**/sharing/rest/content/items/*?f=json', (route) =>
+    route.fulfill({ json: { contentStatus: 'public_authoritative', groupDesignations: ['livingatlas'] } })
+  )
   await page.route('**/sharing/rest/content/items/*/data*', (route) =>
     route.fulfill({
       json: {
@@ -40,7 +43,7 @@ test('冒烟：加载、搜索、添加、删除图层', async ({ page }) => {
   await page.fill('.search input', 'Imagery')
   await page.waitForSelector('.gallery-card', { timeout: 60000 })
   // 添加第一张卡片
-  await page.locator('.gallery-card').first().click()
+  await page.locator('.gallery-card .gc-add').first().click()
   await page.waitForSelector('.added-card', { timeout: 60000 })
   await expect(page.locator('.added-card')).toHaveCount(1)
   // 删除
@@ -64,6 +67,9 @@ test('WebScene：搜索结果可添加到同一个地球图层列表', async ({ 
         : { results: [], nextStart: null, total: 0 },
     })
   })
+  await page.route('**/sharing/rest/content/items/*?f=json', (route) =>
+    route.fulfill({ json: { contentStatus: 'public_authoritative', groupDesignations: ['livingatlas'] } })
+  )
   await page.route('**/sharing/rest/content/items/scene-1/data*', (route) =>
     route.fulfill({
       json: {
@@ -85,6 +91,6 @@ test('WebScene：搜索结果可添加到同一个地球图层列表', async ({ 
   await page.goto('/')
   await page.waitForSelector('.gallery-card', { timeout: 60000 })
   await expect(page.locator('.gallery-card')).toContainText('Mock WebScene')
-  await page.locator('.gallery-card').click()
+  await page.locator('.gallery-card .gc-add').click()
   await expect(page.locator('.added-card')).toContainText('Mock WebScene')
 })

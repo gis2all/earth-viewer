@@ -1,20 +1,20 @@
 # CLAUDE.md — Earth Viewer · Agent 上手手册
 
-> 本文件是 **Agent（Claude Code / Codex 等）接手本项目的唯一权威参考**：读完「30 秒速览」就能正确操作，需要细节时按章节/任务索引查。
+> 本文件是 **Agent（Claude Code / Codex 等）接手本项目的工程与运行参考**：读完「30 秒速览」就能正确操作，需要细节时按章节/任务索引查。视觉实现约束以根目录 `DESIGN.md` 为准。
 > 改代码前请先通读本文件 + 相关源码；**带 ★ 的是"绝不可回退"的规则**，改动前务必三思。
 
 ---
 
 ## 0. 30 秒速览
 
-- **项目**：画廊式 3D 地球图层应用。Cesium 渲染地球 + 接入 ArcGIS Online 公开图层（搜索 → 添加（点卡片时校验）→ 叠加），线上 https://earth.gis2all.top
+- **项目**：画廊式 3D 地球图层应用。Cesium 渲染地球 + 接入 ArcGIS Online 公开图层（搜索 → 点击添加按钮校验 → 叠加），线上 https://earth.gis2all.top
 - **代码**：`D:\Code\earth-viz-hub`；git remote = `github.com/gis2all/earth-viewer`
 - **技术栈**：React 18 · CesiumJS 1.144（★精确锁定）· Vite 5 · TypeScript 5.6 · zustand；Node ≥ 22；Vitest + Playwright；Docker；Cloudflare Pages
 
 | 命令 | 用途 |
 |---|---|
-| `npm run dev` | 本地开发 http://localhost:5173（内置 /sharing 代理） |
-| `npm run test:coverage` | 单测 + 覆盖率门禁（★statements/lines ≥ 90%，当前 ~90.6%） |
+| `npm run dev` | 本地开发 http://127.0.0.1:5173（内置 /sharing 代理） |
+| `npm run test:coverage` | 单测 + 覆盖率门禁（★statements/lines ≥ 90%，当前 statements 90.24% / lines 95.52%） |
 | `npm run lint` / `npm run build` | ESLint / 生产构建（dist/） |
 | `npm run test:e2e` | Playwright E2E（含真实 ArcGIS 集成） |
 | `docker compose up --build` | Docker 运行（5173） |
@@ -33,7 +33,11 @@
 
 ## 1. 项目定位
 
-**Earth Viewer**：画廊式 3D 地球图层应用（曾用名 EarthViz Hub），目标是可以上线、不是 demo。左侧「图层」面板搜索 ArcGIS Online Web Map/Web Scene ，点卡片时校验并按类型叠加到 Cesium 球上；右侧「效果」面板调节环境/地形/视图；顶栏回正/复位/主题切换。深浅色双主题，全直角 UI。
+**Earth Viewer**：画廊式 3D 地球图层应用，目标是可以上线、不是 demo。左侧「图层」面板搜索 ArcGIS Online Web Map/Web Scene，点击卡片底部的添加按钮时校验并按类型叠加到 Cesium 球上；右侧「效果」面板调节环境/地形/视图；顶栏提供回正/复位/主题切换、GitHub 导航和应用内沉浸模式。深浅色双主题，全直角 UI。
+
+### 1.1 UI 规范
+
+根目录 [`DESIGN.md`](DESIGN.md) 是现有界面的视觉与交互实现约束，覆盖双主题令牌、布局尺寸、图层卡片、面板控件、滚动条、状态行为、无障碍要求和禁止回退项。任何 UI 改动前必须先阅读该文件；当代码与文档不一致时，应先确认哪一方代表最新已确认设计，再同步另一方。
 
 ---
 
@@ -64,9 +68,9 @@
 ### 3.1 本地开发
 ```text
 npm install
-npm run dev        # http://localhost:5173
+npm run dev        # http://127.0.0.1:5173
 ```
-vite 内置 `/sharing` 代理（转发 `www.arcgis.com`，绕 CORS）。★5173 被占时 vite 自动递增（5174/5175），常见是残留 dev server 进程，先清理（§13）。
+vite 内置 `/sharing` 代理（转发 `www.arcgis.com`，绕 CORS）。★开发端口固定使用 5173；5173 被占时不得接受 Vite 自动递增到 5174/5175，必须先定位并停止占用进程，再用 `--port 5173 --strictPort` 启动（§13）。
 
 ### 3.2 生产构建 + Node 代理（自托管）
 > ★构建注意：maplibre 的 worker 通过 new URL(..., import.meta.url) 动态加载，vite 无法静态解析。
@@ -79,7 +83,7 @@ node server/proxy.mjs 5173  # 静态托管 dist + /sharing 代理（默认 5173�
 
 ### 3.3 Docker
 ```text
-docker compose up --build   # http://localhost:5173
+docker compose up --build   # http://127.0.0.1:5173
 docker compose down
 ```
 两阶段：node:22-alpine 构建（npm ci + build）→ 运行（dist + proxy.mjs，无 npm 依赖）。
@@ -125,9 +129,9 @@ earth-viz-hub/
   src/
     main.tsx / App.tsx
     app/
-      AppShell.tsx      # 顶栏（品牌/回正/复位/主题）+ favicon 跟随主题 + 面板布局
+      AppShell.tsx      # 顶栏（品牌/回正/复位/主题/GitHub/沉浸模式）+ favicon 跟随主题 + 面板布局
       LayerPanel.tsx    # 画廊：支持类型白名单并行搜索+轻预筛+排序+无限滚动，点卡片时校验
-      EffectsPanel.tsx  # 效果面板（环境/地形/视图开关与滑杆）
+      EffectsPanel.tsx  # 效果面板（环境/地形/视图开关与滑杆，含区划网格）
     globe/
       GlobeViewer.tsx   # Cesium 核心：Viewer 创建、相机、效果、图层增量、相机优先/userHome 回退（★__E2E__ 模式）
       cameraApi.ts      # registerViewer/unregisterViewer/resetView/orientView/flyToHome（用户定位+启动高度）
@@ -143,7 +147,7 @@ earth-viz-hub/
     styles/theme.css    # 全部样式（直角、深浅主题变量）
 ```
 
-**数据流**：`LayerPanel` 按支持类型白名单并行搜索（`sortField=numViews`）→ 轻预筛直接上屏 → 点卡片 `addLayer` → `GlobeViewer` 监听 `added` → `renderableLayersFromWebmap()` 构建 provider/DataSource 叠加。
+**数据流**：`LayerPanel` 按支持类型白名单并行搜索（`sortField=numViews`）→ 轻预筛直接上屏 → 点击添加按钮调用 `addLayer` → `GlobeViewer` 监听 `added` → `renderableLayersFromWebmap()` 构建 provider/DataSource 叠加。
 
 ---
 
@@ -153,10 +157,10 @@ earth-viz-hub/
 |---|---|---|
 | `src/globe/assess.ts` | ★"能否渲染"唯一事实源：能力表、角色分类、整体评估 | `classifyLayer`、`assessWebmap`、`renderableLayersFromWebmap`；被 LayerPanel 与 GlobeViewer 共用 |
 | `src/globe/webmap.ts` | webmap JSON 解析、服务探测、provider/GeoJSON 构建 | `fetchWebmap`、`detectMapService`（CRS_CACHE）、`providerForWebLayer`、`fetchFeatureGeoJSON/Style` |
-| `src/globe/GlobeViewer.tsx` | Cesium Viewer 创建/销毁、相机控制、效果、图层生命周期；相机优先/userHome 回退；★`window.__E2E__` 时跳过 Cesium | 依赖 store、cameraApi、webmap、assess、scene/vector/vectorTile/ogc/csv/loadSafety/kml/viewport |
+| `src/globe/GlobeViewer.tsx` | Cesium Viewer 创建/销毁、按需渲染、相机控制、效果、图层生命周期；相机优先/userHome 回退；★`window.__E2E__` 时跳过 Cesium | 依赖 store、cameraApi、webmap、assess、scene/vector/vectorTile/ogc/csv/loadSafety/kml/viewport |
 | `src/globe/cameraApi.ts` | 顶部按钮复位/回正 + 用户定位飞行 | `registerViewer/unregisterViewer/resetView/orientView/flyToHome/setInitialHeightForTest` |
 | `src/app/LayerPanel.tsx` | 画廊：搜索/预取/过滤/流式上屏/无限滚动/添加移除/错误 toast | 依赖 store、webmap、assess |
-| `src/app/AppShell.tsx` | 布局、品牌图标、favicon 主题切换、回正/复位按钮 | 依赖 store、cameraApi、GlobeViewer/LayerPanel/EffectsPanel |
+| `src/app/AppShell.tsx` | 布局、品牌图标、favicon 主题切换、回正/复位、GitHub 导航、应用内沉浸模式 | 依赖 store、cameraApi、GlobeViewer/LayerPanel/EffectsPanel |
 | `src/state/store.ts` | 全局状态 + persist | theme/added/effects/layerErrors/userHome + actions |
 | `functions/sharing/[[path]].js` | Pages 生产代理（/sharing → www.arcgis.com） | 白名单 search/data；Origin 检查读 `ALLOWED_ORIGIN` |
 | `functions/api/geo.js` | Pages Function：/api/geo 用户国家质心经纬度 | `onRequest` 读 `CF-IPCountry` |
@@ -189,6 +193,7 @@ earth-viz-hub/
 - 加载失败写入 `layerErrors`（卡片红标）；状态 persist。
 - 防卡死（loadSafety.ts）：风险分级 + 阈值 + 降级（全球矢量底图影像化、矢量 maxZoom 16、Feature/WFS/OGC/CSV 3000、GeoJSON ≤8MB、KML ≤2MB、WMS maximumLevel 16、Scene/3D SSE=16）；点聚合、串行渲染队列、字段裁剪（outFields=1）。
 - ★渲染健壮性（防 OOM/卡死，GlobeViewer）：① 业务层数量上限 `MAX_BUSINESS_LAYERS=5`（超限省略并提示）；② 业务层总要素预算 `MAX_TOTAL_FEATURES=5000`（`consumeFeatureBudget`，超预算略过后续层）；③ 单层 `MAX_RENDER_FEATURES=1500`（数据大只取前 N 个并提示）；④ fetch 可取消（`rec.abort`，移除图层即中止）；⑤ `renderQueue` 加 `.catch` 兜底（单个 webmap 渲染失败不卡整队列）。
+- ★**按需渲染（GPU 空闲保护）**：Viewer 固定 `requestRenderMode: true` + `maximumRenderTimeChange: Infinity`。静止场景不持续提交 GPU 帧；效果、地形、影像层、DataSource、Primitive、VectorTile provider、删除路径、`camera.flyTo` 和 `webglcontextrestored` 改变场景后，必须调用 `requestSceneRender(v)`（`cameraApi` 通过 `requestViewerRender`）请求一帧。滚轮缓动与自动环绕仅在各自动画生效期间由 `onCameraFrame` 请求下一帧；不得在静止路径无条件 `requestRender()`，也不得每帧重复写入相同 SSE 值。按需渲染不替代图层/要素/瓦片缓存预算。
 - **P1–P5 视口驱动管线**（`src/globe/viewport/`）：FeatureLayer 只按相机视口 query（`resolveFeatureQueryBase` 自动解析第一个可查询层，`buildFeatureQueryUrl` 基于已解析的层号 + `geometry=envelope` + `f=geojson`），Worker 解析 → Douglas-Peucker 抽稀 → 顶点预算（`MAX_RENDER_VERTICES=200_000`）→ 要素预算（`MAX_RENDER_FEATURES`），Primitive 优先渲染（`buildLayerPrimitive`）、`hasPrimitiveRendering` 失败回退 `GeoJsonDataSource`；相机 `moveEnd` → `viewportController.update` 随视口更新，LRU 缓存视口结果。
 - **VectorTile（方案 A，maplibreImagery.ts）**：不再用 `MVTDataProvider` 裸几何、也不降级 OSM 栅格——用真实 MapLibre 按官方 `root.json` 离屏渲染（sprite/glyphs/paint/layout）。MapLibre 与 ArcGIS VectorTile 的原生瓦片均为 512px，因此自定义 `ImageryProvider` 也原生输出 512px：Cesium 会据此选择对应的 LOD，MapLibre 和 Cesium 使用同一 `z/x/y`，不做旧方案的 z-1 补偿或默认下采样；相关单测覆盖层级、裁剪与世界边缘中心收拢。实际浏览器的连续缩放仍须视觉回归验证，不能据此宣称所有样式和缩放场景已与 ArcGIS 完全一致。每次以 3×3×512px（1536px）离屏渲染，单次 GPU 读回后裁出 9 张 512px 瓦片；`renderWorldCopies: false` 在世界边缘会收拢 MapLibre 相机，裁剪必须读取 `getCenter()` 的实际中心，不能假定 `jumpTo()` 请求中心，否则会错取相邻瓦片造成数十度偏移。LRU 只缓存最终瓦片；512px 单片像素为旧方案四倍，因此块上限为 12（约 108 MiB 像素缓冲）。样式规范化会把 `VectorTileServer`（含官方相对 `../../` URL）转换为 XYZ PBF 模板，并移除对 vector source 非法的 `tileSize`。每个块等待 MapLibre `idle`（瓦片/字体/sprite 稳定）后才缓存，避免把加载中的透明区域固化。防卡死手段：① 3×3 块批量 + LRU；② 每块仅一次 GPU readPixels；③ 串行队列 + 单块失败不阻塞；④ `VECTOR_TILE_MAX_ZOOM=16`；⑤ 销毁时拒绝所有未决瓦片请求。
 - **KML 预算**：KML → `parseKmlToGeoJSON` → `runViewportProcess`（顶点/要素预算）→ `GeoJsonDataSource`，失败/无要素回退原生 `KmlDataSource.load`，仍受 `KML_MAX_BYTES=2MB` 限制。
@@ -202,7 +207,7 @@ earth-viz-hub/
 - ★只保留权威内容：查询串（buildSearchQuery）强制追加 `contentstatus` 权威过滤（org/public_authoritative，排除 deprecated）；详见 §6.7。
 - ★服务可用性预检：服务类/容器后台预检，`Token Required`/`Subscription canceled`/`403` 等不可访问卡片自动隐藏；详见 §6.7。
 - 按支持 item type 白名单并行搜索（13 类），各取一页后按 numViews 合并去重；sortField=numViews&sortOrder=desc。
-- 轻预筛：搜索阶段不逐项拉 data、不做能力预评估；点卡片时才解析/渲染，不支持才 toast。
+- 轻预筛：搜索阶段不逐项拉 data、不做能力预评估；点击添加按钮时才解析/渲染，不支持才 toast。
 - 每轮只拉未到底类型一页，滚动到底再翻下一页。
 - 服务 item 经 resolveServiceItem 包装为单图层；GeoJson/CSV 用 /items/<id>/data。
 - 防抖 300ms + AbortController + requestId 序列号。
@@ -218,7 +223,8 @@ earth-viz-hub/
 - `userHome`：用户大概经纬度，来自 `/api/geo`（CF-IPCountry → 国家质心），失败回退 `(35,104)`；由 `src/globe/geo.ts` 提供并缓存。★本地 dev 无 Cloudflare，/api/geo 404 → 走兜底。
 
 ### 6.5 效果面板
-- 环境：大气散射/星空/日月/雾效/昼夜光照；地形：地形透明（开关+透明度滑杆，★滑杆随开关显隐）、地形夸张 1–3X；视图：自动环绕。
+- 环境：大气散射/星空/日月/雾效/昼夜光照；地形：地形透明（开关+透明度滑杆，★滑杆随开关显隐）、地形夸张 1–3X；视图：自动环绕/区划网格。
+- 顶栏全屏图标进入应用内沉浸模式：隐藏顶部栏和左右面板，仅保留球体与退出图标；状态仅存于当前会话，点击退出或按 `Esc` 恢复普通模式。
 - ★半透明必须显式设 `frontFaceAlpha`/`backFaceAlpha`（默认 1 不透明；正面=滑杆值，背面=min(1, 值+0.1)）。
 - ★实验组（云层/水面/极光）已删除，勿加回；Bloom 关闭。
 
@@ -249,7 +255,8 @@ earth-viz-hub/
    - 容器（Web Map/Scene）→ GET `/sharing/rest/content/items/<id>/data?f=json`
    - 命中 `Token Required` / `Subscription canceled` / `403` → 加入 `badIds` **自动隐藏**
    - 结果按 item id 缓存 `localStorage`（key `earth-viewer:preflight`，24h TTL）
-5. **渲染**：画廊卡片按 `badIds` 过滤，已知不可用项不渲染。
+5. **补充元数据**：`SearchResult` 保留搜索接口返回的 `contentStatus` / `groupDesignations`；缺少任一状态字段时，后台并发 4 请求 `/sharing/rest/content/items/<id>?f=json` 补齐。权威图标只认 `contentStatus` 的 `org_authoritative` / `public_authoritative`，Living Atlas 图标只认 `groupDesignations: "livingatlas"`，不从 `typeKeywords` 或 tags 猜测。
+6. **渲染**：画廊卡片按 `badIds` 过滤，已知不可用项不渲染；卡片主体不负责添加，详情图标跳转 ArcGIS item 页面，添加由独立按钮触发。
 
 ### 6.7.2 关键注意点（坑，务必牢记）
 
@@ -260,7 +267,8 @@ earth-viz-hub/
 - **`num` 上限 100**；**`total` 精确到 10000 封顶** → 无法靠 total 判断过滤是否生效，用 `countFields=contentstatus` 验证（注意路径是 `aggregations.counts[0].fieldValues`）。
 - **`typekeywords:"Living Atlas"` 几乎无用**（全类型仅 ~5 条），不能靠它筛 Living Atlas。
 - **`orgid:` 需要组织真实 ID**（形如 `5uh3wwYLNzBuU0Ef`），不是用户名；`orgid:"esri"` → 0。
-- **item JSON 不含 `contentstatus`** → 权威/废弃过滤只能服务端做，客户端拿不到（所以一切过滤都在 `q`/`filter` 里）。
+- **item JSON 的 `contentStatus` 受权限/条目类型影响**：部分公开条目详情可返回 `contentStatus`，组织权威条目匿名访问可能返回空；权威/废弃过滤仍只能服务端做，客户端只把明确的状态值用于图标。
+- **Living Atlas 不看 `typeKeywords`**：实际条目通常通过 `groupDesignations: "livingatlas"` 标识；`tags` 和标题只是自由文本，不能作为状态图标依据。
 - **官方 ArcGIS 页面 ≠ 匿名 API 口径**：官方 UI 的 `Status: Authoritative` 带登录组织上下文（个人账号→0）；我们匿名 API 是全平台公开权威（≈35k）。二者不是同一套口径。
 - **type 白名单严格精确**（实测每类返回的 `type` 全都一致，不会混入 Table 等）；但**数据本体可能不可访问**（如 `rki_*`：item 是 Feature Service、权威，但服务根 `Token Required`、封面 403、`data` 订阅取消）→ 这类靠「6.7.1 的预检」兜底。
 - **Web Map/Scene 容器也要预检**（走 `/items/<id>/data`），否则订阅取消的容器会漏进来（如 `RKI Corona Karte`）。
@@ -270,10 +278,11 @@ earth-viz-hub/
 | 文件 | 职责 |
 |---|---|
 | `src/app/LayerPanel.tsx` | `buildSearchQuery` / `fetchSearchPage` / `mergeSearchResults` / `preflightService` / `preflightItem` / 渲染过滤 |
+| `src/styles/theme.css` | Map Viewer 风格双列卡片尺寸、缩略图、详情与独立添加操作样式 |
 | `src/globe/itemTypes.ts` | `SEARCH_ITEM_TYPES` / `isWebMapContainer` |
 | `src/globe/loadSafety.ts` | `SAFETY` 上限（含 MAX_FEATURES/MAX_RENDER_FEATURES/MAX_RENDER_VERTICES/KML_MAX_BYTES/VECTOR_TILE_MAX_ZOOM） / `consumeFeatureBudget` / 升降级风险 |
 | `vite.config.ts` | dev 代理 `/sharing` → `www.arcgis.com` |
-| `functions/sharing/[[path]].js` | 生产 Pages 代理（白名单 + 只 GET/HEAD + Origin + 限流） |
+| `functions/sharing/[[path]].js` | 生产 Pages 代理（白名单 + 搜索/item 元数据/data + 只 GET/HEAD + Origin + 限流） |
 | `server/proxy.mjs` | Node 自托管代理 |
 
 ### 6.7.4 测试
@@ -288,10 +297,11 @@ earth-viz-hub/
 
 ## 7. 测试与质量门禁
 
-- **单测**：Vitest（jsdom），314 个用例（含 store/cameraApi/AppShell/assess/webmap/LayerPanel/EffectsPanel/GlobeViewer/geo/itemTypes/serviceItem/VectorTile/OGC/CSV/vector/loadSafety/**maplibreImagery**）。`npm run test:coverage`
-- **覆盖率门槛**（vitest.config.ts）：★statements ≥90 / lines ≥90 / functions ≥85 / branches ≥70（当前 90.40% / 95.61% / 93.84% / 80.81%）；include **全 src**（含 GlobeViewer），exclude 入口壳与测试文件——真实口径，不玩数字。
+- **单测**：Vitest（jsdom），326 个用例（含 store/cameraApi/AppShell/assess/webmap/LayerPanel/EffectsPanel/GlobeViewer/geo/itemTypes/serviceItem/VectorTile/OGC/CSV/vector/loadSafety/**maplibreImagery**；AppShell 覆盖 GitHub 导航和沉浸模式）。`npm run test:coverage`
+- **覆盖率门槛**（vitest.config.ts）：★statements ≥90 / lines ≥90 / functions ≥85 / branches ≥70（最近一次实测 statements 90.25% / lines 95.53% / functions 93.27% / branches 81.20%）；include **全 src**（含 GlobeViewer），exclude 入口壳与测试文件——真实口径，不玩数字。
 - **E2E**：Playwright 28 项（冒烟 mock / WebScene UI / UI 交互 mock / 真实 ArcGIS 集成 request）。
 - ★**E2E 轻量模式**：`e2e/app.spec.ts`、`e2e/ui.spec.ts` 注入 `window.__E2E__`，GlobeViewer 跳过 Cesium 创建（CI 无头软件渲染极慢会拖垮交互测试）；「球真实渲染+图层上球」由线上/容器验证覆盖（headless 测不准渲染）。
+- `src/globe/GlobeViewer.test.tsx` 覆盖按需渲染配置，以及效果和异步 MapServer 图层变更后调用 `scene.requestRender()`；改动任何异步上球路径时必须保留对应刷新断言。
 - **徽章**：6 个（CI / License / Coverage / Deps / Tests / E2E）；`scripts/badge.mjs` 从 coverage-summary/audit/test-results/e2e-results 生成 JSON → GitHub Actions 发布到 GitHub Pages → shields endpoint 渲染，**每次 CI 实时生成**。
 - **CI**（.github/workflows/ci.yml）：audit（--omit=dev）→ lint → test:coverage → build → e2e → badge → upload-pages-artifact（main 分支 deploy 到 Pages）。
 
@@ -301,6 +311,7 @@ earth-viz-hub/
 
 - ArcGIS VectorTileLayer 用 MapLibre 按官方样式离屏渲染（`maplibreImagery.ts`），不依赖 `MVTDataProvider`；WebScene 纯 `styleUrl` 直接用 `styleUrlForLayer` 取样式。低缩放/高密度区域（如 z3 亚洲）单帧绘制耗时偏高，headless 软件渲染更明显，真机 GPU 正常。部分 ArcGIS 样式引用的 sprite 图标可能在 MapLibre 中缺失；连续缩放的位置一致性仍需以真实浏览器视觉回归确认。
 - 当 WebGL 上下文丢失（内存不足/卡死）时触发 `webglcontextlost` 监听，显示降级提示而非白屏；
+- 静止场景已启用 Cesium 按需渲染，降低闲置 GPU 占用；但浏览器 GPU 进程仍受驱动、系统显存及多张重型/VectorTile 地图叠加影响，按需渲染不是显存硬上限。
 - 3D Tiles / I3S 已设 cacheBytes=128MB / overflow=32MB，WMTS、动态 MapServer export 已设 maximumLevel=和业界其他平台一致的预算上限。
 - ArcGIS SceneServer/I3S 使用 Cesium `I3SDataProvider`；3D Tiles 使用 `Cesium3DTileset`。
 - 动态 MapServer/ImageServer 使用 `/export` 的 4326 影像兜底；不依赖 `/tile/`。
@@ -328,6 +339,7 @@ earth-viz-hub/
 | 搜索按 numViews 降序 | 默认相关度首页几乎全是 VectorTile 底图，过滤后空画廊 |
 | 画廊按批流式上屏 | 凑满 24 才渲染 = 90s+ 空白；每批上屏首卡 ~10s |
 | 端口统一 5173 / Node 22 | 避免端口与版本割裂（Cesium 要求 ≥22） |
+| Cesium 按需渲染 | 静止时不持续提交 GPU 帧；异步数据完成后显式请求一帧，动画期间才连续重绘 |
 | 生产经典 Cesium.js + CSP blob: | vite-plugin-cesium 生产注入经典版；其 worker 走 blob importScripts |
 | 不换 Esri ArcGIS JS API | 4.x 需授权付费、现有代码全量重写；Cesium 免费开放合适 |
 | ArcGIS 公开服务匿名访问 | 搜索/瓦片无需账号不耗 credits；风险是 429，分批并发 |
@@ -396,10 +408,11 @@ npx wrangler pages deploy --project-name=earth-viewer
 2. 分功能批次：`git add <具体文件>` + `git commit -m "<英文 message>"`（每批只含相关文件）
 3. 用户说"推送"才 `git push origin main`
 
-### T6 排查"球空白"
+### T6 排查"球空白 / 静止后不刷新"
 1. 生产/Docker 环境 → 检查 `_headers` 的 CSP `script-src` 是否含 `blob:`（★常见根因）
 2. dev 正常但生产空白 → 经典 Cesium.js worker blob 被 CSP 拦（§6.6）
 3. 若刚改过图层加载 → 看 `layerErrors` 红标 / `fetchFeatureGeoJSON` 分页
+4. 若新图层/异步数据在静止球上不出现 → 确认场景变更后调用 `requestSceneRender(v)`；勿关闭 `requestRenderMode` 作为临时绕过
 
 ---
 
@@ -444,7 +457,8 @@ npx wrangler pages deploy --project-name=earth-viewer
 
 - ★**未经用户明确准许，不得执行 `git add` / `git commit` / `git push`**（含「提交并推送」类自动操作）；只有用户明确说「提交/推送」才执行。
 - `docs/` 不入 git；`coverage/`、`test-results.json`、`e2e-results.json`、`audit.json`、`*.log`、`*.tsbuildinfo`、`node_modules/`、`dist/` 已忽略。
-- 开发日志不要输出到项目根目录；后台启动重定向到系统临时目录（如 `$env:TEMP\earthviz-dev.log`）。
+- 开发日志和临时测试输出不要写入项目根目录；统一放到 `output/`（如 `output/earthviz-dev.log`）。`output/` 已加入 `.gitignore`，无需提交这些产物。
+- ★开发服务器端口固定为 5173：启动前执行 `Get-NetTCPConnection -LocalPort 5173 -State Listen`，确认占用进程后用 `taskkill /PID <listenerPid> /T /F` 停止对应进程树，再执行 `npm run dev -- --host 127.0.0.1 --port 5173 --strictPort`；禁止默默使用 5174/5175。
 - Windows 写文件用 Python/Node（utf-8、LF）；编码敏感文件别用 PowerShell 重定向写。
 - 用户全中文交流，回复用中文。
 - 用户对 UI 要求苛刻（讨厌"AI 感/太文艺"），**改 UI 前先讨论/看原型**。

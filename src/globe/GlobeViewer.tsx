@@ -88,6 +88,18 @@ function webglAvailable(): boolean {
 }
 const DOUBLE_CLICK_ZOOM_RATIO = 0.5 // 双击 zoom in 到当前高度的一半
 
+/**
+ * requestRenderMode 下，异步数据或命令式场景变更不会持续驱动渲染循环。
+ * 每次真正改变场景时只请求一帧；交互动画则由 onCameraFrame 续请求下一帧。
+ */
+function requestSceneRender(v: Cesium.Viewer) {
+  if (!v.isDestroyed()) v.scene.requestRender()
+}
+
+function setScreenSpaceError(globe: Cesium.Globe, value: number) {
+  if (globe.maximumScreenSpaceError !== value) globe.maximumScreenSpaceError = value
+}
+
 // 点要素聚合：大量点合并为少量聚合点，降低渲染量
 function enablePointClustering(ds: Cesium.DataSource) {
   const c = (ds as { clustering?: { enabled: boolean; pixelRange: number; minimumClusterSize: number; clusterBillboards: boolean } }).clustering
@@ -179,6 +191,7 @@ export function GlobeViewer() {
   const effects = useAppStore((s) => s.effects)
   const effectsRef = useRef(effects)
   effectsRef.current = effects
+  const autoRotateWakeRef = useRef<() => void>(() => {})
   const setLayerError = useLayerError()
   const clearLayerError = useClearLayerError()
   const layerMapRef = useRef<Map<string, { layers: Cesium.ImageryLayer[]; ds: Cesium.DataSource[]; prims: unknown[]; vec: ArcGisVectorTileImageryProvider[]; flew: boolean; abort?: AbortController; viewportController?: { update(env: { west: number; south: number; east: number; north: number }): Promise<void>; dispose(): void }; cameraMoveHandler?: () => void }>>(new Map())
@@ -209,6 +222,9 @@ export function GlobeViewer() {
       timeline: false,
       selectionIndicator: false,
       infoBox: false,
+      // 静止场景不再持续提交 GPU 帧；图层/效果/交互变化时显式 requestRender。
+      requestRenderMode: true,
+      maximumRenderTimeChange: Infinity,
       })
     } catch (e) {
       console.error('[globe] 初始化失败', e)
@@ -219,7 +235,10 @@ export function GlobeViewer() {
     registerViewer(v)
     // WebGL 上下文丢失预案（内存不足/卡死时不白屏：易加载并提示）
     const onCtxLost = (e: Event) => { e.preventDefault(); setGlError('WebGL 上下文已丢失（可能内存不足，正在尝试恢复…）') }
-    const onCtxRestored = () => setGlError('')
+    const onCtxRestored = () => {
+      setGlError('')
+      requestSceneRender(v)
+    }
     v.scene.canvas.addEventListener('webglcontextlost', onCtxLost)
     v.scene.canvas.addEventListener('webglcontextrestored', onCtxRestored)
     // 首次进入：加载完成后自动居中到用户大概位置
@@ -250,6 +269,21 @@ export function GlobeViewer() {
     let targetH = v.camera.positionCartographic.height
     let settledFrames = 0
     let lastWheel = -1e9
+    let lastInteract = 0
+    let autoRotateWakeTimer: ReturnType<typeof setTimeout> | undefined
+
+    const scheduleAutoRotateWake = () => {
+      if (autoRotateWakeTimer !== undefined) clearTimeout(autoRotateWakeTimer)
+      autoRotateWakeTimer = undefined
+      if (!effectsRef.current.autoRotate || v.isDestroyed()) return
+      const elapsed = performance.now() - lastInteract
+      const delay = Math.max(0, AUTO_ROTATE_IDLE_MS - elapsed)
+      autoRotateWakeTimer = setTimeout(() => {
+        autoRotateWakeTimer = undefined
+        if (effectsRef.current.autoRotate && !v.isDestroyed()) requestSceneRender(v)
+      }, delay)
+    }
+    autoRotateWakeRef.current = scheduleAutoRotateWake
 
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
@@ -262,12 +296,14 @@ export function GlobeViewer() {
       targetH = Math.max(min, Math.min(MAX_ZOOM, h * factor))
       lastWheel = performance.now()
       lastInteract = performance.now()
+      scheduleAutoRotateWake()
+      requestSceneRender(v)
     }
     v.scene.canvas.addEventListener('wheel', onWheel, { passive: false })
 
-    let lastInteract = 0
     const onCameraFrame = () => {
       const c = v.camera
+      let needsNextFrame = false
       // 自动旋转（无交互 3 秒后、且非飞行中）—— setView 递增经度，沿东西方向绕地球转
       if (effectsRef.current.autoRotate && performance.now() - lastInteract > AUTO_ROTATE_IDLE_MS) {
         const fl = c as unknown as { _currentFlight?: unknown }
@@ -282,6 +318,7 @@ export function GlobeViewer() {
             ),
             orientation: { heading: c.heading, pitch: c.pitch, roll: c.roll },
           })
+          needsNextFrame = true
         }
       }
       if (c.pitch < MIN_PITCH || c.pitch > MAX_PITCH) {
@@ -293,6 +330,7 @@ export function GlobeViewer() {
             roll: c.roll,
           },
         })
+        needsNextFrame = true
       }
       const h = c.positionCartographic.height
       const diff = h - targetH
@@ -303,17 +341,19 @@ export function GlobeViewer() {
         }
         if (Math.abs(diff) > h * 0.005) {
           settledFrames = 0
-          v.scene.globe.maximumScreenSpaceError = SSE_ZOOMING
+          setScreenSpaceError(v.scene.globe, SSE_ZOOMING)
         } else {
           settledFrames++
           if (settledFrames > 8) {
-            v.scene.globe.maximumScreenSpaceError = SSE_SETTLED
+            setScreenSpaceError(v.scene.globe, SSE_SETTLED)
           }
         }
+        needsNextFrame = true
       } else {
         targetH = h
-        v.scene.globe.maximumScreenSpaceError = sseForHeight(h)
+        setScreenSpaceError(v.scene.globe, sseForHeight(h))
       }
+      if (needsNextFrame) requestSceneRender(v)
     }
     v.scene.postUpdate.addEventListener(onCameraFrame)
     v.scene.globe.tileCacheSize = 100
@@ -325,6 +365,8 @@ export function GlobeViewer() {
       cancelFlight()
       lastWheel = -1e9
       lastInteract = performance.now()
+      scheduleAutoRotateWake()
+      requestSceneRender(v)
     }
     handler.setInputAction(onUserGrab, Cesium.ScreenSpaceEventType.LEFT_DOWN)
     handler.setInputAction(onUserGrab, Cesium.ScreenSpaceEventType.RIGHT_DOWN)
@@ -344,12 +386,14 @@ export function GlobeViewer() {
         ),
         orientation: { heading: v.camera.heading, pitch: v.camera.pitch, roll: 0 },
       })
+      requestSceneRender(v)
     }, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK)
 
     // 真实地形始终开启（缓存 Provider + 光照阴影）
     getTerrainProvider().then((p) => {
       if (v.isDestroyed()) return
       v.terrainProvider = p
+      requestSceneRender(v)
     })
 
     return () => {
@@ -357,6 +401,8 @@ export function GlobeViewer() {
       v.scene.canvas.removeEventListener('webglcontextlost', onCtxLost)
       v.scene.canvas.removeEventListener('webglcontextrestored', onCtxRestored)
       v.scene.postUpdate.removeEventListener(onCameraFrame)
+      if (autoRotateWakeTimer !== undefined) clearTimeout(autoRotateWakeTimer)
+      autoRotateWakeRef.current = () => {}
       handler.destroy()
       unregisterViewer()
       v.destroy()
@@ -373,7 +419,8 @@ export function GlobeViewer() {
     globe.showGroundAtmosphere = effects.atmosphere
     // 背景与星空跟随主题：白天白底（无星空），深色深空（可选星空）
     const dark = theme === 'dark'
-    scene.backgroundColor = Cesium.Color.fromCssColorString(dark ? '#05070d' : '#f4f5f7')
+    // 与 theme.css 中的 --globe-bg 保持一致；直接由主题状态决定，避免读取 data-theme 时序造成旧主题背景闪回。
+    scene.backgroundColor = Cesium.Color.fromCssColorString(dark ? '#05070d' : '#ffffff')
     if (scene.skyBox) scene.skyBox.show = dark && effects.stars
     if (scene.sun) scene.sun.show = effects.sunMoon
     if (scene.moon) scene.moon.show = effects.sunMoon
@@ -388,6 +435,8 @@ export function GlobeViewer() {
         ? Math.min(1, effects.translucencyAlpha + 0.1)
         : 1
     }
+    autoRotateWakeRef.current()
+    requestSceneRender(v)
   }, [effects, theme])
 
   // 图层管理（增量式）：底图常驻，只增删各 Web Map 的操作图层 → 不重建不闪蓝
@@ -412,9 +461,11 @@ export function GlobeViewer() {
       )
       layers.add(new Cesium.ImageryLayer(new Cesium.UrlTemplateImageryProvider({ url: WORLD_IMAGERY_TILES })))
       layers.add(new Cesium.ImageryLayer(new Cesium.UrlTemplateImageryProvider({ url: WORLD_LABELS_TILES })))
+      requestSceneRender(v)
     }
 
     // 移除已删除的 Web Map 图层
+    let removedLayer = false
     for (const [id, rec] of layerMapRef.current) {
       if (!added.some((a) => a.id === id)) {
         rec.abort?.abort()
@@ -425,8 +476,10 @@ export function GlobeViewer() {
         rec.ds.forEach((d) => v.dataSources.remove(d, true))
         if (v.scene.primitives) rec.prims.forEach((p) => (v.scene.primitives as unknown as { remove: (x: unknown, y?: boolean) => void }).remove(p, true))
         layerMapRef.current.delete(id)
+        removedLayer = true
       }
     }
+    if (removedLayer) requestSceneRender(v)
 
 
     // 渲染新增的 Web Map 操作图层（异步：需探测图层坐标系以匹配 tilingScheme）
@@ -461,6 +514,7 @@ export function GlobeViewer() {
         if (cam) {
           try {
             v.camera.flyTo(cam)
+            requestSceneRender(v)
           } catch {
             // ignore
           }
@@ -477,6 +531,7 @@ export function GlobeViewer() {
           if (typeof op.opacity === 'number') il.alpha = op.opacity
           rec.layers.push(il)
           layers.add(il)
+          requestSceneRender(v)
         } else if (isVectorTileLayer(op)) {
           // 方案 A：MapLibre GL 按 ArcGIS 官方样式渲染矢量瓦片 → Cesium ImageryProvider
           // （不再用 MVTDataProvider 裸几何渲染，也不再降级 OSM 栅格；样式与 ArcGIS Map Viewer 一致）
@@ -497,6 +552,7 @@ export function GlobeViewer() {
               rec.layers.push(il)
               rec.vec.push(provider)
               layers.add(il)
+              requestSceneRender(v)
               clearLayerError(a.id)
             })
             .catch((e: unknown) => {
@@ -519,6 +575,7 @@ export function GlobeViewer() {
               enablePointClustering(ds as Cesium.DataSource)
               v.dataSources.add(ds)
               rec.ds.push(ds)
+              requestSceneRender(v)
               clearLayerError(a.id)
             })
             .catch((e) => {
@@ -533,6 +590,7 @@ export function GlobeViewer() {
                 if (!keepAlive() || !prim) return
                 v.scene.primitives.add(prim)
                 rec.prims.push(prim)
+                requestSceneRender(v)
                 clearLayerError(a.id)
               })
               .catch((e) => {
@@ -546,6 +604,7 @@ export function GlobeViewer() {
                 if (!keepAlive() || !tileset) return
                 v.scene.primitives.add(tileset)
                 rec.prims.push(tileset)
+                requestSceneRender(v)
                 clearLayerError(a.id)
               })
               .catch((e) => {
@@ -571,6 +630,7 @@ export function GlobeViewer() {
                 enablePointClustering(ds as Cesium.DataSource)
                 v.dataSources.add(ds)
                 rec.ds.push(ds)
+                requestSceneRender(v)
 
                 clearLayerError(a.id)
               })
@@ -597,6 +657,7 @@ export function GlobeViewer() {
                 enablePointClustering(ds as Cesium.DataSource)
                 v.dataSources.add(ds)
                 rec.ds.push(ds)
+                requestSceneRender(v)
 
                 clearLayerError(a.id)
               })
@@ -612,7 +673,10 @@ export function GlobeViewer() {
                 if (cancelled || v.isDestroyed()) return undefined
                 const ext = svc.extent ? reprojectExtent(svc.extent) : undefined
                 if (ext && !envContainsForFlight(env0, ext)) {
-                  try { v.camera.flyTo({ destination: Cesium.Rectangle.fromDegrees(ext.west, ext.south, ext.east, ext.north) }) } catch { /* 飞行失败忽略 */ }
+                  try {
+                    v.camera.flyTo({ destination: Cesium.Rectangle.fromDegrees(ext.west, ext.south, ext.east, ext.north) })
+                    requestSceneRender(v)
+                  } catch { /* 飞行失败忽略 */ }
                 }
                 const layerBases = svc.layers
                 if (layerBases.length <= 1) {
@@ -626,11 +690,14 @@ export function GlobeViewer() {
                         const base2 = await resolveFeatureQueryBase(op.url as string)
                         const ctl = createViewportController(v.scene, v.scene.primitives, { serviceUrl: base2, maxFeatures: SAFETY.MAX_FEATURES })
                         rec.viewportController = ctl
-                        const handler = debounce(() => void ctl.update(viewEnvelopeFromCamera(v.scene.camera as never) ?? VIEWPORT_FALLBACK), 250)
+                        const updateViewport = () =>
+                          ctl.update(viewEnvelopeFromCamera(v.scene.camera as never) ?? VIEWPORT_FALLBACK)
+                            .finally(() => requestSceneRender(v))
+                        const handler = debounce(() => void updateViewport(), 250)
                         rec.cameraMoveHandler = handler
                         const moveEnd = (v.camera.moveEnd as unknown as { addEventListener?: (h: () => void) => void } | undefined)
                         moveEnd?.addEventListener?.(handler)
-                        void ctl.update(env0)
+                        void updateViewport()
                         clearLayerError(a.id)
                         return null
                       } catch (e) {
@@ -676,6 +743,7 @@ export function GlobeViewer() {
                     enablePointClustering(ds as Cesium.DataSource)
                     v.dataSources.add(ds as Cesium.DataSource)
                     rec.ds.push(ds as Cesium.DataSource)
+                    requestSceneRender(v)
                   }
                   clearLayerError(a.id)
                   return null
@@ -688,6 +756,7 @@ export function GlobeViewer() {
                 enablePointClustering(ds as Cesium.DataSource)
                 v.dataSources.add(ds as Cesium.DataSource)
                 rec.ds.push(ds as Cesium.DataSource)
+                requestSceneRender(v)
                 clearLayerError(a.id)
               })
               .catch((e) => {
@@ -710,6 +779,7 @@ export function GlobeViewer() {
                 enablePointClustering(ds as Cesium.DataSource)
                 v.dataSources.add(ds)
                 rec.ds.push(ds)
+                requestSceneRender(v)
 
                 clearLayerError(a.id)
               })
@@ -740,6 +810,7 @@ export function GlobeViewer() {
                 enablePointClustering(ds as Cesium.DataSource)
                 v.dataSources.add(ds)
                 rec.ds.push(ds)
+                requestSceneRender(v)
                 clearLayerError(a.id)
               })
               .catch((e) => {
@@ -750,6 +821,7 @@ export function GlobeViewer() {
                     if (!keepAlive() || !ds) return
                     v.dataSources.add(ds)
                     rec.ds.push(ds)
+                    requestSceneRender(v)
                     clearLayerError(a.id)
                   })
                   .catch((e2) => {

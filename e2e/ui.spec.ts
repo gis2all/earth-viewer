@@ -22,6 +22,9 @@ async function mockArcGIS(page: Page, searchDelay = 0) {
       },
     })
   })
+  await page.route('**/sharing/rest/content/items/*?f=json', (route) =>
+    route.fulfill({ json: { contentStatus: 'public_authoritative', groupDesignations: ['livingatlas'] } })
+  )
   await page.route('**/sharing/rest/content/items/*/data*', (route) =>
     route.fulfill({
       json: {
@@ -88,7 +91,7 @@ test('效果开关与滑杆', async ({ page }) => {
 })
 
 test('添加图层与删除', async ({ page }) => {
-  await page.locator('.gallery-card').first().click()
+  await page.locator('.gallery-card .gc-add').first().click()
   await page.waitForSelector('.added-card', { timeout: 30000 })
   await expect(page.locator('.added-card')).toHaveCount(1)
   await page.locator('.added-card .remove-btn').click()

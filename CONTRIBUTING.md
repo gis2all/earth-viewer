@@ -31,7 +31,7 @@
 
 ```text
 npm install
-npm run dev        # http://localhost:5173
+npm run dev        # http://127.0.0.1:5173
 ```
 
 更多运行/部署方式见 [`CLAUDE.md`](CLAUDE.md) §3、§10。

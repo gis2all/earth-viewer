@@ -12,7 +12,11 @@ type Item =
       suffix: string
       precision?: number
       dependsOn?: keyof Effects
-    }
+  }
+
+function FoldIcon({ collapsed }: { collapsed: boolean }) {
+  return <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="square" strokeLinejoin="miter" aria-hidden="true"><path d={collapsed ? 'm6 4 4 4-4 4' : 'm10 4-4 4 4 4'} /></svg>
+}
 
 const GROUPS: { name: string; items: Item[] }[] = [
   {
@@ -53,7 +57,7 @@ export function EffectsPanel() {
       <div className="side-head">
         <span className="side-title">效果</span>
         <button className="fold" onClick={toggleCollapsed} title={collapsed ? '展开效果面板' : '收起效果面板'}>
-          {collapsed ? '›' : '‹'}
+          <FoldIcon collapsed={collapsed} />
         </button>
       </div>
       <div className="panel-inner">
