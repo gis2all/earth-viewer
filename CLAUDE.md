@@ -1,13 +1,13 @@
 # CLAUDE.md — Earth Viewer · Agent 上手手册
 
-> 本文件是 **Agent（Claude Code / Codex 等）接手本项目的唯一权威参考**：读完「30 秒速览」就能正确操作，需要细节时按章节/任务索引查。
+> 本文件是 **Agent（Claude Code / Codex 等）接手本项目的工程与运行参考**：读完「30 秒速览」就能正确操作，需要细节时按章节/任务索引查。视觉实现约束以根目录 `DESIGN.md` 为准。
 > 改代码前请先通读本文件 + 相关源码；**带 ★ 的是"绝不可回退"的规则**，改动前务必三思。
 
 ---
 
 ## 0. 30 秒速览
 
-- **项目**：画廊式 3D 地球图层应用。Cesium 渲染地球 + 接入 ArcGIS Online 公开图层（搜索 → 添加（点卡片时校验）→ 叠加），线上 https://earth.gis2all.top
+- **项目**：画廊式 3D 地球图层应用。Cesium 渲染地球 + 接入 ArcGIS Online 公开图层（搜索 → 点击添加按钮校验 → 叠加），线上 https://earth.gis2all.top
 - **代码**：`D:\Code\earth-viz-hub`；git remote = `github.com/gis2all/earth-viewer`
 - **技术栈**：React 18 · CesiumJS 1.144（★精确锁定）· Vite 5 · TypeScript 5.6 · zustand；Node ≥ 22；Vitest + Playwright；Docker；Cloudflare Pages
 
@@ -33,7 +33,11 @@
 
 ## 1. 项目定位
 
-**Earth Viewer**：画廊式 3D 地球图层应用（曾用名 EarthViz Hub），目标是可以上线、不是 demo。左侧「图层」面板搜索 ArcGIS Online Web Map/Web Scene，点卡片时校验并按类型叠加到 Cesium 球上；右侧「效果」面板调节环境/地形/视图；顶栏提供回正/复位/主题切换、GitHub 导航和应用内沉浸模式。深浅色双主题，全直角 UI。
+**Earth Viewer**：画廊式 3D 地球图层应用，目标是可以上线、不是 demo。左侧「图层」面板搜索 ArcGIS Online Web Map/Web Scene，点击卡片底部的添加按钮时校验并按类型叠加到 Cesium 球上；右侧「效果」面板调节环境/地形/视图；顶栏提供回正/复位/主题切换、GitHub 导航和应用内沉浸模式。深浅色双主题，全直角 UI。
+
+### 1.1 UI 规范
+
+根目录 [`DESIGN.md`](DESIGN.md) 是现有界面的视觉与交互实现约束，覆盖双主题令牌、布局尺寸、图层卡片、面板控件、滚动条、状态行为、无障碍要求和禁止回退项。任何 UI 改动前必须先阅读该文件；当代码与文档不一致时，应先确认哪一方代表最新已确认设计，再同步另一方。
 
 ---
 
@@ -143,7 +147,7 @@ earth-viz-hub/
     styles/theme.css    # 全部样式（直角、深浅主题变量）
 ```
 
-**数据流**：`LayerPanel` 按支持类型白名单并行搜索（`sortField=numViews`）→ 轻预筛直接上屏 → 点卡片 `addLayer` → `GlobeViewer` 监听 `added` → `renderableLayersFromWebmap()` 构建 provider/DataSource 叠加。
+**数据流**：`LayerPanel` 按支持类型白名单并行搜索（`sortField=numViews`）→ 轻预筛直接上屏 → 点击添加按钮调用 `addLayer` → `GlobeViewer` 监听 `added` → `renderableLayersFromWebmap()` 构建 provider/DataSource 叠加。
 
 ---
 
@@ -203,7 +207,7 @@ earth-viz-hub/
 - ★只保留权威内容：查询串（buildSearchQuery）强制追加 `contentstatus` 权威过滤（org/public_authoritative，排除 deprecated）；详见 §6.7。
 - ★服务可用性预检：服务类/容器后台预检，`Token Required`/`Subscription canceled`/`403` 等不可访问卡片自动隐藏；详见 §6.7。
 - 按支持 item type 白名单并行搜索（13 类），各取一页后按 numViews 合并去重；sortField=numViews&sortOrder=desc。
-- 轻预筛：搜索阶段不逐项拉 data、不做能力预评估；点卡片时才解析/渲染，不支持才 toast。
+- 轻预筛：搜索阶段不逐项拉 data、不做能力预评估；点击添加按钮时才解析/渲染，不支持才 toast。
 - 每轮只拉未到底类型一页，滚动到底再翻下一页。
 - 服务 item 经 resolveServiceItem 包装为单图层；GeoJson/CSV 用 /items/<id>/data。
 - 防抖 300ms + AbortController + requestId 序列号。
@@ -293,8 +297,8 @@ earth-viz-hub/
 
 ## 7. 测试与质量门禁
 
-- **单测**：Vitest（jsdom），323 个用例（含 store/cameraApi/AppShell/assess/webmap/LayerPanel/EffectsPanel/GlobeViewer/geo/itemTypes/serviceItem/VectorTile/OGC/CSV/vector/loadSafety/**maplibreImagery**；AppShell 覆盖 GitHub 导航和沉浸模式）。`npm run test:coverage`
-- **覆盖率门槛**（vitest.config.ts）：★statements ≥90 / lines ≥90 / functions ≥85 / branches ≥70（当前 statements 90.24% / lines 95.52% / functions 93.22% / branches 81.12%）；include **全 src**（含 GlobeViewer），exclude 入口壳与测试文件——真实口径，不玩数字。
+- **单测**：Vitest（jsdom），326 个用例（含 store/cameraApi/AppShell/assess/webmap/LayerPanel/EffectsPanel/GlobeViewer/geo/itemTypes/serviceItem/VectorTile/OGC/CSV/vector/loadSafety/**maplibreImagery**；AppShell 覆盖 GitHub 导航和沉浸模式）。`npm run test:coverage`
+- **覆盖率门槛**（vitest.config.ts）：★statements ≥90 / lines ≥90 / functions ≥85 / branches ≥70（最近一次实测 statements 90.25% / lines 95.53% / functions 93.27% / branches 81.20%）；include **全 src**（含 GlobeViewer），exclude 入口壳与测试文件——真实口径，不玩数字。
 - **E2E**：Playwright 28 项（冒烟 mock / WebScene UI / UI 交互 mock / 真实 ArcGIS 集成 request）。
 - ★**E2E 轻量模式**：`e2e/app.spec.ts`、`e2e/ui.spec.ts` 注入 `window.__E2E__`，GlobeViewer 跳过 Cesium 创建（CI 无头软件渲染极慢会拖垮交互测试）；「球真实渲染+图层上球」由线上/容器验证覆盖（headless 测不准渲染）。
 - `src/globe/GlobeViewer.test.tsx` 覆盖按需渲染配置，以及效果和异步 MapServer 图层变更后调用 `scene.requestRender()`；改动任何异步上球路径时必须保留对应刷新断言。
