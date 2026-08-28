@@ -80,6 +80,15 @@ function AddIcon({ added }: { added: boolean }) {
   return <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg>
 }
 
+function ThumbSpinner() {
+  return (
+    <svg className="thumb-spinner" viewBox="0 0 28 28" aria-hidden="true">
+      <circle className="track" cx="14" cy="14" r="11.5" />
+      <path className="arc" d="M14 2.5 A 11.5 11.5 0 0 1 24.5 10.5" />
+    </svg>
+  )
+}
+
 function FoldIcon({ collapsed }: { collapsed: boolean }) {
   return <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="square" strokeLinejoin="miter" aria-hidden="true"><path d={collapsed ? 'm6 4 4 4-4 4' : 'm10 4-4 4 4 4'} /></svg>
 }
@@ -256,6 +265,27 @@ async function fetchSearchPage(
 function thumbUrl(id: string, t?: string): string | undefined {
   if (!t) return undefined
   return 'https://www.arcgis.com/sharing/rest/content/items/' + id + '/info/' + t
+}
+
+// 无缩略图 / 缩略图加载失败时的默认封面
+const DEFAULT_COVER = import.meta.env.BASE_URL + 'covers/default.png'
+
+// 缩略图请求可能长期 pending（既不到 load 也不到 error），超时后强制走回退链路
+const THUMB_TIMEOUT_MS = 60000
+export function thumbTimeout(img: HTMLImageElement, ms = THUMB_TIMEOUT_MS) {
+  window.setTimeout(() => {
+    if (img.complete) return // 已成功（naturalWidth>0，onLoad 已隐藏动画）或已失败（onError 已处理）
+    if (!img.dataset.fb) {
+      img.dataset.fb = '1'
+      img.src = DEFAULT_COVER
+      thumbTimeout(img, ms)
+    } else {
+      img.style.display = 'none'
+      const spinner = img.previousElementSibling
+      if (spinner && spinner.classList.contains('thumb-spinner')) spinner.setAttribute('hidden', '')
+      img.nextElementSibling?.removeAttribute('hidden')
+    }
+  }, ms)
 }
 
 export function LayerPanel() {
@@ -541,14 +571,33 @@ export function LayerPanel() {
           </div>
           {added.length > 0 && (
             <div className="added-list">
-              {added.map((l) => (
-                <div key={l.id} className="added-card">
-                  {l.thumb ? (
-                    <img className="ac-thumb" src={l.thumb} alt={l.title} onError={(e) => (e.currentTarget.style.display = 'none')} />
-                  ) : (
-                    <div className="ac-ph" />
-                  )}
-                  <span className="added-title">{l.title}</span>
+                  {added.map((l) => (
+                    <div key={l.id} className="added-card">
+                      <div className="ac-thumb-wrap">
+                        <ThumbSpinner />
+                        <img
+                          className="ac-thumb"
+                          src={l.thumb ?? DEFAULT_COVER}
+                          alt={l.title}
+                          ref={(el) => { if (el && !el.dataset.timerSet) { el.dataset.timerSet = '1'; thumbTimeout(el) } }}
+                          onLoad={(e) => {
+                            const sp = e.currentTarget.previousElementSibling
+                            if (sp && sp.classList.contains('thumb-spinner')) sp.setAttribute('hidden', '')
+                          }}
+                          onError={(e) => {
+                            const img = e.currentTarget
+                            if (!img.dataset.fb) {
+                              img.dataset.fb = '1'
+                              img.src = DEFAULT_COVER
+                            } else {
+                              img.style.display = 'none'
+                              const sp = img.previousElementSibling
+                              if (sp && sp.classList.contains('thumb-spinner')) sp.setAttribute('hidden', '')
+                            }
+                          }}
+                        />
+                      </div>
+                      <span className="added-title">{l.title}</span>
                   {layerErrors[l.id] && (
                     <span className="added-err" title={layerErrors[l.id]}>加载失败</span>
                   )}
@@ -588,19 +637,31 @@ export function LayerPanel() {
               return (
                 <article key={it.id} className="gallery-card" aria-label={it.title}>
                   <div className="gc-thumb-wrap">
-                    {it.thumbnail ? (
-                      <img
-                        className="gc-thumb"
-                        src={thumbUrl(it.id, it.thumbnail)}
-                        alt={it.title}
-                        loading="lazy"
-                        onError={(e) => {
-                          e.currentTarget.style.display = 'none'
-                          e.currentTarget.nextElementSibling?.removeAttribute('hidden')
-                        }}
-                      />
-                    ) : null}
-                    <div className="gc-ph" hidden={Boolean(it.thumbnail)} aria-hidden="true"><TypeIcon type={it.type} /></div>
+                    <ThumbSpinner />
+                    <img
+                      className="gc-thumb"
+                      src={it.thumbnail ? thumbUrl(it.id, it.thumbnail) : DEFAULT_COVER}
+                      alt={it.title}
+                      loading="lazy"
+                      ref={(el) => { if (el && !el.dataset.timerSet) { el.dataset.timerSet = '1'; thumbTimeout(el) } }}
+                      onLoad={(e) => {
+                        const sp = e.currentTarget.previousElementSibling
+                        if (sp && sp.classList.contains('thumb-spinner')) sp.setAttribute('hidden', '')
+                      }}
+                      onError={(e) => {
+                        const img = e.currentTarget
+                        if (!img.dataset.fb) {
+                          img.dataset.fb = '1'
+                          img.src = DEFAULT_COVER
+                        } else {
+                          img.style.display = 'none'
+                          const sp = img.previousElementSibling
+                          if (sp && sp.classList.contains('thumb-spinner')) sp.setAttribute('hidden', '')
+                          img.nextElementSibling?.removeAttribute('hidden')
+                        }
+                      }}
+                    />
+                    <div className="gc-ph" hidden aria-hidden="true"><TypeIcon type={it.type} /></div>
                   </div>
                   <div className="gc-title" title={it.title}><span>{it.title}</span></div>
                   <div className="gc-foot">

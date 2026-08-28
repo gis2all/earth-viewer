@@ -9,13 +9,13 @@ export function withFetchTimeout(signal?: AbortSignal): AbortSignal {
   return signal ? AbortSignal.any([signal, AbortSignal.timeout(FETCH_TIMEOUT)]) : AbortSignal.timeout(FETCH_TIMEOUT)
 }
 
-export const WORLD_IMAGERY_TILES =
-  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
-export const WORLD_LABELS_TILES =
-  'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}'
-// 极区兜底底图：World Imagery (WGS84, EPSG:4326) 瓦片，覆盖到 ±90°（3857 版只到 ±85.05°）
+// 底图影像：World Imagery (WGS84, EPSG:4326) 瓦片，覆盖到 ±90°（与官方 Imagery Hybrid (WGS84) 一致）
 export const WORLD_IMAGERY_WGS84_TILES =
   'https://wi.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+// 矢量标注：官方 Hybrid Reference Layer 样式（Imagery Hybrid 的标注层），瓦片走 World_Basemap_v2（Web Mercator）
+// MapLibre 当前不支持 GCS 瓦片的 equirectangular 投影，故用 Mercator 版；极区 ±85° 以上无标注，影像仍由 WGS84 底图覆盖
+export const WORLD_VECTOR_LABELS_STYLE_URL =
+  'https://www.arcgis.com/sharing/rest/content/items/30d6b8271e1849cd9c3042060001f425/resources/styles/root.json'
 
 export interface WebLayer {
   url?: string

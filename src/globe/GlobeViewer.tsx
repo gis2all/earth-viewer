@@ -28,9 +28,8 @@ import {
   fetchFeatureStyle,
   fetchFeatureRenderer,
   withFetchTimeout,
-  WORLD_IMAGERY_TILES,
-  WORLD_LABELS_TILES,
   WORLD_IMAGERY_WGS84_TILES,
+  WORLD_VECTOR_LABELS_STYLE_URL,
 } from './webmap'
 import { rendererToStyleFn, applyFeatureStyler, reprojectCoordinates, type FeatureStyleSpec } from './vector'
 import { loadI3S, load3DTiles } from './scene'
@@ -69,10 +68,10 @@ const WHEEL_ZOOM_IN_FACTOR = 0.8 // 滚轮下滑缩小倍率
 const AUTO_ROTATE_IDLE_MS = 3000 // 无交互多久后开始自动环绕
 const AUTO_ROTATE_STEP_RAD = 0.0012 // 自动环绕每帧经度增量（东西向）
 const ZOOM_EASE = 0.25 // 滚轮缩放每帧缓动系数（越大越快）
-const SSE_ZOOMING = 4 // 缩放中瓦片清晰度（粗，保流畅）
-const SSE_SETTLED = 2 // 稳定后瓦片清晰度（精细）
-// 广域视图用更粗的瓦片（大 SSE），拉近后回到精细
-const sseForHeight = (h: number): number => (h > 1_000_000 ? 16 : h > 200_000 ? 8 : SSE_SETTLED)
+const SSE_ZOOMING = 2 // 缩放中瓦片清晰度（沿用 Cesium 默认精度，避免低清瓦片被放大）
+const SSE_SETTLED = 1 // 稳定后瓦片清晰度（高分屏下与 Map Viewer 的清晰观感对齐）
+// 高分屏按物理像素渲染后，SSE=2 在中近距离仍会少选 1~2 级瓦片；稳定后统一用 1
+const sseForHeight = (): number => SSE_SETTLED
 
 // 检测 WebGL 是否可用；在 jsdom 测试环境下返回 true，避免误判为不可用
 function webglAvailable(): boolean {
@@ -225,6 +224,8 @@ export function GlobeViewer() {
       // 静止场景不再持续提交 GPU 帧；图层/效果/交互变化时显式 requestRender。
       requestRenderMode: true,
       maximumRenderTimeChange: Infinity,
+      // 默认 true 会忽略 devicePixelRatio 按 1x 渲染，高分屏下整球被拉伸发虚；false 跟随系统 DPI
+      useBrowserRecommendedResolution: false,
       })
     } catch (e) {
       console.error('[globe] 初始化失败', e)
@@ -241,6 +242,18 @@ export function GlobeViewer() {
     }
     v.scene.canvas.addEventListener('webglcontextlost', onCtxLost)
     v.scene.canvas.addEventListener('webglcontextrestored', onCtxRestored)
+    // Defer the final redraw out of the current frame so requestRenderMode
+    // does not swallow the render after the last tile arrives.
+    const onTileLoadProgress = (remaining: number) => {
+      if (remaining > 0) {
+        requestSceneRender(v)
+        return
+      }
+      window.setTimeout(() => {
+        if (!v.isDestroyed()) requestSceneRender(v)
+      }, 0)
+    }
+    v.scene.globe.tileLoadProgressEvent.addEventListener(onTileLoadProgress)
     // 首次进入：加载完成后自动居中到用户大概位置
     void flyToHome(v)
     // 关闭 Bloom 泛光（移除图层发光高亮）
@@ -344,14 +357,15 @@ export function GlobeViewer() {
           setScreenSpaceError(v.scene.globe, SSE_ZOOMING)
         } else {
           settledFrames++
-          if (settledFrames > 8) {
-            setScreenSpaceError(v.scene.globe, SSE_SETTLED)
+          // 缩放刚停就尽快回到该高度的常规精度，避免"停止后仍糊很久"
+          if (settledFrames > 2) {
+            setScreenSpaceError(v.scene.globe, sseForHeight())
           }
         }
         needsNextFrame = true
       } else {
         targetH = h
-        setScreenSpaceError(v.scene.globe, sseForHeight(h))
+        setScreenSpaceError(v.scene.globe, sseForHeight())
       }
       if (needsNextFrame) requestSceneRender(v)
     }
@@ -400,6 +414,7 @@ export function GlobeViewer() {
       v.scene.canvas.removeEventListener('wheel', onWheel)
       v.scene.canvas.removeEventListener('webglcontextlost', onCtxLost)
       v.scene.canvas.removeEventListener('webglcontextrestored', onCtxRestored)
+      v.scene.globe.tileLoadProgressEvent.removeEventListener(onTileLoadProgress)
       v.scene.postUpdate.removeEventListener(onCameraFrame)
       if (autoRotateWakeTimer !== undefined) clearTimeout(autoRotateWakeTimer)
       autoRotateWakeRef.current = () => {}
@@ -448,7 +463,7 @@ export function GlobeViewer() {
 
     // 底图常驻：仅首次添加
     if (layers.length === 0) {
-      // 极区兜底：底层加 WGS84(4326) World Imagery，覆盖 ±90°（3857 版只到 ±85.05°）
+      // 底图：WGS84(4326) World Imagery，覆盖 ±90°，与官方 Imagery Hybrid (WGS84) 一致
       layers.add(
         new Cesium.ImageryLayer(
           new Cesium.UrlTemplateImageryProvider({
@@ -459,8 +474,35 @@ export function GlobeViewer() {
         ),
         0
       )
-      layers.add(new Cesium.ImageryLayer(new Cesium.UrlTemplateImageryProvider({ url: WORLD_IMAGERY_TILES })))
-      layers.add(new Cesium.ImageryLayer(new Cesium.UrlTemplateImageryProvider({ url: WORLD_LABELS_TILES })))
+      // 矢量标注：官方 Hybrid Reference Layer 样式，Web Mercator 瓦片，全英文地名
+      const labelProvider = new ArcGisVectorTileImageryProvider({
+        styleUrl: WORLD_VECTOR_LABELS_STYLE_URL,
+        language: 'en',
+        labelsOnly: true,
+        labelScope: 'country-city',
+        // 参考 Map Viewer 实际效果：白字 + 黑色描边，字体用样式默认（Arial Bold）
+        styleOverrides: {
+          textColor: '#ffffff',
+          haloColor: '#000000',
+          haloWidth: 1.5,
+          // 低空观察时深层标注更大：z6 以下 1.15，逐渐到 z16 以上 1.6
+          textScale: { lowZoom: 6, highZoom: 16, lowScale: 1.15, highScale: 1.6 },
+        },
+        title: 'World Labels',
+      })
+      labelProvider.readyPromise
+        .then(() => {
+          if (v.isDestroyed()) {
+            labelProvider.destroy()
+            return
+          }
+          layers.add(new Cesium.ImageryLayer(labelProvider as unknown as Cesium.ImageryProvider))
+          requestSceneRender(v)
+        })
+        .catch((e: unknown) => {
+          console.error('[globe] 矢量标注样式加载失败', e)
+          labelProvider.destroy()
+        })
       requestSceneRender(v)
     }
 
