@@ -13,6 +13,7 @@ import {
   type LayerState,
 } from '../domain/stateMachine'
 import type { LayerRenderJob, ViewportHandleLike } from '../domain/render'
+import { LayerScheduler } from '../service/scheduler'
 
 /** 控制器视角的图层条目（与 store.AddedLayer 结构兼容）。 */
 export interface LayerItemLike {
@@ -38,6 +39,8 @@ export interface LayerControllerDeps {
   setNote(msg: string): void
   /** 区划/参考层可见性（来自效果开关）。 */
   getReferenceVisible(): boolean
+  /** 视口优先级：数值越大越先渲染（排队中的 webmap 实时取值；缺省 0 = 添加顺序）。 */
+  priorityFor?(item: LayerItemLike): number
   /** 释放 runtime 上的 Cesium 资源（facade.removeRuntime）。 */
   removeRuntime(runtime: LayerRuntime): void
 }
@@ -55,7 +58,8 @@ export class LayerController {
   private entries = new Map<string, Entry>()
   private errors = new Map<string, string>()
   private listeners = new Set<(e: LayerControllerEvent) => void>()
-  private queue: Promise<unknown> = Promise.resolve()
+  private scheduler = new LayerScheduler(1)
+  private pendingJobs = new Map<string, Promise<unknown>>()
   private disposed = false
 
   constructor(private deps: LayerControllerDeps) {}
@@ -91,6 +95,8 @@ export class LayerController {
 
   dispose(): void {
     this.disposed = true
+    this.scheduler.dispose()
+    this.pendingJobs.clear()
     for (const id of [...this.entries.keys()]) this.remove(id)
     this.listeners.clear()
   }
@@ -110,11 +116,16 @@ export class LayerController {
     }
     this.entries.set(item.id, entry)
     this.emit({ type: 'stateChange', id: item.id, state: 'pending' })
-    this.queue = this.queue
-      .then(() => this.run(entry))
+    const promise = this.scheduler
+      .submit({
+        id: item.id,
+        priority: () => this.deps.priorityFor?.(item) ?? 0,
+        run: () => this.run(entry),
+      })
       .catch((e: unknown) => {
         console.error('[layer] webmap 渲染失败', item.id, e)
       })
+    this.pendingJobs.set(item.id, promise)
   }
 
   private async run(entry: Entry): Promise<void> {
@@ -166,6 +177,8 @@ export class LayerController {
     const entry = this.entries.get(id)
     if (!entry) return
     this.entries.delete(id)
+    this.pendingJobs.delete(id)
+    this.scheduler.cancel(id)
     entry.abort.abort()
     if (!isTerminal(entry.state)) this.transition(entry, 'cancelled')
     entry.viewport?.unsubscribeMoveEnd()

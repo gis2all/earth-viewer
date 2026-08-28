@@ -190,6 +190,26 @@ describe('LayerController：差分同步与竞态', () => {
 })
 
 describe('LayerController：串行渲染队列', () => {
+  it('priorityFor 提供视口优先级：后添加的高优先级条目先渲染', async () => {
+    const { ctrl, render } = setup({ priorityFor: (item) => (item.id === 'hot' ? 10 : 0) })
+    const d1 = deferred()
+    const d2 = deferred()
+    render.mockReturnValueOnce(d1.promise).mockReturnValueOnce(d2.promise)
+
+    ctrl.setItems([makeItem('a')])
+    await flush()
+    expect(render).toHaveBeenCalledTimes(1)
+
+    ctrl.setItems([makeItem('a'), makeItem('hot')])
+    d1.resolve()
+    await flush()
+    expect(render).toHaveBeenCalledTimes(2)
+    expect((render.mock.calls[1][0] as LayerRenderJob).id).toBe('hot')
+
+    d2.resolve()
+    await flush()
+  })
+
   it('同一时刻只渲染一个，按添加顺序执行', async () => {
     const { ctrl, render } = setup()
     const d1 = deferred()
