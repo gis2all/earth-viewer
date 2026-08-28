@@ -19,8 +19,6 @@ export interface BudgetPolicy {
   kmlMaxBytes: number
   /** 矢量瓦片最大请求级别。 */
   vectorTileMaxZoom: number
-  /** Scene / 3D Tiles LOD 上限。 */
-  sceneMaxLod: number
   /** WMS / imagery provider 细节级别上限。 */
   imageryMaxLevel: number
 }
@@ -33,7 +31,6 @@ export const DEFAULT_BUDGET_POLICY: BudgetPolicy = {
   maxFileBytes: DEFAULT_APP_CONFIG.maxFileBytes,
   kmlMaxBytes: DEFAULT_APP_CONFIG.kmlMaxBytes,
   vectorTileMaxZoom: DEFAULT_APP_CONFIG.vectorTileMaxZoom,
-  sceneMaxLod: DEFAULT_APP_CONFIG.sceneMaxLod,
   imageryMaxLevel: DEFAULT_APP_CONFIG.imageryMaxLevel,
 }
 

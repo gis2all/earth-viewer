@@ -12,7 +12,6 @@ describe('BudgetPolicy', () => {
       maxFileBytes: 8_000_000,
       kmlMaxBytes: 2_000_000,
       vectorTileMaxZoom: 16,
-      sceneMaxLod: 15,
       imageryMaxLevel: 16,
     })
   })

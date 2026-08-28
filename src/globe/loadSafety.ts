@@ -19,8 +19,6 @@ export const SAFETY = {
   KML_MAX_BYTES: DEFAULT_APP_CONFIG.kmlMaxBytes,
   // Vector tile (MapLibre 栅格化): 最大请求级别（MapLibre 逐瓦片 GPU 渲染，预算放宽到 16）
   VECTOR_TILE_MAX_ZOOM: DEFAULT_APP_CONFIG.vectorTileMaxZoom,
-  // Scene / 3D Tiles: cap LOD (kept conservative)
-  SCENE_MAX_LOD: DEFAULT_APP_CONFIG.sceneMaxLod,
   // WMS / imagery providers: cap detail level to avoid tile storms
   IMAGERY_MAX_LEVEL: DEFAULT_APP_CONFIG.imageryMaxLevel,
 } as const

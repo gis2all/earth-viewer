@@ -13,7 +13,6 @@ describe('SAFETY 与 domain BudgetPolicy 对齐（W1.4 防漂移）', () => {
       maxFileBytes: SAFETY.MAX_FILE_BYTES,
       kmlMaxBytes: SAFETY.KML_MAX_BYTES,
       vectorTileMaxZoom: SAFETY.VECTOR_TILE_MAX_ZOOM,
-      sceneMaxLod: SAFETY.SCENE_MAX_LOD,
       imageryMaxLevel: SAFETY.IMAGERY_MAX_LEVEL,
     }).toEqual(DEFAULT_BUDGET_POLICY)
   })

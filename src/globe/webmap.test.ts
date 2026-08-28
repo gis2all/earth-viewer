@@ -1,9 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
-  isFeatureLayer,
-  isGeoJsonLayer,
-  isFeatureCollectionLayer,
-  isKmlLayer,
   fetchFeatureStyle,
   providerForWebLayer,
 } from './webmap'
@@ -17,18 +13,6 @@ vi.mock('cesium', () => ({
   GeographicTilingScheme: vi.fn(),
   WebMercatorTilingScheme: vi.fn(),
 }))
-
-describe('图层类型判断（M1 起委托 domain/registry，这里只做别名冒烟）', () => {
-  it('isFeatureLayer 别名仍可用', () => {
-    expect(isFeatureLayer({ layerType: 'ArcGISFeatureLayer', url: 'x' })).toBe(true)
-    expect(isFeatureLayer({ layerType: 'GeoJSONLayer', url: 'x' })).toBe(false)
-  })
-  it('其余别名', () => {
-    expect(isGeoJsonLayer({ layerType: 'GeoJSONLayer' })).toBe(true)
-    expect(isKmlLayer({ layerType: 'KMLLayer' })).toBe(true)
-    expect(isFeatureCollectionLayer({ type: 'Feature Collection' })).toBe(true)
-  })
-})
 
 describe('providerForWebLayer', () => {
   afterEach(() => vi.unstubAllGlobals())

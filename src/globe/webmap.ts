@@ -7,17 +7,6 @@ import {
   fetchWebmap,
   type MapServiceInfo,
 } from '../service/repository'
-import {
-  isCsvInput,
-  isFeatureCollectionInput,
-  isFeatureInput,
-  isGeoJsonInput,
-  isKmlInput,
-  isSceneInput,
-  is3dTilesInput,
-  isVectorTileInput,
-  isWfsInput,
-} from '../domain/registry'
 
 // 网络请求超时（毫秒）：慢速服务不阻塞交互
 const FETCH_TIMEOUT = 15000
@@ -185,28 +174,6 @@ export interface FeatureStyle {
   strokeWidth?: number
   fill?: Cesium.Color
 }
-
-// M1 W1.2：判定逻辑收敛到 domain/registry（纯函数），这里保留导出别名保持兼容；
-// M3 后随 GlobeViewer 瘦身清理。
-export const isFeatureLayer = (layer: WebLayer): boolean => isFeatureInput(layer)
-
-export const isGeoJsonLayer = (layer: WebLayer): boolean => isGeoJsonInput(layer)
-
-export const isFeatureCollectionLayer = (layer: WebLayer): boolean => isFeatureCollectionInput(layer)
-
-export const isKmlLayer = (layer: WebLayer): boolean => isKmlInput(layer)
-
-export const isVectorTileLayer = (layer: WebLayer): boolean => isVectorTileInput(layer)
-
-export const isSceneLayer = (layer: WebLayer): boolean => isSceneInput(layer)
-
-export const is3dTilesLayer = (layer: WebLayer): boolean => is3dTilesInput(layer)
-
-export const isWfsLayer = (layer: WebLayer): boolean => isWfsInput(layer)
-
-export const isCsvLayer = (layer: WebLayer): boolean => isCsvInput(layer)
-
-
 
 /** 要素服务 → GeoJSON / renderer（实现见 service/repository.ts）。 */
 export { fetchFeatureGeoJSON, fetchFeatureRenderer }

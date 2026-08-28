@@ -125,7 +125,8 @@ export async function loadLayerData(
 export function kindOf(input: LayerInput): LayerKind | null {
   if (isWebMapContainer(input.type ?? input.layerType ?? '')) return input.type?.toLowerCase().includes('scene') ? 'webscene' : 'webmap'
   const matches = LAYER_REGISTRY.matchAll(input)
-  // M3 前真实 adapter 尚未注册：回退到纯分类函数，保证 W2.2 管线立即可用且行为不变。
+  // 真实 LayerAdapter 尚未注册（adapter 化是 W4.5 记录的后备工作项）：
+  // 注册表无匹配时回退到纯分类函数，保证 W2.2 管线行为不变。
   return matches[0]?.kind ?? layerKindOf(input)
 }
 

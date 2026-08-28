@@ -72,8 +72,6 @@ export interface AppConfig {
   kmlMaxBytes: number
   /** 矢量瓦片最大请求级别。 */
   vectorTileMaxZoom: number
-  /** Scene / 3D Tiles LOD 上限。 */
-  sceneMaxLod: number
   /** WMS / imagery provider 细节级别上限。 */
   imageryMaxLevel: number
 
@@ -104,7 +102,6 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   maxFileBytes: 8_000_000,
   kmlMaxBytes: 2_000_000,
   vectorTileMaxZoom: 16,
-  sceneMaxLod: 15,
   imageryMaxLevel: 16,
 
   viewportFallback: { west: -180, south: -90, east: 180, north: 90 },

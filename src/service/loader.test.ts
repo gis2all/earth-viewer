@@ -98,7 +98,6 @@ describe('loadLayerData 管线', () => {
       maxFileBytes: 8_000_000,
       kmlMaxBytes: 2_000_000,
       vectorTileMaxZoom: 16,
-      sceneMaxLod: 15,
       imageryMaxLevel: 16,
     }
     await expect(loadLayerData({ id: 'f2', layerType: 'ArcGISFeatureLayer', url: 'https://f/FeatureServer' }, abortSignal(), { policy })).rejects.toMatchObject({ code: 'budget' })
@@ -167,7 +166,6 @@ describe('applyLayerBudget', () => {
       maxFileBytes: 8_000_000,
       kmlMaxBytes: 2_000_000,
       vectorTileMaxZoom: 16,
-      sceneMaxLod: 15,
       imageryMaxLevel: 16,
     })
     expect(r?.capped).toBe(true)

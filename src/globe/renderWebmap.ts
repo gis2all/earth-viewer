@@ -17,26 +17,28 @@ import { resolveFeatureQueryBase, resolveFeatureService, type ViewEnvelope } fro
 import { runViewportProcess } from './viewport/worker'
 import { hasPrimitiveRendering } from './viewport/primitive'
 import {
-  isVectorTileLayer,
-  isFeatureCollectionLayer,
-  isSceneLayer,
-  is3dTilesLayer,
-  isWfsLayer,
-  isCsvLayer,
-  isFeatureLayer,
-  isGeoJsonLayer,
-  isKmlLayer,
   fetchFeatureStyle,
   fetchFeatureRenderer,
   withFetchTimeout,
 } from './webmap'
+import {
+  isVectorTileInput,
+  isFeatureCollectionInput,
+  isSceneInput,
+  is3dTilesInput,
+  isWfsInput,
+  isCsvInput,
+  isFeatureInput,
+  isGeoJsonInput,
+  isKmlInput,
+} from '../domain/registry'
 import { rendererToStyleFn, applyFeatureStyler, reprojectCoordinates, type FeatureStyleSpec } from './vector'
 import { parseKmlToGeoJSON, kmlStyleToFeatureStyle, type KmlStyleSpec } from './kml'
 import { fetchOgcFeatureGeoJSON } from './ogc'
 import { fetchCsvGeoJSON } from './csv'
 import { viewpointCameraFromWebmap } from './viewpoint'
 
-export const VIEWPORT_FALLBACK: ViewEnvelope = DEFAULT_APP_CONFIG.viewportFallback
+const VIEWPORT_FALLBACK: ViewEnvelope = DEFAULT_APP_CONFIG.viewportFallback
 
 const EVENT_LAYER_MAX = DEFAULT_APP_CONFIG.eventLayerMax
 const REF_LAYER_MAX = DEFAULT_APP_CONFIG.refLayerMax
@@ -112,10 +114,10 @@ export async function renderWebmap(job: LayerRenderJob, f: CesiumFacade): Promis
     if (!keepAlive()) return
     if (addedImagery) continue
 
-    if (isVectorTileLayer(op)) {
+    if (isVectorTileInput(op)) {
       // 方案 A：MapLibre GL 按 ArcGIS 官方样式渲染矢量瓦片 → Cesium ImageryProvider
       f.addVectorTile(op, signal, job.runtime, keepAlive, job.onError, job.onClearError)
-    } else if (isFeatureCollectionLayer(op)) {
+    } else if (isFeatureCollectionInput(op)) {
       // 内嵌 FeatureCollection（layerDefinition.featureCollection）：走 Worker 预算管线，防大内嵌数据集卡死
       const fc = (op.layerDefinition as { featureCollection?: unknown } | undefined)?.featureCollection
       const realFc = (fc as { featureCollection?: unknown } | undefined)?.featureCollection ?? fc
@@ -139,7 +141,7 @@ export async function renderWebmap(job: LayerRenderJob, f: CesiumFacade): Promis
         job.onError('内嵌要素集加载失败：' + (op.title || op.url))
       }
     } else if (op.url) {
-      if (isSceneLayer(op)) {
+      if (isSceneInput(op)) {
         // ArcGIS SceneServer / I3S 3D 场景
         try {
           const prim = await f.addScene(op.url, job.runtime)
@@ -149,7 +151,7 @@ export async function renderWebmap(job: LayerRenderJob, f: CesiumFacade): Promis
           console.error('[layer] 3D 场景加载失败', op.url, e)
           job.onError('3D 场景加载失败：' + (op.title || op.url))
         }
-      } else if (is3dTilesLayer(op)) {
+      } else if (is3dTilesInput(op)) {
         // OGC 3D Tiles
         try {
           const tileset = await f.add3dTiles(op.url, job.runtime)
@@ -159,7 +161,7 @@ export async function renderWebmap(job: LayerRenderJob, f: CesiumFacade): Promis
           console.error('[layer] 3D Tiles 加载失败', op.url, e)
           job.onError('3D Tiles 加载失败：' + (op.title || op.url))
         }
-      } else if (isWfsLayer(op)) {
+      } else if (isWfsInput(op)) {
         // WFS / OGC API Features：通过协议适配器读取 GeoJSON
         try {
           const gj = await fetchOgcFeatureGeoJSON(op.url, op, signal)
@@ -183,7 +185,7 @@ export async function renderWebmap(job: LayerRenderJob, f: CesiumFacade): Promis
           console.error('[layer] WFS/OGC 要素图层加载失败', op.url, e)
           job.onError('WFS/OGC 要素图层加载失败：' + (op.title || op.url))
         }
-      } else if (isCsvLayer(op)) {
+      } else if (isCsvInput(op)) {
         // CSV：按位置字段转换为点 GeoJSON
         try {
           const gj = await fetchCsvGeoJSON(op.url, op, signal)
@@ -207,9 +209,9 @@ export async function renderWebmap(job: LayerRenderJob, f: CesiumFacade): Promis
           console.error('[layer] CSV 图层加载失败', op.url, e)
           job.onError('CSV 图层加载失败：' + (op.title || op.url))
         }
-      } else if (isFeatureLayer(op)) {
+      } else if (isFeatureInput(op)) {
         await renderFeatureLayer(job, f, op, signal, keepAlive)
-      } else if (isGeoJsonLayer(op)) {
+      } else if (isGeoJsonInput(op)) {
         // GeoJSON 文件：URL 体积守卫 + fetch + 预算管线
         try {
           await assertUrlWithinLimit(op.url, SAFETY.MAX_FILE_BYTES)
@@ -231,7 +233,7 @@ export async function renderWebmap(job: LayerRenderJob, f: CesiumFacade): Promis
           console.error('[layer] GeoJSON 图层加载失败', op.url, e)
           job.onError('GeoJSON 图层加载失败：' + (op.title || op.url))
         }
-      } else if (isKmlLayer(op)) {
+      } else if (isKmlInput(op)) {
         await renderKmlLayer(job, f, op, signal, keepAlive)
       }
     }
