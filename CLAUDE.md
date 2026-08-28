@@ -14,7 +14,7 @@
 | 命令 | 用途 |
 |---|---|
 | `npm run dev` | 本地开发 http://127.0.0.1:5173（内置 /sharing 代理） |
-| `npm run test:coverage` | 单测 + 覆盖率门禁（★statements/lines ≥ 90%，当前 statements 90.24% / lines 95.52%） |
+| `npm run test:coverage` | 单测 + 覆盖率门禁（★statements/lines ≥ 90%，数字随改动波动，以 CI 徽章为准） |
 | `npm run lint` / `npm run build` | ESLint / 生产构建（dist/） |
 | `npm run test:e2e` | Playwright E2E（含真实 ArcGIS 集成） |
 | `docker compose up --build` | Docker 运行（5173） |
@@ -130,7 +130,7 @@ earth-viz-hub/
     main.tsx / App.tsx
     app/
       AppShell.tsx      # 顶栏（品牌/回正/复位/主题/GitHub/沉浸模式）+ favicon 跟随主题 + 面板布局
-      LayerPanel.tsx    # 画廊：支持类型白名单并行搜索+轻预筛+排序+无限滚动，点卡片时校验
+      LayerPanel.tsx    # 画廊：支持类型白名单并行搜索+预检+元数据补齐+排序+无限滚动；添加由独立按钮触发
       EffectsPanel.tsx  # 效果面板（环境/地形/视图开关与滑杆，含区划网格）
     globe/
       GlobeViewer.tsx   # Cesium 核心：Viewer 创建、相机、效果、图层增量、相机优先/userHome 回退（★__E2E__ 模式）
@@ -162,7 +162,7 @@ earth-viz-hub/
 | `src/app/LayerPanel.tsx` | 画廊：搜索/预取/过滤/流式上屏/无限滚动/添加移除/错误 toast | 依赖 store、webmap、assess |
 | `src/app/AppShell.tsx` | 布局、品牌图标、favicon 主题切换、回正/复位、GitHub 导航、应用内沉浸模式 | 依赖 store、cameraApi、GlobeViewer/LayerPanel/EffectsPanel |
 | `src/state/store.ts` | 全局状态 + persist | theme/added/effects/layerErrors/userHome + actions |
-| `functions/sharing/[[path]].js` | Pages 生产代理（/sharing → www.arcgis.com） | 白名单 search/data；Origin 检查读 `ALLOWED_ORIGIN` |
+| `functions/sharing/[[path]].js` | Pages 生产代理（/sharing → www.arcgis.com） | 白名单 search / item 元数据 / item data；Origin 检查读 `ALLOWED_ORIGIN` |
 | `functions/api/geo.js` | Pages Function：/api/geo 用户国家质心经纬度 | `onRequest` 读 `CF-IPCountry` |
 | `src/globe/geo.ts` | 用户大概定位：请求 /api/geo、缓存、硬编码兜底 | `fetchUserHome`/`getUserHome`/`resetUserHomeCache` |
 | `src/globe/itemTypes.ts` | 可搜索 item type 白名单与容器判定 | `SEARCH_ITEM_TYPES`/`isWebMapContainer` |
@@ -191,7 +191,8 @@ earth-viz-hub/
 - 投影自动探测 `detectCrs`：4326 → Geographic；其余/失败 → Web Mercator；`CRS_CACHE` 缓存。
 - FeatureLayer：SimpleRenderer 符号映射；`maxRecordCount`+`resultOffset` 分页（拉取上限 `MAX_FEATURES=3000`、重复页检测）。渲染时另受单层 `MAX_RENDER_FEATURES=1500`、业务层合计 `MAX_TOTAL_FEATURES=5000` 约束。
 - 加载失败写入 `layerErrors`（卡片红标）；状态 persist。
-- 防卡死（loadSafety.ts）：风险分级 + 阈值 + 降级（全球矢量底图影像化、矢量 maxZoom 16、Feature/WFS/OGC/CSV 3000、GeoJSON ≤8MB、KML ≤2MB、WMS maximumLevel 16、Scene/3D SSE=16）；点聚合、串行渲染队列、字段裁剪（outFields=1）。
+- 防卡死（loadSafety.ts）：风险分级 + 阈值 + 降级（全球矢量底图影像化、矢量 maxZoom 16、Feature/WFS/OGC/CSV 3000、GeoJSON ≤8MB、KML ≤2MB、WMS maximumLevel 16、Scene/3D SSE=16）；点聚合、串行渲染队列、字段裁剪（outFields=1，主路径 `f=geojson`；`f=json` 兼容回退用 `outFields=*` 仅取属性）。
+  - 注：`SAFETY.SCENE_MAX_LOD=15` 目前未被消费（场景层实际用 `maximumScreenSpaceError:16`，见 scene.ts），属于预留/死代码候选，勿当实际限制。
 - ★渲染健壮性（防 OOM/卡死，GlobeViewer）：① 业务层数量上限 `MAX_BUSINESS_LAYERS=5`（超限省略并提示）；② 业务层总要素预算 `MAX_TOTAL_FEATURES=5000`（`consumeFeatureBudget`，超预算略过后续层）；③ 单层 `MAX_RENDER_FEATURES=1500`（数据大只取前 N 个并提示）；④ fetch 可取消（`rec.abort`，移除图层即中止）；⑤ `renderQueue` 加 `.catch` 兜底（单个 webmap 渲染失败不卡整队列）。
 - ★**按需渲染（GPU 空闲保护）**：Viewer 固定 `requestRenderMode: true` + `maximumRenderTimeChange: Infinity`。静止场景不持续提交 GPU 帧；效果、地形、影像层、DataSource、Primitive、VectorTile provider、删除路径、`camera.flyTo` 和 `webglcontextrestored` 改变场景后，必须调用 `requestSceneRender(v)`（`cameraApi` 通过 `requestViewerRender`）请求一帧。滚轮缓动与自动环绕仅在各自动画生效期间由 `onCameraFrame` 请求下一帧；不得在静止路径无条件 `requestRender()`，也不得每帧重复写入相同 SSE 值。按需渲染不替代图层/要素/瓦片缓存预算。
 - **P1–P5 视口驱动管线**（`src/globe/viewport/`）：FeatureLayer 只按相机视口 query（`resolveFeatureQueryBase` 自动解析第一个可查询层，`buildFeatureQueryUrl` 基于已解析的层号 + `geometry=envelope` + `f=geojson`），Worker 解析 → Douglas-Peucker 抽稀 → 顶点预算（`MAX_RENDER_VERTICES=200_000`）→ 要素预算（`MAX_RENDER_FEATURES`），Primitive 优先渲染（`buildLayerPrimitive`）、`hasPrimitiveRendering` 失败回退 `GeoJsonDataSource`；相机 `moveEnd` → `viewportController.update` 随视口更新，LRU 缓存视口结果。
@@ -218,7 +219,7 @@ earth-viz-hub/
 - 右键拖拽=倾斜；滚轮=平滑缩放（目标高度缓动）；双击=zoom in 一半高度。
 - 限制：`MIN_ZOOM=20m`、`MAX_ZOOM=25,000km`；pitch `[-89.9°, 0°]`。
 - ★所有飞行统一 `flyTo`；任何鼠标按下 `cancelFlight()`（否则飞行中拖不动球）。
-- 瓦片清晰度：缩放中 SSE=4 → 稳定后=2（迟滞）。
+- 瓦片清晰度：缩放中 SSE=2 → 稳定后=1（迟滞；高分屏按物理像素渲染后 SSE=2 在中近距离仍会少选 1~2 级瓦片，故稳定后统一用 1）。★Viewer 固定 `useBrowserRecommendedResolution: false` 跟随系统 DPI，高分屏不清是 DPR 问题，不要靠加大 SSE 解决。
 - ★自动环绕是**东西方向**：`setView` 经度递增 `+0.0012`，保持纬度/高度/朝向——不是原地转 heading。
 
 - ★相机/用户定位：Web Map/Scene 带 `viewpoint.camera` → 飞其相机（3857 反投影 + heading/tilt）；无相机 → `flyToHome()`（`userHome` + `initialHeight`）。首次进入加载完成后自动居中到 `userHome`。
@@ -234,7 +235,7 @@ earth-viz-hub/
 ### 6.6 CSP 与安全（★生产渲染依赖）
 - ★CSP 唯一来源 `public/_headers`（index.html **无**内联 CSP）；`script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:`、`worker-src 'self' blob:`。
 - ★`script-src` 的 `blob:` 绝不能删：生产经典 Cesium.js 把 worker 内联 base64，worker 用 `importScripts(blob:)`，被拦则**球空白**（dev ESM 构建无此问题）。
-- `functions/sharing/` 代理加固：白名单路径（search/data）+ GET/HEAD + Origin 检查（`ALLOWED_ORIGIN`）+ 内存限流；本地 proxy.mjs 转发并加 ACAO。
+- `functions/sharing/` 代理加固：白名单路径（search / item 元数据 / item data，`/sharing/rest/info` 等返回 403 是预期）+ GET/HEAD + Origin 检查（`ALLOWED_ORIGIN`）+ 内存限流；本地 proxy.mjs 转发并加 ACAO。
 - CI 审计生产依赖；dev 链 vite→esbuild 有已知漏洞（升 vite 8 为 breaking，暂缓，勿 `npm audit fix --force`）。
 
 
@@ -301,7 +302,7 @@ earth-viz-hub/
 ## 7. 测试与质量门禁
 
 - **单测**：Vitest（jsdom），338 个用例（含 store/cameraApi/AppShell/assess/webmap/LayerPanel/EffectsPanel/GlobeViewer/geo/itemTypes/serviceItem/VectorTile/OGC/CSV/vector/loadSafety/**maplibreImagery**；AppShell 覆盖 GitHub 导航和沉浸模式，LayerPanel 覆盖封面加载链）。`npm run test:coverage`
-- **覆盖率门槛**（vitest.config.ts）：★statements ≥90 / lines ≥90 / functions ≥85 / branches ≥70（最近一次实测 statements 90.25% / lines 95.53% / functions 93.27% / branches 81.20%）；include **全 src**（含 GlobeViewer），exclude 入口壳与测试文件——真实口径，不玩数字。
+- **覆盖率门槛**（vitest.config.ts）：★statements ≥90 / lines ≥90 / functions ≥85 / branches ≥70（2026-08-28 实测 statements 90.10% / lines 95.25% / functions 93.45% / branches 81.25%，数字随改动小幅波动，以 CI 徽章为准）；include **全 src**（含 GlobeViewer），exclude 入口壳与测试文件——真实口径，不玩数字。
 - **E2E**：Playwright 28 项（冒烟 mock / WebScene UI / UI 交互 mock / 真实 ArcGIS 集成 request）。
 - ★**E2E 轻量模式**：`e2e/app.spec.ts`、`e2e/ui.spec.ts` 注入 `window.__E2E__`，GlobeViewer 跳过 Cesium 创建（CI 无头软件渲染极慢会拖垮交互测试）；「球真实渲染+图层上球」由线上/容器验证覆盖（headless 测不准渲染）。
 - `src/globe/GlobeViewer.test.tsx` 覆盖按需渲染配置，以及效果和异步 MapServer 图层变更后调用 `scene.requestRender()`；改动任何异步上球路径时必须保留对应刷新断言。
@@ -322,8 +323,8 @@ earth-viz-hub/
 - FeatureLayer/GeoJSON 降级为 GeoJSON：SimpleRenderer 映射；常规拉取/视口查询上限 3000、单层渲染上限 1500、同一 webmap 的业务层合计上限 5000；属性/符号分级部分丢失。
 - 瓦片 metadata 探测失败静默回退 3857（可能错位但不崩）。
 - dev 链 vite→esbuild 已知漏洞（升 vite 8 breaking，暂缓）。
-- ArcGIS 匿名访问有速率限制（429），画廊预取分批（每批 6）控制并发。
-- `functions/sharing/` 白名单只放行 search / webmap data（`/sharing/rest/info` 等返回 403 是预期）。
+- ArcGIS 匿名访问有速率限制（429），画廊服务预检与元数据补齐均为并发 4（每项 3s 超时），按 id 缓存 24h 控制总量。
+- `functions/sharing/` 白名单放行三条：`/sharing/rest/search`、`/sharing/rest/content/items/<id>`（元数据）、`/sharing/rest/content/items/<id>/data`（容器/文件数据；`/sharing/rest/info` 等返回 403 是预期）。
 - 本地 dev 无 Cloudflare，`/api/geo` 会 404 → `userHome` 回退 `(35,104)`；国家质心为"大概"定位，城市级需第三方 IP 库。
 - Web Scene 的 `viewingMode:'local'`（局部坐标系）相机暂未覆盖，仅处理 global。
 
@@ -439,7 +440,7 @@ npx wrangler pages deploy --project-name=earth-viewer
 | 图层多次加载/取消残留 | 异步竞态 | layerMapRef 增量管理 + cancelled |
 | 右键倾斜带动缩放 | 事件配置 | 右键=倾斜、滚轮=缩放分离 |
 | flyTo 期间拖不动球 | 飞行未取消 | 鼠标按下 cancelFlight |
-| 瓦片缩放模糊 | SSE 固定 | 缩放中 4 → 稳定 2（迟滞） |
+| 瓦片缩放模糊 | SSE 固定 | 缩放中 2 → 稳定 1（迟滞）；高分屏用 `useBrowserRecommendedResolution:false` 跟随 DPR |
 | 球体蓝块 | 底图未加载露底色 | 基色 #0d1526 |
 | 云层/水面/极光不真实 | 实验效果 | 已删除勿加回 |
 | Docker/生产球空白 | 经典 Cesium.js worker 走 importScripts(blob:)，CSP script-src 无 blob: | CSP 加 blob:（★勿删） |
