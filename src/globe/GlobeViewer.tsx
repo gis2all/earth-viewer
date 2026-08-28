@@ -69,10 +69,10 @@ const WHEEL_ZOOM_IN_FACTOR = 0.8 // 滚轮下滑缩小倍率
 const AUTO_ROTATE_IDLE_MS = 3000 // 无交互多久后开始自动环绕
 const AUTO_ROTATE_STEP_RAD = 0.0012 // 自动环绕每帧经度增量（东西向）
 const ZOOM_EASE = 0.25 // 滚轮缩放每帧缓动系数（越大越快）
-const SSE_ZOOMING = 4 // 缩放中瓦片清晰度（粗，保流畅）
-const SSE_SETTLED = 2 // 稳定后瓦片清晰度（精细）
-// 广域视图用更粗的瓦片（大 SSE），拉近后回到精细
-const sseForHeight = (h: number): number => (h > 1_000_000 ? 16 : h > 200_000 ? 8 : SSE_SETTLED)
+const SSE_ZOOMING = 2 // 缩放中瓦片清晰度（沿用 Cesium 默认精度，避免低清瓦片被放大）
+const SSE_SETTLED = 1 // 稳定后瓦片清晰度（高分屏下与 Map Viewer 的清晰观感对齐）
+// 高分屏按物理像素渲染后，SSE=2 在中近距离仍会少选 1~2 级瓦片；稳定后统一用 1
+const sseForHeight = (): number => SSE_SETTLED
 
 // 检测 WebGL 是否可用；在 jsdom 测试环境下返回 true，避免误判为不可用
 function webglAvailable(): boolean {
@@ -225,6 +225,8 @@ export function GlobeViewer() {
       // 静止场景不再持续提交 GPU 帧；图层/效果/交互变化时显式 requestRender。
       requestRenderMode: true,
       maximumRenderTimeChange: Infinity,
+      // 默认 true 会忽略 devicePixelRatio 按 1x 渲染，高分屏下整球被拉伸发虚；false 跟随系统 DPI
+      useBrowserRecommendedResolution: false,
       })
     } catch (e) {
       console.error('[globe] 初始化失败', e)
@@ -241,6 +243,18 @@ export function GlobeViewer() {
     }
     v.scene.canvas.addEventListener('webglcontextlost', onCtxLost)
     v.scene.canvas.addEventListener('webglcontextrestored', onCtxRestored)
+    // Defer the final redraw out of the current frame so requestRenderMode
+    // does not swallow the render after the last tile arrives.
+    const onTileLoadProgress = (remaining: number) => {
+      if (remaining > 0) {
+        requestSceneRender(v)
+        return
+      }
+      window.setTimeout(() => {
+        if (!v.isDestroyed()) requestSceneRender(v)
+      }, 0)
+    }
+    v.scene.globe.tileLoadProgressEvent.addEventListener(onTileLoadProgress)
     // 首次进入：加载完成后自动居中到用户大概位置
     void flyToHome(v)
     // 关闭 Bloom 泛光（移除图层发光高亮）
@@ -344,14 +358,15 @@ export function GlobeViewer() {
           setScreenSpaceError(v.scene.globe, SSE_ZOOMING)
         } else {
           settledFrames++
-          if (settledFrames > 8) {
-            setScreenSpaceError(v.scene.globe, SSE_SETTLED)
+          // 缩放刚停就尽快回到该高度的常规精度，避免"停止后仍糊很久"
+          if (settledFrames > 2) {
+            setScreenSpaceError(v.scene.globe, sseForHeight())
           }
         }
         needsNextFrame = true
       } else {
         targetH = h
-        setScreenSpaceError(v.scene.globe, sseForHeight(h))
+        setScreenSpaceError(v.scene.globe, sseForHeight())
       }
       if (needsNextFrame) requestSceneRender(v)
     }
@@ -400,6 +415,7 @@ export function GlobeViewer() {
       v.scene.canvas.removeEventListener('wheel', onWheel)
       v.scene.canvas.removeEventListener('webglcontextlost', onCtxLost)
       v.scene.canvas.removeEventListener('webglcontextrestored', onCtxRestored)
+      v.scene.globe.tileLoadProgressEvent.removeEventListener(onTileLoadProgress)
       v.scene.postUpdate.removeEventListener(onCameraFrame)
       if (autoRotateWakeTimer !== undefined) clearTimeout(autoRotateWakeTimer)
       autoRotateWakeRef.current = () => {}

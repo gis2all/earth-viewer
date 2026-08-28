@@ -40,6 +40,7 @@ const cesiumMock = vi.hoisted(() => {
       maximumScreenSpaceError: 0,
       tileCacheSize: 0,
       preloadSiblings: false,
+      tileLoadProgressEvent: { addEventListener: vi.fn(), removeEventListener: vi.fn() },
       showGroundAtmosphere: false,
       enableLighting: false,
       translucency: { enabled: false, frontFaceAlpha: 1, backFaceAlpha: 1 },
@@ -681,7 +682,26 @@ describe('GlobeViewer 补强', () => {
     expect(pitch).toBeLessThanOrEqual(0)
   })
 
-  it('缩放稳定后 SSE 从 4 回落到 2（迟滞防抖）', async () => {
+  it('瓦片加载队列变化时唤醒静止场景重绘', async () => {
+    render(<GlobeViewer />)
+    await flush()
+    const v = viewer()
+    const event = v.scene.globe.tileLoadProgressEvent
+    expect(event.addEventListener).toHaveBeenCalledTimes(1)
+    const onTileLoadProgress = event.addEventListener.mock.calls[0][0] as (remaining: number) => void
+    const renderCallsBefore = v.scene.requestRender.mock.calls.length
+    onTileLoadProgress(1)
+    expect(v.scene.requestRender.mock.calls.length).toBe(renderCallsBefore + 1)
+    await act(async () => {
+      onTileLoadProgress(0)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(v.scene.requestRender.mock.calls.length).toBe(renderCallsBefore + 2)
+    cleanup()
+    expect(event.removeEventListener).toHaveBeenCalledWith(onTileLoadProgress)
+  })
+
+  it('缩放稳定后 SSE 从 2 回落到 1（高分屏清晰度优先）', async () => {
     render(<GlobeViewer />)
     await flush()
     const v = viewer()
@@ -690,14 +710,14 @@ describe('GlobeViewer 补强', () => {
     )?.[1] as (e: { deltaY: number; preventDefault: () => void }) => void
     const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(5000)
     wheelHandler({ deltaY: 100, preventDefault: vi.fn() })
-    // 首次帧：diff 大 → SSE 4
+    // 首次帧：diff 大 → SSE 2
     const frameCb = v.scene.postUpdate.addEventListener.mock.calls[0][0] as () => void
     frameCb()
-    expect(v.scene.globe.maximumScreenSpaceError).toBe(4)
+    expect(v.scene.globe.maximumScreenSpaceError).toBe(2)
     // 让相机高度贴近目标高度 → 连续帧稳定
     v.camera.positionCartographic.height = 1250
     for (let i = 0; i < 12; i++) frameCb()
-    expect(v.scene.globe.maximumScreenSpaceError).toBe(2)
+    expect(v.scene.globe.maximumScreenSpaceError).toBe(1)
     nowSpy.mockRestore()
   })
 
