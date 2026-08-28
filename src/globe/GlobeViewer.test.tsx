@@ -248,13 +248,14 @@ describe('GlobeViewer', () => {
     vi.unstubAllGlobals()
   })
 
-  it('创建 Viewer：关闭多余控件、注册相机、添加三层底图、监听事件', async () => {
+  it('创建 Viewer：关闭多余控件、注册相机、添加底图（影像+矢量标注）、监听事件', async () => {
     render(<GlobeViewer />)
+    await flush()
     await flush()
     const v = viewer()
     expect(v).toBeDefined()
-    // 底图三层
-    expect(v.imageryLayers.length).toBe(3)
+    // 底图：WGS84 影像 + 矢量标注（标注在 provider ready 后加入）
+    expect(v.imageryLayers.length).toBe(2)
     // 相机事件
     expect(v.scene.canvas.addEventListener).toHaveBeenCalledWith('wheel', expect.any(Function), { passive: false })
     expect(v.scene.postUpdate.addEventListener).toHaveBeenCalled()
@@ -638,8 +639,8 @@ describe('GlobeViewer 补强', () => {
     })
     await flush()
     await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
-    expect(maplibreMock.instances.length).toBe(1)
-    expect(maplibreMock.instances[0].opts.styleUrl).toContain('root.json')
+    expect(maplibreMock.instances.length).toBe(2)
+    expect(maplibreMock.instances[1].opts.styleUrl).toContain('root.json')
     expect(v.imageryLayers.add).toHaveBeenCalled()
   })
 
@@ -943,9 +944,9 @@ describe('GlobeViewer 补强', () => {
       })
     })
     await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
-    expect(maplibreMock.instances.length).toBe(1)
-    expect(maplibreMock.instances[0].opts.styleUrl).toBe('https://x/style')
-    expect(maplibreMock.instances[0].opts.url).toBe('https://x/VectorTileServer')
+    expect(maplibreMock.instances.length).toBe(2)
+    expect(maplibreMock.instances[1].opts.styleUrl).toBe('https://x/style')
+    expect(maplibreMock.instances[1].opts.url).toBe('https://x/VectorTileServer')
     expect(v.imageryLayers.add).toHaveBeenCalled()
   })
 
@@ -971,8 +972,8 @@ describe('GlobeViewer 补强', () => {
       })
     })
     await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
-    expect(maplibreMock.instances.length).toBe(1)
-    expect(maplibreMock.instances[0].opts.styleUrl).toBe('https://cdn.example/root.json')
+    expect(maplibreMock.instances.length).toBe(2)
+    expect(maplibreMock.instances[1].opts.styleUrl).toBe('https://cdn.example/root.json')
     expect(v.imageryLayers.add).toHaveBeenCalled()
   })
 
@@ -992,8 +993,8 @@ describe('GlobeViewer 补强', () => {
       })
     })
     await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
-    expect(maplibreMock.instances.length).toBe(1)
-    expect(maplibreMock.instances[0].destroy).toHaveBeenCalled()
+    expect(maplibreMock.instances.length).toBe(2)
+    expect(maplibreMock.instances[1].destroy).toHaveBeenCalled()
   })
 
   it('多图层 Feature Service → 区划层跳过、事件层渲染为 dataSource', async () => {
