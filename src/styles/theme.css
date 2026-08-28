@@ -4,7 +4,7 @@
   --fg:#eceef2; --muted:#9aa0ad; --faint:#6c7282;
   --accent:#6e79d6; --accent-strong:#8690f0; --accent-soft:rgba(110,121,214,.14);
   --added:#a59bf2; --added-soft:rgba(165,155,242,.12); --added-line:rgba(165,155,242,.52);
-  --thumb-bg:#0d1016;
+  --thumb-spin-track:rgba(235,238,245,.12); --thumb-spin-arc:#8690f0;
   --danger:#e5534b;
   --mono:ui-monospace,'Cascadia Mono','SF Mono',Consolas,monospace;
   --shadow:0 10px 32px rgba(0,0,0,.35);
@@ -15,7 +15,7 @@
   --fg:#252b35; --muted:#626a78; --faint:#7b8491;
   --accent:#4e59c8; --accent-strong:#3d47ad; --accent-soft:rgba(78,89,200,.12);
   --added:#6557c7; --added-soft:rgba(101,87,199,.12); --added-line:rgba(101,87,199,.48);
-  --thumb-bg:#e9ebee;
+  --thumb-spin-track:#d6dae2; --thumb-spin-arc:#4e59c8;
   --danger:#c92a2a;
   --shadow:0 10px 32px rgba(30,40,70,.10);
 }
@@ -79,8 +79,8 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 /* 已添加 + ArcGIS Online 画廊（原型 v2） */
 .added-list{display:flex;flex-direction:column;gap:8px}
 .added-card{position:relative;display:flex;align-items:center;gap:10px;border:1px solid var(--line);background:var(--card);padding:6px 8px}
-.ac-thumb{width:60px;height:36px;object-fit:cover;flex:0 0 auto;background:var(--panel-3)}
-.ac-ph{width:60px;height:36px;flex:0 0 auto;background:var(--panel-3)}
+.ac-thumb-wrap{position:relative;width:60px;height:36px;flex:0 0 auto}
+.ac-thumb{width:60px;height:36px;object-fit:cover;position:relative;z-index:1;background:var(--panel)}
 .added-title{font-size:12px;font-weight:500;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .added-err{font-size:10px;color:#fff;background:var(--danger);padding:1px 5px;flex:0 0 auto;letter-spacing:.02em}
 .remove-btn{width:22px;height:22px;flex:0 0 auto;color:var(--faint);font-size:14px;line-height:1;border:1px solid transparent;display:grid;place-items:center}
@@ -94,9 +94,14 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .gallery-card{position:relative;height:auto;min-width:0;display:flex;flex-direction:column;border:1px solid var(--line);background:var(--card);text-align:left;overflow:visible;transition:border-color .16s,background .16s}
 .gallery-card:hover{border-color:var(--line-2);background:var(--card-hover)}
 .gallery-card:disabled{opacity:.5;cursor:wait}
-.gc-thumb-wrap{position:relative;flex:0 0 auto;width:100%;aspect-ratio:3/2;overflow:hidden;background:var(--thumb-bg);border-bottom:1px solid var(--line)}
-.gc-thumb{width:100%;height:100%;object-fit:cover;display:block;background:var(--panel-3)}
-.gc-ph{width:100%;height:100%;display:grid;place-items:center;background:var(--panel-3);color:var(--faint)}
+.gc-thumb-wrap{position:relative;flex:0 0 auto;width:100%;aspect-ratio:3/2;overflow:hidden;background:var(--panel);border-bottom:1px solid var(--line)}
+.gc-thumb{width:100%;height:100%;object-fit:cover;display:block;position:relative;z-index:1;background:var(--panel)}
+.thumb-spinner{position:absolute;inset:0;margin:auto;width:24px;height:24px;z-index:2;animation:thumb-spin .9s linear infinite}
+.thumb-spinner[hidden]{display:none}
+.thumb-spinner .track{fill:none;stroke:var(--thumb-spin-track);stroke-width:2.5}
+.thumb-spinner .arc{fill:none;stroke:var(--thumb-spin-arc);stroke-width:2.5;stroke-linecap:butt}
+@keyframes thumb-spin{to{transform:rotate(360deg)}}
+.gc-ph{width:100%;height:100%;display:grid;place-items:center;background:var(--panel);color:var(--faint)}
 .gc-detail{align-self:flex-start;flex:0 0 20px;width:20px;height:20px;margin-left:auto;display:grid;place-items:center;color:var(--accent);background:transparent;border:0;text-decoration:none}
 .gc-detail svg{width:15px;height:15px;filter:none}
 .gc-detail:hover,.gc-detail:focus-visible{background:var(--panel-3);color:var(--accent-strong)}

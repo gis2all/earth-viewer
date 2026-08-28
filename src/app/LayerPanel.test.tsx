@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
-import { LayerPanel } from './LayerPanel'
+import { LayerPanel, thumbTimeout } from './LayerPanel'
 import { useAppStore } from '../state/store'
 
 const searchResponse = {
@@ -461,13 +461,57 @@ describe('LayerPanel 画廊补强', () => {
     expect(img.className).toBe('ac-thumb')
   })
 
-  it('画廊卡片缩略图加载失败时隐藏', async () => {
+  it('画廊卡片缩略图加载失败时回退默认封面，默认封面也失败则隐藏', async () => {
     stubGalleryFetch([[{ id: 'wm1', title: 'Thumb', thumbnail: 't.png', numViews: 1 }]], ['wm1'])
     render(<LayerPanel />)
     await waitFor(() => expect(screen.getByAltText('Thumb')).toBeInTheDocument(), { timeout: 8000 })
     const img = screen.getAllByAltText('Thumb')[0] as HTMLImageElement
+    const spinner = img.closest('.gc-thumb-wrap')?.querySelector('.thumb-spinner')
+    expect(spinner).not.toHaveAttribute('hidden')
+    fireEvent.error(img)
+    expect(img.src).toContain('covers/default.png')
+    expect(spinner).not.toHaveAttribute('hidden')
     fireEvent.error(img)
     expect(img.style.display).toBe('none')
+    expect(spinner).toHaveAttribute('hidden')
+    expect(img.nextElementSibling).not.toHaveAttribute('hidden')
+  })
+
+  it('画廊卡片缩略图加载完成后隐藏加载动画', async () => {
+    stubGalleryFetch([[{ id: 'wm1', title: 'Thumb', thumbnail: 't.png', numViews: 1 }]], ['wm1'])
+    render(<LayerPanel />)
+    await waitFor(() => expect(screen.getByAltText('Thumb')).toBeInTheDocument(), { timeout: 8000 })
+    const img = screen.getAllByAltText('Thumb')[0] as HTMLImageElement
+    const spinner = img.closest('.gc-thumb-wrap')?.querySelector('.thumb-spinner')
+    expect(spinner).not.toHaveAttribute('hidden')
+    fireEvent.load(img)
+    expect(spinner).toHaveAttribute('hidden')
+  })
+
+  it('缩略图请求长期挂起时超时回退默认封面，再超时结束加载态', () => {
+    vi.useFakeTimers()
+    try {
+      const wrap = document.createElement('div')
+      const spinner = document.createElement('div')
+      spinner.className = 'thumb-spinner'
+      const img = document.createElement('img')
+      img.alt = 'Thumb'
+      img.src = 'https://x/pending.png' // 模拟请求长期 pending（jsdom 不加载，complete 保持 false）
+      const ph = document.createElement('div')
+      ph.setAttribute('hidden', '')
+      wrap.append(spinner, img, ph)
+      thumbTimeout(img)
+      vi.advanceTimersByTime(60000)
+      expect(img.dataset.fb).toBe('1')
+      expect(img.src).toContain('covers/default.png')
+      expect(spinner).not.toHaveAttribute('hidden')
+      vi.advanceTimersByTime(60000)
+      expect(img.style.display).toBe('none')
+      expect(spinner).toHaveAttribute('hidden')
+      expect(ph).not.toHaveAttribute('hidden')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
 

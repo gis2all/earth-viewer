@@ -212,6 +212,8 @@ earth-viz-hub/
 - 服务 item 经 resolveServiceItem 包装为单图层；GeoJson/CSV 用 /items/<id>/data。
 - 防抖 300ms + AbortController + requestId 序列号。
 - 取消/清除按钮：loading && kw.length > 0 才显示。
+- 封面缩略图加载链：加载中显示 24px 环形 spinner（紫弧 + 主题底环），叠加在**主题面板底色**上（浅色白 / 深色球体黑，**不用灰底占位**）；无缩略图或加载失败 → 回退 `covers/default.png` 默认封面；默认封面也失败 → 隐藏 spinner、显示图层类型占位符。请求长期挂起（既不到 load 也不到 error）由 `thumbTimeout` 兜底：60s 未完成 → 切默认封面，再 60s 仍未完成 → 隐藏 spinner + 类型占位。
+- ★SVG 元素的 `hidden` 属性在 Chromium 不生效（computed display 仍是 inline）——隐藏加载环必须依赖 CSS `.thumb-spinner[hidden]{display:none}`，不能只靠 JS 设置 `hidden` 属性（2026-08 踩坑：图片已加载但加载环一直显示）。
 ### 6.4 相机（★别回退）
 - 右键拖拽=倾斜；滚轮=平滑缩放（目标高度缓动）；双击=zoom in 一半高度。
 - 限制：`MIN_ZOOM=20m`、`MAX_ZOOM=25,000km`；pitch `[-89.9°, 0°]`。
@@ -278,8 +280,8 @@ earth-viz-hub/
 
 | 文件 | 职责 |
 |---|---|
-| `src/app/LayerPanel.tsx` | `buildSearchQuery` / `fetchSearchPage` / `mergeSearchResults` / `preflightService` / `preflightItem` / 渲染过滤 |
-| `src/styles/theme.css` | Map Viewer 风格双列卡片尺寸、缩略图、详情与独立添加操作样式 |
+| `src/app/LayerPanel.tsx` | `buildSearchQuery` / `fetchSearchPage` / `mergeSearchResults` / `preflightService` / `preflightItem` / 渲染过滤 / `thumbTimeout`+`ThumbSpinner`（封面加载链与 60s 挂起兜底） |
+| `src/styles/theme.css` | Map Viewer 风格双列卡片尺寸、缩略图（含 24px 加载环样式与 `[hidden]` 规则）、详情与独立添加操作样式 |
 | `src/globe/itemTypes.ts` | `SEARCH_ITEM_TYPES` / `isWebMapContainer` |
 | `src/globe/loadSafety.ts` | `SAFETY` 上限（含 MAX_FEATURES/MAX_RENDER_FEATURES/MAX_RENDER_VERTICES/KML_MAX_BYTES/VECTOR_TILE_MAX_ZOOM） / `consumeFeatureBudget` / 升降级风险 |
 | `vite.config.ts` | dev 代理 `/sharing` → `www.arcgis.com` |
@@ -288,7 +290,7 @@ earth-viz-hub/
 
 ### 6.7.4 测试
 
-- `src/app/LayerPanel.test.tsx`：关键词防抖、Web Map/Scene 并行合并去重、Map Service 解析包装、**服务类预检不可用→自动隐藏**。
+- `src/app/LayerPanel.test.tsx`：关键词防抖、Web Map/Scene 并行合并去重、Map Service 解析包装、**服务类预检不可用→自动隐藏**、缩略图加载完成/失败回退/挂起超时（`thumbTimeout` 直接单测）。
 - `src/globe/loadSafety.test.ts`：`consumeFeatureBudget`（空/超预算/降级）、`riskOfLayer`、`degradeReason`、`assertUrlWithinLimit`。
 - `src/globe/maplibreImagery.test.ts`：样式规范化（sprite/glyphs/VectorTileServer→tiles 模板、官方相对服务 URL、非法 vector `tileSize` 移除）、原生 512px Cesium/MapLibre 同级 LOD、边缘中心收拢后的实际中心裁剪、块缓存命中、`idle` 后截屏、readyPromise 成功/失败/销毁、单块失败不阻塞、**并发不同块时忙碌 Map 实例不重复派发（回归：同一 canvas 严格串行）**、销毁拒绝未决请求、默认 createMap 走真实 MapLibre 构造。
 - `src/globe/GlobeViewer.test.tsx`：业务层超限提示、非法 webmap 触发渲染队列兜底、VectorTile 走 MapLibre 样式 provider（含失败销毁）、WFS/CSV/Feature 预算降级与 `signal`、KML 转 GeoJSON/回退。
@@ -298,7 +300,7 @@ earth-viz-hub/
 
 ## 7. 测试与质量门禁
 
-- **单测**：Vitest（jsdom），336 个用例（含 store/cameraApi/AppShell/assess/webmap/LayerPanel/EffectsPanel/GlobeViewer/geo/itemTypes/serviceItem/VectorTile/OGC/CSV/vector/loadSafety/**maplibreImagery**；AppShell 覆盖 GitHub 导航和沉浸模式）。`npm run test:coverage`
+- **单测**：Vitest（jsdom），338 个用例（含 store/cameraApi/AppShell/assess/webmap/LayerPanel/EffectsPanel/GlobeViewer/geo/itemTypes/serviceItem/VectorTile/OGC/CSV/vector/loadSafety/**maplibreImagery**；AppShell 覆盖 GitHub 导航和沉浸模式，LayerPanel 覆盖封面加载链）。`npm run test:coverage`
 - **覆盖率门槛**（vitest.config.ts）：★statements ≥90 / lines ≥90 / functions ≥85 / branches ≥70（最近一次实测 statements 90.25% / lines 95.53% / functions 93.27% / branches 81.20%）；include **全 src**（含 GlobeViewer），exclude 入口壳与测试文件——真实口径，不玩数字。
 - **E2E**：Playwright 28 项（冒烟 mock / WebScene UI / UI 交互 mock / 真实 ArcGIS 集成 request）。
 - ★**E2E 轻量模式**：`e2e/app.spec.ts`、`e2e/ui.spec.ts` 注入 `window.__E2E__`，GlobeViewer 跳过 Cesium 创建（CI 无头软件渲染极慢会拖垮交互测试）；「球真实渲染+图层上球」由线上/容器验证覆盖（headless 测不准渲染）。

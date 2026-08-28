@@ -100,6 +100,8 @@ The top bar contains the brand mark, orient/reset view actions, theme toggle, im
 
 Each card has a 3:2 thumbnail, a 28px title row, and a 26px action/status row. The card grid gap is 8px. Titles are one line with ellipsis overflow; the full title is available through a tooltip/title attribute.
 
+The thumbnail area sits directly on the theme panel surface (white in light mode, globe black in dark mode) — no gray placeholder. While the cover loads, a 24px ring spinner (theme-muted track plus accent arc) is centered over that surface. If an item has no thumbnail, or the thumbnail request fails, the built-in default cover (`covers/default.png`) is used; if the default cover also fails, the spinner is hidden and a layer-type placeholder is shown. A thumbnail request that hangs (neither `load` nor `error`) falls back to the default cover after 60s, and hides the spinner after another 60s.
+
 The bottom row has status icons on the left and two independent actions on the right:
 
 - The detail icon is a 20px square link using a simple list-style SVG. It opens the ArcGIS item page and is aligned to the add action.
