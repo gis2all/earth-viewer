@@ -13,7 +13,7 @@ export default defineConfig({
       // 全 src 口径（含 GlobeViewer 等当前 0% 文件），不玩数字游戏
       include: ['src/**/*.{ts,tsx}'],
       // 入口壳与测试基建不计入业务覆盖率
-      exclude: ['src/**/*.test.{ts,tsx}', 'src/test/**', 'src/main.tsx', 'src/App.tsx', 'src/globe/viewport/dataWorker.ts', 'src/globe/viewport/primitive.ts'],
+      exclude: ['src/**/*.test.{ts,tsx}', 'src/test/**', 'src/main.tsx', 'src/App.tsx', 'src/globe/viewport/dataWorker.ts', 'src/globe/facade/primitive.ts'],
       reporter: ['text', 'json-summary', 'json', 'html'],
       thresholds: {
         statements: 90,

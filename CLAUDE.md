@@ -112,6 +112,7 @@ earth-viz-hub/
   Dockerfile / docker-compose.yml / .dockerignore
   wrangler.toml         # Pages 配置：pages_build_output_dir = "dist"（★不能含 account_id）
   scripts/badge.mjs     # 从 coverage/audit/test/e2e 数据生成 4 个徽章 JSON
+  scripts/check-arch.mjs # ★依赖方向扫描（npm run check:arch）：Cesium/MapLibre 仅限 infra/ 与 globe/facade/、Domain 零依赖、app 层不被反向导入
   functions/sharing/[[path]].js  # Pages Functions：/sharing/* 代理（白名单+GET-only+Origin+限流）
   functions/api/geo.js       # Pages Function：/api/geo → CF-IPCountry 国家质心经纬度（用户大概定位）
   server/
@@ -132,22 +133,34 @@ earth-viz-hub/
       AppShell.tsx      # 顶栏（品牌/回正/复位/主题/GitHub/沉浸模式）+ favicon 跟随主题 + 面板布局
       LayerPanel.tsx    # 画廊：支持类型白名单并行搜索+预检+元数据补齐+排序+无限滚动；添加由独立按钮触发
       EffectsPanel.tsx  # 效果面板（环境/地形/视图开关与滑杆，含区划网格）
+    controller/
+      LayerController.ts / CameraController.ts / EffectsController.ts
+                        # 命令+状态机+领域事件：图层生命周期唯一事实源、相机交互、效果同步
+    service/
+      repository.ts / loader.ts / scheduler.ts / http.ts
+                        # ArcGISRepository（search/元数据/data/探测+缓存）、LayerLoader 管线、LayerScheduler 视口调度、超时/429 中间件
+    domain/
+      types.ts / adapter.ts / registry.ts / runtime.ts / stateMachine.ts / policy.ts / config.ts
+                        # ★纯 TS 零依赖：LayerKind、LayerAdapter 契约、LAYER_REGISTRY、状态机、预算策略、类型化配置
+    infra/
+      CesiumFacade.ts / config.defaults.ts
+                        # ★Cesium 深度封装唯一入口（addRuntime/removeRuntime/requestFrame）；运行时可覆盖默认值
     globe/
-      GlobeViewer.tsx   # Cesium 核心：Viewer 创建、相机、效果、图层增量、相机优先/userHome 回退（★__E2E__ 模式）
-      cameraApi.ts      # registerViewer/unregisterViewer/resetView/orientView/flyToHome（用户定位+启动高度）
+      GlobeViewer.tsx   # 瘦组件：创建 CesiumFacade + 订阅三个 Controller + 转发渲染唤醒；相机优先/userHome 回退（★__E2E__ 模式）
+      renderWebmap.ts   # 图层数据/转换 → 渲染指令（供 LayerController.render 回调）
       geo.ts            # 用户大概定位：/api/geo + localStorage 缓存 + 硬编码兜底
-      webmap.ts         # webmap 解析、provider 构建、detectCrs/detectMapService、Feature 分页
       assess.ts         # ★统一渲染能力评估器（classifyLayer/assessWebmap/renderableLayersFromWebmap）
       itemTypes.ts      # 可搜索 item type 白名单（SEARCH_ITEM_TYPES / isWebMapContainer）
       serviceItem.ts    # 单图层服务 item（Map/Feature/Scene…）→ 包装成可渲染 webmap
-      csv.ts / vector.ts / vectorTile.ts / ogc.ts / scene.ts / loadSafety.ts  # 各数据源：转GeoJSON/Provider + 预算
+      csv.ts / vectorTile.ts / ogc.ts / loadSafety.ts  # 各数据源：转GeoJSON/Provider + 预算
       kml.ts            # KML → GeoJSON 轻量转换（走 Worker 预算管线），失败回退原生 KmlDataSource
+      facade/           # ★渲染引擎适配层（Cesium/MapLibre 引用集中于此）：cameraApi / maplibreImagery / scene / vector / viewpoint / webmap / primitive
       viewport/         # 视口驱动渲染管线（query/worker/simplify/budget/geometryModel/primitive/cluster/lru/viewportController）
     state/store.ts      # zustand：theme/collapsed/added/effects/layerErrors/userHome
     styles/theme.css    # 全部样式（直角、深浅主题变量）
 ```
 
-**数据流**：`LayerPanel` 按支持类型白名单并行搜索（`sortField=numViews`）→ 轻预筛直接上屏 → 点击添加按钮调用 `addLayer` → `GlobeViewer` 监听 `added` → `renderableLayersFromWebmap()` 构建 provider/DataSource 叠加。
+**数据流**：`LayerPanel` 按支持类型白名单并行搜索（`sortField=numViews`，走 `service/repository`）→ 轻预筛直接上屏 → 点击添加按钮 `store.addLayer` → `GlobeViewer` 把 `added` 差量同步给 `LayerController`（唯一状态机）→ `renderWebmap` 转渲染指令 → `CesiumFacade` 上球；释放/错误/预算由控制器与调度器负责。
 
 ---
 
@@ -156,22 +169,36 @@ earth-viz-hub/
 | 文件 | 职责 | 关键导出/依赖 |
 |---|---|---|
 | `src/globe/assess.ts` | ★"能否渲染"唯一事实源：能力表、角色分类、整体评估 | `classifyLayer`、`assessWebmap`、`renderableLayersFromWebmap`；被 LayerPanel 与 GlobeViewer 共用 |
-| `src/globe/webmap.ts` | webmap JSON 解析、服务探测、provider/GeoJSON 构建 | `fetchWebmap`、`detectMapService`（CRS_CACHE）、`providerForWebLayer`、`fetchFeatureGeoJSON/Style` |
-| `src/globe/GlobeViewer.tsx` | Cesium Viewer 创建/销毁、按需渲染、相机控制、效果、图层生命周期；相机优先/userHome 回退；★`window.__E2E__` 时跳过 Cesium | 依赖 store、cameraApi、webmap、assess、scene/vector/vectorTile/ogc/csv/loadSafety/kml/viewport |
-| `src/globe/cameraApi.ts` | 顶部按钮复位/回正 + 用户定位飞行 | `registerViewer/unregisterViewer/resetView/orientView/flyToHome/setInitialHeightForTest` |
-| `src/app/LayerPanel.tsx` | 画廊：搜索/预取/过滤/流式上屏/无限滚动/添加移除/错误 toast | 依赖 store、webmap、assess |
-| `src/app/AppShell.tsx` | 布局、品牌图标、favicon 主题切换、回正/复位、GitHub 导航、应用内沉浸模式 | 依赖 store、cameraApi、GlobeViewer/LayerPanel/EffectsPanel |
+| `src/globe/facade/webmap.ts` | webmap JSON 解析、服务探测、provider/GeoJSON 构建（Cesium 适配层） | `detectMapService`（CRS_CACHE）、`providerForWebLayer`、`fetchFeatureGeoJSON/Style` |
+| `src/globe/GlobeViewer.tsx` | 瘦组件：创建 CesiumFacade + 订阅 Layer/Camera/Effects 三控制器 + 转发渲染唤醒；相机优先/userHome 回退；★`window.__E2E__` 时跳过 Cesium | 依赖 infra/CesiumFacade、controller/*、renderWebmap、globe/facade/cameraApi |
+| `src/globe/facade/cameraApi.ts` | 顶部按钮复位/回正 + 用户定位飞行（纯命令，绕开 Controller 的轻量入口） | `resetView/orientView/flyToHome/setInitialHeightForTest` |
+| `src/controller/LayerController.ts` | ★图层生命周期唯一状态机：`added` 差分同步、预检→加载→释放、错误/预算/取消 | `LayerController`；依赖 service/loader+scheduler、globe/renderWebmap |
+| `src/controller/CameraController.ts` | 相机交互收编：滚轮缓动、双击 zoom、自动环绕 idle 判定、SSE 切换 | `CameraController`（attach/dispose + 相机状态流） |
+| `src/controller/EffectsController.ts` | 效果/主题变更 → 场景副作用（渲染唤醒、地形、区划网格） | `EffectsController`（sync） |
+| `src/service/repository.ts` | ★ArcGIS 请求与缓存唯一收口：search/元数据/data/容器/服务探测 + 预检缓存/429 抖动 | `fetchSearchPage`/`fetchItemMetadata`/`fetchWebmap`/`preflightItem`/`mergeSearchResults`/`SEARCH_TYPES`/`PREFLIGHT_TYPES` |
+| `src/service/loader.ts` | 预检→取数→转换→预算消费→上球的加载管线，按 LayerKind 分发 | `loadLayerData`/`kindOf`（注册表优先，回退纯分类） |
+| `src/service/scheduler.ts` | 视口优先级 + 串行渲染 + 取消的统一调度器 | `LayerScheduler`（submit/cancel/并发上限） |
+| `src/service/http.ts` | 请求中间件：超时、429 指数退避+抖动、abort 透传、错误归一化 | `withFetchTimeout`/`fetchWithRetry` |
+| `src/domain/registry.ts` | LAYER_REGISTRY 注册表（kind/matches/estimateRisk/load 契约） | `registry.get/matchAll`；★真实 adapter 未注册（M2 backlog，loader 走回退） |
+| `src/domain/stateMachine.ts` | 图层状态机类型与守卫（纯函数） | `LayerState` 合法转移表 |
+| `src/domain/policy.ts` | 预算策略接口与默认实现 | `BudgetPolicy`/`defaultPolicy` |
+| `src/domain/config.ts` + `src/infra/config.defaults.ts` | 类型化领域配置 + 运行时可覆盖默认值（SSE/缩放/环绕/预算等） | `domainConfig`/`appConfig` |
+| `src/infra/CesiumFacade.ts` | ★Cesium 深度封装唯一入口：Viewer 创建、addRuntime/removeRuntime、requestFrame、地形、销毁 | `CesiumFacade`/`isWebglAvailable`；项目内其余地方不散见 `Cesium.` |
+| `src/app/LayerPanel.tsx` | 画廊：搜索/预取/过滤/流式上屏/无限滚动/添加移除/错误 toast | 依赖 store、service/repository、globe/assess+itemTypes+serviceItem、infra/config.defaults |
+| `src/app/AppShell.tsx` | 布局、品牌图标、favicon 主题切换、回正/复位、GitHub 导航、应用内沉浸模式 | 依赖 store、globe/facade/cameraApi、GlobeViewer/LayerPanel/EffectsPanel |
 | `src/state/store.ts` | 全局状态 + persist | theme/added/effects/layerErrors/userHome + actions |
 | `functions/sharing/[[path]].js` | Pages 生产代理（/sharing → www.arcgis.com） | 白名单 search / item 元数据 / item data；Origin 检查读 `ALLOWED_ORIGIN` |
 | `functions/api/geo.js` | Pages Function：/api/geo 用户国家质心经纬度 | `onRequest` 读 `CF-IPCountry` |
 | `src/globe/geo.ts` | 用户大概定位：请求 /api/geo、缓存、硬编码兜底 | `fetchUserHome`/`getUserHome`/`resetUserHomeCache` |
 | `src/globe/itemTypes.ts` | 可搜索 item type 白名单与容器判定 | `SEARCH_ITEM_TYPES`/`isWebMapContainer` |
 | `src/globe/serviceItem.ts` | 单图层服务 item 包装为可渲染 webmap | `resolveServiceItem` |
-| `src/globe/csv.ts / vector.ts / vectorTile.ts / ogc.ts / scene.ts / loadSafety.ts` | 各数据源→GeoJSON/Provider/防卡死 | `fetch*GeoJSON`/`loadI3S`/`load3DTiles`/`fetchVectorTileTemplates`/`riskOfLayer` |
-| `src/globe/maplibreImagery.ts` | ★VectorTile 官方样式渲染（方案 A）：MapLibre 离屏 3×3 块批量栅格化 → Cesium `ImageryProvider` | `ArcGisVectorTileImageryProvider`/`normalizeArcGisStyle`/`tileCenterLngLat`/`cropTile` |
+| `src/globe/csv.ts / vectorTile.ts / ogc.ts / loadSafety.ts` | 各数据源→GeoJSON/Provider/防卡死 | `fetch*GeoJSON`/`fetchVectorTileTemplates`/`riskOfLayer` |
+| `src/globe/facade/vector.ts / scene.ts / viewport/primitive.ts` | Feature/Scene Service/3D Tiles 的 Cesium 侧 provider/Primitive 构建 | `buildLayerPrimitive`/`loadI3S`/`load3DTiles` |
+| `src/globe/facade/maplibreImagery.ts` | ★VectorTile 官方样式渲染（方案 A）：MapLibre 离屏 3×3 块批量栅格化 → Cesium `ImageryProvider` | `ArcGisVectorTileImageryProvider`/`normalizeArcGisStyle`/`tileCenterLngLat`/`cropTile` |
 | `src/globe/viewport/` | 视口驱动渲染管线：按相机视口查询 FeatureLayer + Worker 解析/抽稀/顶点与要素预算 + LRU 缓存 + Primitive 渲染 | `queryViewportData`/`runViewportProcess`/`createViewportController`/`applyVertexBudget`/`clusterPoints`/`buildLayerPrimitive`/`viewportCacheKey` |
 | `src/globe/kml.ts` | KML → GeoJSON 轻量转换（走 Worker 预算管线），失败回退原生 KmlDataSource | `parseKmlToGeoJSON`/`kmlStyleToFeatureStyle` |
 | `scripts/badge.mjs` | 从数据文件生成徽章 JSON | 读 coverage-summary / audit / test-results / e2e-results |
+| `scripts/check-arch.mjs` | 依赖方向扫描（`npm run check:arch`） | Cesium/MapLibre 仅限 infra/ 与 globe/facade/（测试豁免）、Domain 零外部依赖、app 不被反向导入 |
 
 ---
 
@@ -192,11 +219,10 @@ earth-viz-hub/
 - FeatureLayer：SimpleRenderer 符号映射；`maxRecordCount`+`resultOffset` 分页（拉取上限 `MAX_FEATURES=3000`、重复页检测）。渲染时另受单层 `MAX_RENDER_FEATURES=1500`、业务层合计 `MAX_TOTAL_FEATURES=5000` 约束。
 - 加载失败写入 `layerErrors`（卡片红标）；状态 persist。
 - 防卡死（loadSafety.ts）：风险分级 + 阈值 + 降级（全球矢量底图影像化、矢量 maxZoom 16、Feature/WFS/OGC/CSV 3000、GeoJSON ≤8MB、KML ≤2MB、WMS maximumLevel 16、Scene/3D SSE=16）；点聚合、串行渲染队列、字段裁剪（outFields=1，主路径 `f=geojson`；`f=json` 兼容回退用 `outFields=*` 仅取属性）。
-  - 注：`SAFETY.SCENE_MAX_LOD=15` 目前未被消费（场景层实际用 `maximumScreenSpaceError:16`，见 scene.ts），属于预留/死代码候选，勿当实际限制。
-- ★渲染健壮性（防 OOM/卡死，GlobeViewer）：① 业务层数量上限 `MAX_BUSINESS_LAYERS=5`（超限省略并提示）；② 业务层总要素预算 `MAX_TOTAL_FEATURES=5000`（`consumeFeatureBudget`，超预算略过后续层）；③ 单层 `MAX_RENDER_FEATURES=1500`（数据大只取前 N 个并提示）；④ fetch 可取消（`rec.abort`，移除图层即中止）；⑤ `renderQueue` 加 `.catch` 兜底（单个 webmap 渲染失败不卡整队列）。
-- ★**按需渲染（GPU 空闲保护）**：Viewer 固定 `requestRenderMode: true` + `maximumRenderTimeChange: Infinity`。静止场景不持续提交 GPU 帧；效果、地形、影像层、DataSource、Primitive、VectorTile provider、删除路径、`camera.flyTo` 和 `webglcontextrestored` 改变场景后，必须调用 `requestSceneRender(v)`（`cameraApi` 通过 `requestViewerRender`）请求一帧。滚轮缓动与自动环绕仅在各自动画生效期间由 `onCameraFrame` 请求下一帧；不得在静止路径无条件 `requestRender()`，也不得每帧重复写入相同 SSE 值。按需渲染不替代图层/要素/瓦片缓存预算。
+- ★渲染健壮性（防 OOM/卡死，LayerController/Loader）：① 业务层数量上限 `MAX_BUSINESS_LAYERS=5`（超限省略并提示）；② 业务层总要素预算 `MAX_TOTAL_FEATURES=5000`（`consumeFeatureBudget`，超预算略过后续层）；③ 单层 `MAX_RENDER_FEATURES=1500`（数据大只取前 N 个并提示）；④ 加载可取消（LayerController 持取消令牌，移除图层即中止）；⑤ 单个 webmap 渲染失败由 `LayerController` 任务 `.catch` 兜底，不卡调度队列。
+- ★**按需渲染（GPU 空闲保护）**：Viewer 固定 `requestRenderMode: true` + `maximumRenderTimeChange: Infinity`。静止场景不持续提交 GPU 帧；效果、地形、影像层、DataSource、Primitive、VectorTile provider、删除路径、`camera.flyTo` 和 `webglcontextrestored` 改变场景后，由 `CesiumFacade.requestFrame()`（场景变更路径统一收敛处）请求一帧。滚轮缓动与自动环绕仅在各自动画生效期间由 `onCameraFrame` 请求下一帧；不得在静止路径无条件 `requestRender()`，也不得每帧重复写入相同 SSE 值。按需渲染不替代图层/要素/瓦片缓存预算。
 - **P1–P5 视口驱动管线**（`src/globe/viewport/`）：FeatureLayer 只按相机视口 query（`resolveFeatureQueryBase` 自动解析第一个可查询层，`buildFeatureQueryUrl` 基于已解析的层号 + `geometry=envelope` + `f=geojson`），Worker 解析 → Douglas-Peucker 抽稀 → 顶点预算（`MAX_RENDER_VERTICES=200_000`）→ 要素预算（`MAX_RENDER_FEATURES`），Primitive 优先渲染（`buildLayerPrimitive`）、`hasPrimitiveRendering` 失败回退 `GeoJsonDataSource`；相机 `moveEnd` → `viewportController.update` 随视口更新，LRU 缓存视口结果。
-- **VectorTile（方案 A，maplibreImagery.ts）**：不再用 `MVTDataProvider` 裸几何、也不降级 OSM 栅格——用真实 MapLibre 按官方 `root.json` 离屏渲染（sprite/glyphs/paint/layout）。MapLibre 与 ArcGIS VectorTile 的原生瓦片均为 512px，因此自定义 `ImageryProvider` 也原生输出 512px：Cesium 会据此选择对应的 LOD，MapLibre 和 Cesium 使用同一 `z/x/y`，不做旧方案的 z-1 补偿或默认下采样；相关单测覆盖层级、裁剪与世界边缘中心收拢。实际浏览器的连续缩放仍须视觉回归验证，不能据此宣称所有样式和缩放场景已与 ArcGIS 完全一致。每次以 3×3×512px（1536px）离屏渲染，单次 GPU 读回后裁出 9 张 512px 瓦片；`renderWorldCopies: false` 在世界边缘会收拢 MapLibre 相机，裁剪必须读取 `getCenter()` 的实际中心，不能假定 `jumpTo()` 请求中心，否则会错取相邻瓦片造成数十度偏移。LRU 只缓存最终瓦片；512px 单片像素为旧方案四倍，因此块上限为 12（约 108 MiB 像素缓冲）。样式规范化会把 `VectorTileServer`（含官方相对 `../../` URL）转换为 XYZ PBF 模板，并移除对 vector source 非法的 `tileSize`。每个块等待 MapLibre `idle`（瓦片/字体/sprite 稳定）后才缓存，避免把加载中的透明区域固化。防卡死手段：① 3×3 块批量 + LRU；② 每块仅一次 GPU readPixels；③ **3 实例并行池 + 每实例严格串行**（`MAP_POOL_SIZE=3`，`_drain()` 只把块派给空闲实例 `_mapActiveCount[i]===0`，任务完成才置回空闲；★不得轮询复用——同一 canvas 被并发 `jumpTo`/快照会读到别的块的帧，标注整体错位约 90°，2026-08 已修并加回归测试）+ 单块失败不阻塞；④ `VECTOR_TILE_MAX_ZOOM=16`；⑤ 销毁时拒绝所有未决瓦片请求。
+- **VectorTile（方案 A，facade/maplibreImagery.ts）**：不再用 `MVTDataProvider` 裸几何、也不降级 OSM 栅格——用真实 MapLibre 按官方 `root.json` 离屏渲染（sprite/glyphs/paint/layout）。MapLibre 与 ArcGIS VectorTile 的原生瓦片均为 512px，因此自定义 `ImageryProvider` 也原生输出 512px：Cesium 会据此选择对应的 LOD，MapLibre 和 Cesium 使用同一 `z/x/y`，不做旧方案的 z-1 补偿或默认下采样；相关单测覆盖层级、裁剪与世界边缘中心收拢。实际浏览器的连续缩放仍须视觉回归验证，不能据此宣称所有样式和缩放场景已与 ArcGIS 完全一致。每次以 3×3×512px（1536px）离屏渲染，单次 GPU 读回后裁出 9 张 512px 瓦片；`renderWorldCopies: false` 在世界边缘会收拢 MapLibre 相机，裁剪必须读取 `getCenter()` 的实际中心，不能假定 `jumpTo()` 请求中心，否则会错取相邻瓦片造成数十度偏移。LRU 只缓存最终瓦片；512px 单片像素为旧方案四倍，因此块上限为 12（约 108 MiB 像素缓冲）。样式规范化会把 `VectorTileServer`（含官方相对 `../../` URL）转换为 XYZ PBF 模板，并移除对 vector source 非法的 `tileSize`。每个块等待 MapLibre `idle`（瓦片/字体/sprite 稳定）后才缓存，避免把加载中的透明区域固化。防卡死手段：① 3×3 块批量 + LRU；② 每块仅一次 GPU readPixels；③ **3 实例并行池 + 每实例严格串行**（`MAP_POOL_SIZE=3`，`_drain()` 只把块派给空闲实例 `_mapActiveCount[i]===0`，任务完成才置回空闲；★不得轮询复用——同一 canvas 被并发 `jumpTo`/快照会读到别的块的帧，标注整体错位约 90°，2026-08 已修并加回归测试）+ 单块失败不阻塞；④ `VECTOR_TILE_MAX_ZOOM=16`；⑤ 销毁时拒绝所有未决瓦片请求。
 - **KML 预算**：KML → `parseKmlToGeoJSON` → `runViewportProcess`（顶点/要素预算）→ `GeoJsonDataSource`，失败/无要素回退原生 `KmlDataSource.load`，仍受 `KML_MAX_BYTES=2MB` 限制。
 - **业界防卡死全景（跨类型 1–10）**：① FeatureLayer 视口取数；② WFS/OGC/CSV/KML/GeoJSON 走 Worker 预算管线（runViewportProcess）；③ FeatureLayer 用 Primitive 渲染；④ 点聚类 + 线面抽稀；⑤ 全局/逐层顶点与要素上限；⑥ 瓦片缓存 tileCacheSize + LRU + 分页 + 3D LOD 流式；⑦ SSE 分级（大视图更粗）；⑧ FeatureLayer moveEnd 防抖（250ms）；⑨ 矢量瓦片用 MapLibre 离屏 3×3 块批量栅格化（不再降级 OSM）；⑩ WebGL context lost 监听 → 优雅提示。
 - 内嵌 FeatureCollection（layerDefinition.featureCollection）走 `runViewportProcess` 预算后 `GeoJsonDataSource` 渲染；WebTiledLayer/urlTemplate 也设 maximumLevel（与 WMS/WMTS 一致）。
@@ -245,7 +271,7 @@ earth-viz-hub/
 
 > 官方文档：Search 接口 <https://developers.arcgis.com/rest/users-groups-and-items/search/> · Search reference <https://developers.arcgis.com/rest/users-groups-and-items/search-reference/> · Items and item types <https://developers.arcgis.com/rest/users-groups-and-items/items-and-item-types/>
 
-### 6.7.1 请求流水线（入口 `src/app/LayerPanel.tsx`）
+### 6.7.1 请求流水线（入口 `src/service/repository.ts`，被 LayerPanel 调用）
 
 1. **构建查询** `buildSearchQuery(type, keyword)`：
    `type:"<类型>" AND access:public AND (<权威过滤>) [AND (keyword)]`
@@ -281,7 +307,8 @@ earth-viz-hub/
 
 | 文件 | 职责 |
 |---|---|
-| `src/app/LayerPanel.tsx` | `buildSearchQuery` / `fetchSearchPage` / `mergeSearchResults` / `preflightService` / `preflightItem` / 渲染过滤 / `thumbTimeout`+`ThumbSpinner`（封面加载链与 60s 挂起兜底） |
+| `src/service/repository.ts` | `buildSearchQuery` / `fetchSearchPage` / `mergeSearchResults` / `preflightService` / `preflightItem` / 预检缓存（24h）/ 429 抖动 |
+| `src/app/LayerPanel.tsx` | 调用 Repository 的搜索/预检 + 渲染过滤 / 添加移除 / `thumbTimeout`+`ThumbSpinner`（封面加载链与 60s 挂起兜底） |
 | `src/styles/theme.css` | Map Viewer 风格双列卡片尺寸、缩略图（含 24px 加载环样式与 `[hidden]` 规则）、详情与独立添加操作样式 |
 | `src/globe/itemTypes.ts` | `SEARCH_ITEM_TYPES` / `isWebMapContainer` |
 | `src/globe/loadSafety.ts` | `SAFETY` 上限（含 MAX_FEATURES/MAX_RENDER_FEATURES/MAX_RENDER_VERTICES/KML_MAX_BYTES/VECTOR_TILE_MAX_ZOOM） / `consumeFeatureBudget` / 升降级风险 |
@@ -293,19 +320,21 @@ earth-viz-hub/
 
 - `src/app/LayerPanel.test.tsx`：关键词防抖、Web Map/Scene 并行合并去重、Map Service 解析包装、**服务类预检不可用→自动隐藏**、缩略图加载完成/失败回退/挂起超时（`thumbTimeout` 直接单测）。
 - `src/globe/loadSafety.test.ts`：`consumeFeatureBudget`（空/超预算/降级）、`riskOfLayer`、`degradeReason`、`assertUrlWithinLimit`。
-- `src/globe/maplibreImagery.test.ts`：样式规范化（sprite/glyphs/VectorTileServer→tiles 模板、官方相对服务 URL、非法 vector `tileSize` 移除）、原生 512px Cesium/MapLibre 同级 LOD、边缘中心收拢后的实际中心裁剪、块缓存命中、`idle` 后截屏、readyPromise 成功/失败/销毁、单块失败不阻塞、**并发不同块时忙碌 Map 实例不重复派发（回归：同一 canvas 严格串行）**、销毁拒绝未决请求、默认 createMap 走真实 MapLibre 构造。
-- `src/globe/GlobeViewer.test.tsx`：业务层超限提示、非法 webmap 触发渲染队列兜底、VectorTile 走 MapLibre 样式 provider（含失败销毁）、WFS/CSV/Feature 预算降级与 `signal`、KML 转 GeoJSON/回退。
+- `src/globe/facade/maplibreImagery.test.ts`：样式规范化（sprite/glyphs/VectorTileServer→tiles 模板、官方相对服务 URL、非法 vector `tileSize` 移除）、原生 512px Cesium/MapLibre 同级 LOD、边缘中心收拢后的实际中心裁剪、块缓存命中、`idle` 后截屏、readyPromise 成功/失败/销毁、单块失败不阻塞、**并发不同块时忙碌 Map 实例不重复派发（回归：同一 canvas 严格串行）**、销毁拒绝未决请求、默认 createMap 走真实 MapLibre 构造。
+- `src/globe/GlobeViewer.test.tsx`：业务层超限提示、非法 webmap 触发 LayerController 兜底、VectorTile 走 MapLibre 样式 provider（含失败销毁）、WFS/CSV/Feature 预算降级与取消、KML 转 GeoJSON/回退。
+- `src/service/repository.test.ts` / `loader.test.ts` / `scheduler.test.ts` / `http.test.ts`：搜索/预检缓存、加载管线顺序/失败/取消/预算跳过、调度优先级/串行/取消、超时/429 退避三态。
 - 新增请求/预检逻辑务必同步补测试；维持覆盖率门槛（statements/lines ≥ 90）。
-- 每次改动跑：`npm run lint` → `npm run test:coverage` → `npm run build` → `git diff --check`。
+- 每次改动跑：`npm run lint` → `npm run check:arch` → `npm run test:coverage` → `npm run build` → `git diff --check`。
 ---
 
 ## 7. 测试与质量门禁
 
-- **单测**：Vitest（jsdom），338 个用例（含 store/cameraApi/AppShell/assess/webmap/LayerPanel/EffectsPanel/GlobeViewer/geo/itemTypes/serviceItem/VectorTile/OGC/CSV/vector/loadSafety/**maplibreImagery**；AppShell 覆盖 GitHub 导航和沉浸模式，LayerPanel 覆盖封面加载链）。`npm run test:coverage`
-- **覆盖率门槛**（vitest.config.ts）：★statements ≥90 / lines ≥90 / functions ≥85 / branches ≥70（2026-08-28 实测 statements 90.10% / lines 95.25% / functions 93.45% / branches 81.25%，数字随改动小幅波动，以 CI 徽章为准）；include **全 src**（含 GlobeViewer），exclude 入口壳与测试文件——真实口径，不玩数字。
+- **单测**：Vitest（jsdom），518 个用例 / 43 个文件（含 store/CameraController/LayerController/EffectsController/AppShell/assess/facade-webmap/LayerPanel/EffectsPanel/GlobeViewer/geo/itemTypes/serviceItem/VectorTile/OGC/CSV/vector/loadSafety/**maplibreImagery**/repository/loader/scheduler/http/domain；AppShell 覆盖 GitHub 导航和沉浸模式，LayerPanel 覆盖封面加载链）。`npm run test:coverage`
+- **覆盖率门槛**（vitest.config.ts）：★statements ≥90 / lines ≥90 / functions ≥85 / branches ≥70（2026-08-29 实测 statements 91.82% / lines 95.79% / functions 94.22% / branches 83.51%，数字随改动小幅波动，以 CI 徽章为准，见 `output/coverage-w45.log`）；include **全 src**（含 GlobeViewer），exclude 入口壳、测试文件与 worker/primitive（dataWorker.ts、facade/primitive.ts）——真实口径，不玩数字。
+- **架构门禁**：`npm run check:arch`（scripts/check-arch.mjs）——Cesium/MapLibre 仅限 `src/infra/**` 与 `src/globe/facade/**`（测试豁免）、Domain 零外部依赖、app 层不被反向导入；CI 未跑此步，本地改依赖方向时必须跑。
 - **E2E**：Playwright 28 项（冒烟 mock / WebScene UI / UI 交互 mock / 真实 ArcGIS 集成 request）。
 - ★**E2E 轻量模式**：`e2e/app.spec.ts`、`e2e/ui.spec.ts` 注入 `window.__E2E__`，GlobeViewer 跳过 Cesium 创建（CI 无头软件渲染极慢会拖垮交互测试）；「球真实渲染+图层上球」由线上/容器验证覆盖（headless 测不准渲染）。
-- `src/globe/GlobeViewer.test.tsx` 覆盖按需渲染配置，以及效果和异步 MapServer 图层变更后调用 `scene.requestRender()`；改动任何异步上球路径时必须保留对应刷新断言。
+- `src/globe/GlobeViewer.test.tsx` 覆盖按需渲染配置，以及效果和异步 MapServer 图层变更后触发 `CesiumFacade.requestFrame()`（底层 scene.requestRender）；改动任何异步上球路径时必须保留对应刷新断言。
 - **徽章**：6 个（CI / License / Coverage / Deps / Tests / E2E）；`scripts/badge.mjs` 从 coverage-summary/audit/test-results/e2e-results 生成 JSON → GitHub Actions 发布到 GitHub Pages → shields endpoint 渲染，**每次 CI 实时生成**。
 - **CI**（.github/workflows/ci.yml）：audit（--omit=dev）→ lint → test:coverage → build → e2e → badge → upload-pages-artifact（main 分支 deploy 到 Pages）。
 
@@ -378,16 +407,17 @@ earth-viz-hub/
 
 ### T1 新增一个图层类型（如 CSV）
 1. `src/globe/assess.ts` → `classifyLayer` 能力表加类型判定（full/partial/none + 原因）
-2. `src/globe/webmap.ts` → `providerForWebLayer`（或 DataSource 分支）写 provider/加载逻辑
-3. `src/globe/GlobeViewer.tsx` → `renderOperationalLayers` 消费新类型
-4. 补 `assess.test.ts` / `webmap.test.ts` 用例，跑 `npm run test:coverage` 确认门槛过
+2. `src/globe/facade/webmap.ts` → `providerForWebLayer`（或 DataSource 分支）写 provider/加载逻辑
+3. `src/globe/renderWebmap.ts` → 消费新类型（经 `LayerController` 串行调度）
+4. 补 `assess.test.ts` / `facade/webmap.test.ts` 用例，跑 `npm run test:coverage` 确认门槛过
 5. 更新 §8 已知限制
+6. ★目标形态：以上三步最终应收敛为"`domain/registry` 注册真实 adapter + 契约测试"（M2 backlog，尚未落地）
 
 ### T2 加一个效果开关
 1. `src/state/store.ts` → `Effects` 接口加字段 + 初始值
 2. `src/app/EffectsPanel.tsx` → GROUPS 加开关/滑杆项
-3. `src/globe/GlobeViewer.tsx` → 效果 useEffect 里应用
-4. 补 EffectsPanel/GlobeViewer 测试；跑验证
+3. `src/controller/EffectsController.ts` → `sync` 里应用效果（内部唤醒相机 + 请求一帧）
+4. 补 EffectsPanel/EffectsController 测试；跑验证
 
 ### T3 跑全套验证（改代码后必做）
 ```text
@@ -416,7 +446,7 @@ npx wrangler pages deploy --project-name=earth-viewer
 1. 生产/Docker 环境 → 检查 `_headers` 的 CSP `script-src` 是否含 `blob:`（★常见根因）
 2. dev 正常但生产空白 → 经典 Cesium.js worker blob 被 CSP 拦（§6.6）
 3. 若刚改过图层加载 → 看 `layerErrors` 红标 / `fetchFeatureGeoJSON` 分页
-4. 若新图层/异步数据在静止球上不出现 → 确认场景变更后调用 `requestSceneRender(v)`；勿关闭 `requestRenderMode` 作为临时绕过
+4. 若新图层/异步数据在静止球上不出现 → 确认场景变更后经 `CesiumFacade.requestFrame()` 请求一帧；勿关闭 `requestRenderMode` 作为临时绕过
 
 ---
 
@@ -437,7 +467,7 @@ npx wrangler pages deploy --project-name=earth-viewer
 | 地球半透明没效果 | alpha 默认 1，只开 enabled | 显式设 front/backFaceAlpha |
 | 自动旋转方向不对 | 原地递增 heading | 递增经度（东西向） |
 | favicon 与网页图标不一致 | favicon 固定白球 | dark/light 两套 SVG 随主题 |
-| 图层多次加载/取消残留 | 异步竞态 | layerMapRef 增量管理 + cancelled |
+| 图层多次加载/取消残留 | 异步竞态 | LayerController 增量同步 + 取消令牌（LayerScheduler 串行队列） |
 | 右键倾斜带动缩放 | 事件配置 | 右键=倾斜、滚轮=缩放分离 |
 | flyTo 期间拖不动球 | 飞行未取消 | 鼠标按下 cancelFlight |
 | 瓦片缩放模糊 | SSE 固定 | 缩放中 2 → 稳定 1（迟滞）；高分屏用 `useBrowserRecommendedResolution:false` 跟随 DPR |
