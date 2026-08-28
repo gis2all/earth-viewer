@@ -13,6 +13,7 @@ const cesiumMock = vi.hoisted(() => {
   const viewerOptions: any[] = []
   const imageryLayerInstances: any[] = []
   const terrainProviders: any[] = []
+  const inputHandlers: any[] = []
   let failNextCreate = false
 
   function makeImageryLayers() {
@@ -43,6 +44,13 @@ const cesiumMock = vi.hoisted(() => {
       tileCacheSize: 0,
       preloadSiblings: false,
       tileLoadProgressEvent: { addEventListener: vi.fn(), removeEventListener: vi.fn() },
+      getHeight: vi.fn(() => undefined),
+      showGroundAtmosphere: true,
+      enableLighting: false,
+      ellipsoid: {
+        cartesianToCartographic: vi.fn(() => ({ longitude: 0.5, latitude: 0.25 })),
+      },
+      translucency: { enabled: false, frontFaceAlpha: 1, backFaceAlpha: 1 },
     }
     const scene = {
       canvas,
@@ -51,6 +59,13 @@ const cesiumMock = vi.hoisted(() => {
       postProcessStages: { bloom: { enabled: true } },
       requestRender: vi.fn(),
       primitives: { add: vi.fn(), remove: vi.fn() },
+      postUpdate: { addEventListener: vi.fn(), removeEventListener: vi.fn() },
+      skyBox: { show: true },
+      sun: { show: true },
+      moon: { show: true },
+      fog: { enabled: false },
+      verticalExaggeration: 1,
+      backgroundColor: undefined,
     }
     const camera = {
       positionCartographic: { height: 20000000, longitude: 1, latitude: 0.5 },
@@ -60,6 +75,9 @@ const cesiumMock = vi.hoisted(() => {
       position: { tag: 'pos' },
       flyTo: vi.fn(),
       cancelFlight: vi.fn(),
+      moveForward: vi.fn(),
+      setView: vi.fn(),
+      pickEllipsoid: vi.fn(() => ({ hit: true })),
       computeViewRectangle: vi.fn(() => ({ west: 0, south: 0, east: 1, north: 1 })),
       moveEnd: { addEventListener: vi.fn(), removeEventListener: vi.fn() },
     }
@@ -85,6 +103,7 @@ const cesiumMock = vi.hoisted(() => {
     viewerOptions,
     imageryLayerInstances,
     terrainProviders,
+    inputHandlers,
     makeViewer,
     get failNextCreate() {
       return failNextCreate
@@ -114,7 +133,22 @@ vi.mock('cesium', () => {
       fromCssColorString: vi.fn((s: string) => ({ css: s })),
       fromBytes: (...a: number[]) => a,
     },
+    Cartesian3: {
+      fromRadians: vi.fn((lon: number, lat: number, height: number) => ({ cart: 'rad', lon, lat, height })),
+      fromDegrees: vi.fn((lon: number, lat: number, height: number) => ({ cart: 'deg', lon, lat, height })),
+    },
     CameraEventType: { RIGHT_DRAG: 'RIGHT_DRAG', PINCH: 'PINCH' },
+    ScreenSpaceEventHandler: vi.fn(function (canvas: unknown) {
+      const h = { canvas, setInputAction: vi.fn(), destroy: vi.fn() }
+      CM.inputHandlers.push(h)
+      return h
+    }),
+    ScreenSpaceEventType: {
+      LEFT_DOWN: 'LEFT_DOWN',
+      RIGHT_DOWN: 'RIGHT_DOWN',
+      MIDDLE_DOWN: 'MIDDLE_DOWN',
+      LEFT_DOUBLE_CLICK: 'LEFT_DOUBLE_CLICK',
+    },
     UrlTemplateImageryProvider: vi.fn(function (opts: unknown) {
       return { provider: 'urlTemplate', opts }
     }),
@@ -251,6 +285,7 @@ describe('CesiumFacade（W3.4）', () => {
     cesiumMock.viewerOptions.length = 0
     cesiumMock.imageryLayerInstances.length = 0
     cesiumMock.terrainProviders.length = 0
+    cesiumMock.inputHandlers.length = 0
     cesiumMock.failNextCreate = false
     viewportMock.controllers.length = 0
     maplibreMock.instances.length = 0
@@ -390,6 +425,180 @@ describe('CesiumFacade（W3.4）', () => {
       const { facade, v } = makeFacade()
       facade.flyToHome()
       expect(vi.mocked(flyToHome)).toHaveBeenCalledWith(v)
+    })
+  })
+
+  describe('相机表面 / 效果表面（W3.2/W3.3）', () => {
+    it('cameraPosition / cameraOrientation / groundHeight 读取当前值', () => {
+      const { facade, v } = makeFacade()
+      expect(facade.cameraPosition()).toEqual({ longitude: 1, latitude: 0.5, height: 20000000 })
+      expect(facade.cameraOrientation()).toEqual({ heading: 0.1, pitch: -0.2, roll: 0 })
+      v.scene.globe.getHeight.mockReturnValue(300)
+      expect(facade.groundHeight()).toBe(300)
+      v.isDestroyed.mockReturnValue(true)
+      expect(facade.cameraPosition()).toEqual({ longitude: 0, latitude: 0, height: 0 })
+      expect(facade.cameraOrientation()).toEqual({ heading: 0, pitch: 0, roll: 0 })
+      expect(facade.groundHeight()).toBeUndefined()
+    })
+
+    it('isFlying / cancelFlight 基于 _currentFlight', () => {
+      const { facade, v } = makeFacade()
+      expect(facade.isFlying()).toBe(false)
+      ;(v.camera as { _currentFlight?: unknown })._currentFlight = { tag: 'flight' }
+      expect(facade.isFlying()).toBe(true)
+      facade.cancelFlight()
+      expect(v.camera.cancelFlight).toHaveBeenCalledTimes(1)
+      delete (v.camera as { _currentFlight?: unknown })._currentFlight
+      facade.cancelFlight()
+      expect(v.camera.cancelFlight).toHaveBeenCalledTimes(1)
+    })
+
+    it('moveForward / setView / flyToLonLat 委托相机并补渲染', () => {
+      const { facade, v } = makeFacade()
+      facade.moveForward(120)
+      expect(v.camera.moveForward).toHaveBeenCalledWith(120)
+      facade.setView({ longitude: 1.2, latitude: 0.4, height: 5000 }, { heading: 0, pitch: -0.5, roll: 0 })
+      expect(v.camera.setView).toHaveBeenCalledWith({
+        destination: { cart: 'rad', lon: 1.2, lat: 0.4, height: 5000 },
+        orientation: { heading: 0, pitch: -0.5, roll: 0 },
+      })
+      facade.flyToLonLat(30, 40, 8000, { heading: 0, pitch: -0.5, roll: 0 })
+      expect(v.camera.flyTo).toHaveBeenCalledWith({
+        destination: { cart: 'deg', lon: 30, lat: 40, height: 8000 },
+        orientation: { heading: 0, pitch: -0.5, roll: 0 },
+      })
+      expect(v.scene.requestRender).toHaveBeenCalled()
+    })
+
+    it('pickLonLat 命中返回经纬度（度），未命中返回 null', () => {
+      const { facade, v } = makeFacade()
+      const ellipsoid = v.scene.globe.ellipsoid
+      const picked = facade.pickLonLat(10, 20)
+      expect(picked).not.toBeNull()
+      expect(picked!.lon).toBeCloseTo((0.5 * 180) / Math.PI)
+      expect(picked!.lat).toBeCloseTo((0.25 * 180) / Math.PI)
+      expect(v.camera.pickEllipsoid).toHaveBeenCalledWith({ x: 10, y: 20 }, ellipsoid)
+      v.camera.pickEllipsoid.mockReturnValueOnce(null)
+      expect(facade.pickLonLat(10, 20)).toBeNull()
+    })
+
+    it('onWheel 注册/注销 canvas wheel 监听（passive:false）', () => {
+      const { facade, v } = makeFacade()
+      const cb = vi.fn()
+      const off = facade.onWheel(cb)
+      expect(v.scene.canvas.addEventListener).toHaveBeenCalledWith('wheel', expect.any(Function), {
+        passive: false,
+      })
+      const handler = v.scene.canvas.addEventListener.mock.calls.find((c: unknown[]) => c[0] === 'wheel')![1]
+      handler({ deltaY: 5 })
+      expect(cb).toHaveBeenCalledWith({ deltaY: 5 })
+      off()
+      expect(v.scene.canvas.removeEventListener).toHaveBeenCalledWith('wheel', handler)
+    })
+
+    it('onPointerDown 共享 handler 注册三键，注销到 0 引用时销毁', () => {
+      const { facade, v } = makeFacade()
+      const off1 = facade.onPointerDown(vi.fn())
+      const off2 = facade.onPointerDown(vi.fn())
+      expect(cesiumMock.inputHandlers.length).toBe(1)
+      const h = cesiumMock.inputHandlers[0]
+      expect(h.canvas).toBe(v.scene.canvas)
+      expect(h.setInputAction).toHaveBeenCalledWith(expect.any(Function), 'LEFT_DOWN')
+      expect(h.setInputAction).toHaveBeenCalledWith(expect.any(Function), 'RIGHT_DOWN')
+      expect(h.setInputAction).toHaveBeenCalledWith(expect.any(Function), 'MIDDLE_DOWN')
+      off1()
+      expect(h.destroy).not.toHaveBeenCalled()
+      off2()
+      expect(h.destroy).toHaveBeenCalledTimes(1)
+    })
+
+    it('onDoubleClick 拾取后回调经纬度（度），未命中不回调', () => {
+      const { facade, v } = makeFacade()
+      const cb = vi.fn()
+      const off = facade.onDoubleClick(cb)
+      const h = cesiumMock.inputHandlers[0]
+      const action = h.setInputAction.mock.calls.find((c: unknown[]) => c[1] === 'LEFT_DOUBLE_CLICK')![0]
+      action({ position: { x: 100, y: 200 } })
+      expect(v.camera.pickEllipsoid).toHaveBeenCalledWith({ x: 100, y: 200 }, v.scene.globe.ellipsoid)
+      expect(cb).toHaveBeenCalledWith((0.5 * 180) / Math.PI, (0.25 * 180) / Math.PI)
+      v.camera.pickEllipsoid.mockReturnValueOnce(null)
+      action({ position: { x: 100, y: 200 } })
+      expect(cb).toHaveBeenCalledTimes(1)
+      off()
+      expect(h.destroy).toHaveBeenCalledTimes(1)
+    })
+
+    it('onPostUpdate 注册/注销 scene.postUpdate', () => {
+      const { facade, v } = makeFacade()
+      const cb = vi.fn()
+      const off = facade.onPostUpdate(cb)
+      expect(v.scene.postUpdate.addEventListener).toHaveBeenCalledWith(expect.any(Function))
+      const handler = v.scene.postUpdate.addEventListener.mock.calls[0][0]
+      handler()
+      expect(cb).toHaveBeenCalledTimes(1)
+      off()
+      expect(v.scene.postUpdate.removeEventListener).toHaveBeenCalledWith(handler)
+    })
+
+    it('效果 setter 映射到 scene/globe 属性', () => {
+      const { facade, v } = makeFacade()
+      facade.setAtmosphere(false)
+      expect(v.scene.globe.showGroundAtmosphere).toBe(false)
+      facade.setBackgroundColor('#ffffff')
+      expect(v.scene.backgroundColor).toEqual({ css: '#ffffff' })
+      facade.setSkyBox(false)
+      expect(v.scene.skyBox.show).toBe(false)
+      facade.setSunMoon(false)
+      expect(v.scene.sun.show).toBe(false)
+      expect(v.scene.moon.show).toBe(false)
+      facade.setFog(true)
+      expect(v.scene.fog.enabled).toBe(true)
+      facade.setLighting(true)
+      expect(v.scene.globe.enableLighting).toBe(true)
+      facade.setVerticalExaggeration(2.5)
+      expect(v.scene.verticalExaggeration).toBe(2.5)
+      facade.setTranslucency(true, 0.4)
+      expect(v.scene.globe.translucency.enabled).toBe(true)
+      expect(v.scene.globe.translucency.frontFaceAlpha).toBe(0.4)
+      expect(v.scene.globe.translucency.backFaceAlpha).toBeCloseTo(0.5)
+      facade.setTranslucency(true, 0.95)
+      expect(v.scene.globe.translucency.backFaceAlpha).toBe(1)
+      facade.setTranslucency(false, 0.4)
+      expect(v.scene.globe.translucency.frontFaceAlpha).toBe(1)
+      expect(v.scene.globe.translucency.backFaceAlpha).toBe(1)
+    })
+
+    it('destroy 时清理共享 input handler', () => {
+      const { facade } = makeFacade()
+      facade.onPointerDown(vi.fn())
+      const h = cesiumMock.inputHandlers[0]
+      facade.destroy()
+      expect(h.destroy).toHaveBeenCalledTimes(1)
+    })
+
+    it('viewer 销毁后相机/效果表面方法安全返回', () => {
+      const { facade, v } = makeFacade()
+      v.isDestroyed.mockReturnValue(true)
+      expect(facade.cameraPosition()).toEqual({ longitude: 0, latitude: 0, height: 0 })
+      expect(facade.groundHeight()).toBeUndefined()
+      expect(facade.isFlying()).toBe(false)
+      expect(() => facade.cancelFlight()).not.toThrow()
+      expect(() => facade.moveForward(1)).not.toThrow()
+      expect(() => facade.setView({ longitude: 0, latitude: 0, height: 1 }, { heading: 0, pitch: 0, roll: 0 })).not.toThrow()
+      expect(() => facade.flyToLonLat(1, 2, 3, { heading: 0, pitch: 0, roll: 0 })).not.toThrow()
+      expect(facade.pickLonLat(1, 2)).toBeNull()
+      expect(facade.onWheel(vi.fn())).toBeInstanceOf(Function)
+      expect(facade.onPointerDown(vi.fn())).toBeInstanceOf(Function)
+      expect(facade.onDoubleClick(vi.fn())).toBeInstanceOf(Function)
+      expect(facade.onPostUpdate(vi.fn())).toBeInstanceOf(Function)
+      expect(() => facade.setAtmosphere(true)).not.toThrow()
+      expect(() => facade.setBackgroundColor('#fff')).not.toThrow()
+      expect(() => facade.setSkyBox(true)).not.toThrow()
+      expect(() => facade.setSunMoon(true)).not.toThrow()
+      expect(() => facade.setFog(true)).not.toThrow()
+      expect(() => facade.setLighting(true)).not.toThrow()
+      expect(() => facade.setVerticalExaggeration(1)).not.toThrow()
+      expect(() => facade.setTranslucency(true, 0.5)).not.toThrow()
     })
   })
 

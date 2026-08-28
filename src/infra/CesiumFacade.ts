@@ -155,6 +155,215 @@ export class CesiumFacade {
     if (globe.maximumScreenSpaceError !== value) globe.maximumScreenSpaceError = value
   }
 
+  // ---- 相机表面（供 CameraController 使用；只暴露业务语义，不泄漏 Cesium 类型） ----
+
+  /** 当前相机位置：经度/纬度（弧度）+ 高度（米）。 */
+  cameraPosition(): { longitude: number; latitude: number; height: number } {
+    const v = this.viewer
+    if (!v || v.isDestroyed()) return { longitude: 0, latitude: 0, height: 0 }
+    const c = v.camera.positionCartographic
+    return { longitude: c.longitude, latitude: c.latitude, height: c.height }
+  }
+
+  /** 当前相机朝向（heading/pitch/roll，弧度）。 */
+  cameraOrientation(): { heading: number; pitch: number; roll: number } {
+    const v = this.viewer
+    if (!v || v.isDestroyed()) return { heading: 0, pitch: 0, roll: 0 }
+    return { heading: v.camera.heading, pitch: v.camera.pitch, roll: v.camera.roll }
+  }
+
+  /** 相机正下方地形高度（米）；无数据返回 undefined。 */
+  groundHeight(): number | undefined {
+    const v = this.viewer
+    if (!v || v.isDestroyed()) return undefined
+    return v.scene.globe.getHeight(v.camera.positionCartographic)
+  }
+
+  /** 是否处于飞行动画中（内部 _currentFlight 探测）。 */
+  isFlying(): boolean {
+    const v = this.viewer
+    if (!v || v.isDestroyed()) return false
+    const c = v.camera as unknown as { _currentFlight?: unknown }
+    return !!c._currentFlight
+  }
+
+  /** 取消飞行动画（无飞行时静默）。 */
+  cancelFlight() {
+    const v = this.viewer
+    if (!v || v.isDestroyed()) return
+    try {
+      const c = v.camera as unknown as { _currentFlight?: unknown }
+      if (c._currentFlight) v.camera.cancelFlight()
+    } catch {
+      // 忽略
+    }
+  }
+
+  /** 沿相机视向移动指定距离（滚轮缓动用）。 */
+  moveForward(distance: number) {
+    const v = this.viewer
+    if (!v || v.isDestroyed()) return
+    v.camera.moveForward(distance)
+  }
+
+  /** 直接设置相机位置（弧度坐标）+ 朝向。 */
+  setView(
+    position: { longitude: number; latitude: number; height: number },
+    orientation: { heading: number; pitch: number; roll: number }
+  ) {
+    const v = this.viewer
+    if (!v || v.isDestroyed()) return
+    v.camera.setView({
+      destination: Cesium.Cartesian3.fromRadians(position.longitude, position.latitude, position.height),
+      orientation,
+    })
+  }
+
+  /** 飞行到指定经纬度（度）+ 高度，并请求一帧。 */
+  flyToLonLat(
+    lon: number,
+    lat: number,
+    height: number,
+    orientation: { heading: number; pitch: number; roll: number }
+  ) {
+    const v = this.viewer
+    if (!v || v.isDestroyed()) return
+    v.camera.flyTo({
+      destination: Cesium.Cartesian3.fromDegrees(lon, lat, height),
+      orientation,
+    })
+    this.requestFrame()
+  }
+
+  /** 屏幕坐标拾取 → 经纬度（度）；未命中椭球返回 null。 */
+  pickLonLat(x: number, y: number): { lon: number; lat: number } | null {
+    const v = this.viewer
+    if (!v || v.isDestroyed()) return null
+    const picked = v.camera.pickEllipsoid({ x, y } as unknown as Cesium.Cartesian2, v.scene.globe.ellipsoid)
+    if (!picked) return null
+    const carto = v.scene.globe.ellipsoid.cartesianToCartographic(picked)
+    return { lon: Cesium.Math.toDegrees(carto.longitude), lat: Cesium.Math.toDegrees(carto.latitude) }
+  }
+
+  /** 注册滚轮监听（passive:false 以便 preventDefault）；返回注销函数。 */
+  onWheel(cb: (e: WheelEvent) => void): () => void {
+    const v = this.viewer
+    if (!v || v.isDestroyed()) return () => {}
+    const h = (e: WheelEvent) => cb(e)
+    v.scene.canvas.addEventListener('wheel', h, { passive: false })
+    return () => v.scene.canvas.removeEventListener('wheel', h)
+  }
+
+  /** 注册鼠标按下（左/右/中）监听；返回注销函数。 */
+  onPointerDown(cb: () => void): () => void {
+    const h = this.acquireInputHandler()
+    if (!h) return () => {}
+    const act = () => cb()
+    h.setInputAction(act, Cesium.ScreenSpaceEventType.LEFT_DOWN)
+    h.setInputAction(act, Cesium.ScreenSpaceEventType.RIGHT_DOWN)
+    h.setInputAction(act, Cesium.ScreenSpaceEventType.MIDDLE_DOWN)
+    return () => this.releaseInputHandler()
+  }
+
+  /** 注册双击监听（拾取后回调经纬度，度）；返回注销函数。 */
+  onDoubleClick(cb: (lon: number, lat: number) => void): () => void {
+    const v = this.viewer
+    const h = this.acquireInputHandler()
+    if (!h || !v) return () => {}
+    h.setInputAction((movement: { position: Cesium.Cartesian2 }) => {
+      const picked = v.camera.pickEllipsoid(movement.position, v.scene.globe.ellipsoid)
+      if (!picked) return
+      const carto = v.scene.globe.ellipsoid.cartesianToCartographic(picked)
+      cb(Cesium.Math.toDegrees(carto.longitude), Cesium.Math.toDegrees(carto.latitude))
+    }, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK)
+    return () => this.releaseInputHandler()
+  }
+
+  /** 注册每帧回调（postUpdate）；返回注销函数。 */
+  onPostUpdate(cb: () => void): () => void {
+    const v = this.viewer
+    if (!v || v.isDestroyed()) return () => {}
+    const h = () => cb()
+    v.scene.postUpdate.addEventListener(h)
+    return () => v.scene.postUpdate.removeEventListener(h)
+  }
+
+  // ---- 效果表面（供 EffectsController 使用；业务语义，不泄漏 Cesium 类型） ----
+
+  setAtmosphere(show: boolean) {
+    const v = this.viewer
+    if (!v || v.isDestroyed()) return
+    v.scene.globe.showGroundAtmosphere = show
+  }
+
+  setBackgroundColor(color: string) {
+    const v = this.viewer
+    if (!v || v.isDestroyed()) return
+    v.scene.backgroundColor = Cesium.Color.fromCssColorString(color)
+  }
+
+  setSkyBox(show: boolean) {
+    const v = this.viewer
+    if (!v || v.isDestroyed()) return
+    if (v.scene.skyBox) v.scene.skyBox.show = show
+  }
+
+  setSunMoon(show: boolean) {
+    const v = this.viewer
+    if (!v || v.isDestroyed()) return
+    if (v.scene.sun) v.scene.sun.show = show
+    if (v.scene.moon) v.scene.moon.show = show
+  }
+
+  setFog(enabled: boolean) {
+    const v = this.viewer
+    if (!v || v.isDestroyed()) return
+    v.scene.fog.enabled = enabled
+  }
+
+  setLighting(enabled: boolean) {
+    const v = this.viewer
+    if (!v || v.isDestroyed()) return
+    v.scene.globe.enableLighting = enabled
+  }
+
+  setVerticalExaggeration(value: number) {
+    const v = this.viewer
+    if (!v || v.isDestroyed()) return
+    v.scene.verticalExaggeration = value
+  }
+
+  setTranslucency(enabled: boolean, alpha: number) {
+    const v = this.viewer
+    if (!v || v.isDestroyed()) return
+    const g = v.scene.globe
+    if (!g.translucency) return
+    g.translucency.enabled = enabled
+    // Cesium 的 frontFaceAlpha/backFaceAlpha 默认 1（完全不透明），需显式调低才有半透明效果
+    g.translucency.frontFaceAlpha = enabled ? alpha : 1
+    g.translucency.backFaceAlpha = enabled ? Math.min(1, alpha + 0.1) : 1
+  }
+
+  private inputHandler: Cesium.ScreenSpaceEventHandler | null = null
+  private inputRefs = 0
+
+  private acquireInputHandler(): Cesium.ScreenSpaceEventHandler | null {
+    const v = this.viewer
+    if (!v || v.isDestroyed()) return null
+    if (!this.inputHandler) this.inputHandler = new Cesium.ScreenSpaceEventHandler(v.scene.canvas)
+    this.inputRefs++
+    return this.inputHandler
+  }
+
+  private releaseInputHandler() {
+    this.inputRefs--
+    if (this.inputRefs <= 0 && this.inputHandler) {
+      this.inputHandler.destroy()
+      this.inputHandler = null
+      this.inputRefs = 0
+    }
+  }
+
   getTerrainProvider(): Promise<Cesium.TerrainProvider> {
     if (cachedTerrain) return Promise.resolve(cachedTerrain)
     if (!terrainLoading) {
@@ -180,7 +389,7 @@ export class CesiumFacade {
   flyTo(destination: unknown, orientation?: { heading: number; pitch: number; roll: number }) {
     const v = this.viewer
     if (!v || v.isDestroyed()) return
-    v.camera.flyTo({ destination, orientation })
+    v.camera.flyTo({ destination: destination as Cesium.Cartesian3 | Cesium.Rectangle, orientation })
     this.requestFrame()
   }
 
@@ -432,13 +641,18 @@ export class CesiumFacade {
     })
     runtime.primitives.forEach((p) => {
       const prim = (p as unknown as { prim?: unknown }).prim
-      if (prim !== undefined) v.scene.primitives.remove(prim, true)
+      if (prim !== undefined) {
+        ;(v.scene.primitives.remove as (p: unknown, destroy?: boolean) => boolean)(prim, true)
+      }
     })
   }
 
   destroy() {
     const v = this.viewer
     if (!v) return
+    this.inputHandler?.destroy()
+    this.inputHandler = null
+    this.inputRefs = 0
     unregisterViewer()
     v.destroy()
     this.viewer = null

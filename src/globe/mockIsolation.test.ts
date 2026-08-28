@@ -15,6 +15,6 @@ import { fetchOgcFeatureGeoJSON as exported } from './ogc'
 
 describe('共享 Cesium mock 与业务模块 mock 隔离', () => {
   it('测试文件的 hoisted mock 仍生效（未被共享 mock 覆盖）', () => {
-    expect(m.fn === exported).toBe(true)
+    expect(m.fn as unknown as typeof exported === exported).toBe(true)
   })
 })

@@ -138,18 +138,6 @@ export async function renderWebmap(job: LayerRenderJob, f: CesiumFacade): Promis
         job.onError('内嵌要素集加载失败：' + (op.title || op.url))
       }
     } else if (op.url) {
-      if (process.env.VITEST_DEBUG_BRANCH) {
-        // eslint-disable-next-line no-console
-        console.log('[debug] op', op.id, op.layerType, op.url, {
-          scene: isSceneLayer(op),
-          tiles: is3dTilesLayer(op),
-          wfs: isWfsLayer(op),
-          csv: isCsvLayer(op),
-          feature: isFeatureLayer(op),
-          geojson: isGeoJsonLayer(op),
-          kml: isKmlLayer(op),
-        })
-      }
       if (isSceneLayer(op)) {
         // ArcGIS SceneServer / I3S 3D 场景
         try {
@@ -173,20 +161,7 @@ export async function renderWebmap(job: LayerRenderJob, f: CesiumFacade): Promis
       } else if (isWfsLayer(op)) {
         // WFS / OGC API Features：通过协议适配器读取 GeoJSON
         try {
-          if (process.env.VITEST_DEBUG_BRANCH) {
-            // eslint-disable-next-line no-console
-            console.log(
-              '[debug] enter wfs branch, fetch =',
-              typeof fetchOgcFeatureGeoJSON,
-              'mockCalls =',
-              (fetchOgcFeatureGeoJSON as unknown as { mock?: { calls: unknown[] } }).mock?.calls?.length
-            )
-          }
           const gj = await fetchOgcFeatureGeoJSON(op.url, op, signal)
-          if (process.env.VITEST_DEBUG_BRANCH) {
-            // eslint-disable-next-line no-console
-            console.log('[debug] gj resolved', gj && typeof gj === 'object' ? Object.keys(gj).join(',') : typeof gj)
-          }
           if (!keepAlive()) return
           const res = await runViewportProcess({
             geojson: gj,
@@ -204,10 +179,6 @@ export async function renderWebmap(job: LayerRenderJob, f: CesiumFacade): Promis
           if (!keepAlive() || !ds) return
           job.onClearError()
         } catch (e) {
-          if (process.env.VITEST_DEBUG_BRANCH) {
-            // eslint-disable-next-line no-console
-            console.log('[debug] wfs branch error', String(e).slice(0, 160))
-          }
           console.error('[layer] WFS/OGC 要素图层加载失败', op.url, e)
           job.onError('WFS/OGC 要素图层加载失败：' + (op.title || op.url))
         }

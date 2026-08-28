@@ -73,6 +73,8 @@ function makeJob(webmap: Record<string, unknown>, overrides: Partial<LayerRender
   }
 }
 
+type MockedFacade = CesiumFacade & { [K in keyof CesiumFacade]: ReturnType<typeof vi.fn> }
+
 function makeFacade(overrides: Partial<Record<keyof CesiumFacade, unknown>> = {}) {
   const f = {
     addWebLayerImagery: vi.fn(async () => false),
@@ -92,7 +94,7 @@ function makeFacade(overrides: Partial<Record<keyof CesiumFacade, unknown>> = {}
     flyToHome: vi.fn(),
     ...overrides,
   }
-  return f as unknown as CesiumFacade & Record<string, ReturnType<typeof vi.fn>>
+  return f as unknown as MockedFacade
 }
 
 function webmapWithLayer(layer: Record<string, unknown>): Record<string, unknown> {
@@ -105,8 +107,6 @@ const makeFeatureService = (layers: string[], extent?: FeatureServiceInfo['exten
   layers,
   ...(extent ? { extent } : {}),
 })
-
-const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 
 beforeEach(() => {
   vi.clearAllMocks()

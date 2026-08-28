@@ -1,6 +1,25 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { decodeVectorTileLayers, vectorTileUrl, fetchVectorTileGeoJSON, fetchVectorTileTemplates, toCesiumMvtTemplate, applyVectorTileMemoryLimit } from './vectorTile'
 
+vi.mock('@mapbox/vector-tile', () => ({
+  VectorTile: vi.fn(function (this: { layers: unknown }, _pbf: unknown) {
+    this.layers = {
+      roads: {
+        length: 1,
+        feature: () => ({
+          type: 1,
+          properties: { name: 'road' },
+          toGeoJSON: () => ({ geometry: { type: 'Point', coordinates: [116, 39] } }),
+        }),
+      },
+    }
+  }),
+}))
+
+vi.mock('pbf', () => ({
+  PbfReader: vi.fn(),
+}))
+
 // 构造一个假 VectorTile（避免真实 pbf 二进制）
 function fakeTile(features: { type: number; props?: Record<string, unknown>; geom?: unknown }[]) {
   return {
@@ -78,6 +97,21 @@ describe('fetchVectorTileGeoJSON', () => {
   it('HTTP 失败抛错', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false })))
     await expect(fetchVectorTileGeoJSON('https://x/tile.pbf', 0, 0, 0)).rejects.toThrow('矢量瓦片加载失败')
+  })
+
+  it('拉取并解码一张瓦片为 FeatureCollection', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+      }))
+    )
+    const out = await fetchVectorTileGeoJSON('https://x/tile/3/4/5.pbf', 3, 4, 5)
+    expect(out.type).toBe('FeatureCollection')
+    expect(out.features).toEqual([
+      { type: 'Feature', properties: { name: 'road' }, geometry: { type: 'Point', coordinates: [116, 39] } },
+    ])
   })
 })
 
