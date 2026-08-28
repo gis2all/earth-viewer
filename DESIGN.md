@@ -52,8 +52,8 @@ spacing:
   control-row-vertical: 9px
 sizing:
   header-height: 52px
-  left-panel-width: 423px
-  right-panel-width: 304px
+  left-panel-width: "clamp(320px, 20vw, 423px)"
+  right-panel-width: "clamp(240px, 14vw, 304px)"
   scrollbar-width: 7px
   icon-button: 32px
   small-icon: 15px
@@ -85,9 +85,9 @@ The scrollbar is intentionally visible enough to distinguish the scrollable pane
 ## Layout
 
 - The top bar is 52px high with 16px horizontal padding.
-- The left layer panel is 423px wide; its scroll content is 417px wide with 16px left and 10px right padding.
-- The right effects panel is 304px wide; its scroll content is 298px wide with 14px inline padding.
-- Collapsed panels animate to zero width. Their expand controls remain 24px square and use the same icon treatment as the panel fold controls.
+- The left layer panel is `clamp(320px, 20vw, 423px)` wide (20% of viewport width, capped at 320–423px); its scroll content is `calc(100% - 6px)` with 16px left and 10px right padding.
+- The right effects panel is `clamp(240px, 14vw, 304px)` wide (14% of viewport width, capped at 240–304px); its scroll content is `calc(100% - 6px)` with 14px inline padding.
+- Collapsed panels slide fully off-screen via a horizontal `transform: translateX` animation (left −100%, right +100%, 220ms). The panel keeps its final width throughout, so inner content never reflows during the transition; do not regress to a width-based animation. The expand controls remain 24px square and use the same icon treatment as the panel fold controls.
 - The gallery is a two-column grid with an 8px gap. The card width is fluid within the panel.
 
 ## Components
