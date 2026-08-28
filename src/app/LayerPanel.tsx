@@ -1,26 +1,21 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAppStore } from '../state/store'
-import { fetchWebmap, withFetchTimeout } from '../globe/webmap'
 import { assessWebmap } from '../globe/assess'
-import { SEARCH_ITEM_TYPES, isWebMapContainer } from '../globe/itemTypes'
+import { isWebMapContainer } from '../globe/itemTypes'
 import { resolveServiceItem } from '../globe/serviceItem'
-
-interface SearchResult {
-  id: string
-  title: string
-  thumbnail?: string
-  snippet?: string
-  numViews?: number
-  fidelity?: 'full' | 'partial' | 'none'
-  url?: string
-  type?: string
-  contentStatus?: string
-  groupDesignations?: string | string[]
-  typeKeywords?: string[]
-  tags?: string[]
-}
-
-type ItemMetadata = Pick<SearchResult, 'contentStatus' | 'groupDesignations'>
+import {
+  PREFLIGHT_TYPES,
+  SEARCH_TYPES,
+  fetchItemMetadata,
+  fetchSearchPage,
+  fetchWebmap,
+  mergeSearchResults,
+  preflightItem,
+  readPreflightCache,
+  writePreflightCache,
+  type PreflightEntry,
+  type SearchResult,
+} from '../service/repository'
 
 function textTerms(value: string | string[] | undefined): string[] {
   return (Array.isArray(value) ? value : value ? [value] : [])
@@ -97,170 +92,8 @@ function itemDetailsUrl(id: string): string {
   return 'https://www.arcgis.com/home/item.html?id=' + encodeURIComponent(id)
 }
 
-async function fetchItemMetadata(id: string, signal: AbortSignal): Promise<ItemMetadata | null> {
-  try {
-    const r = await fetch(`/sharing/rest/content/items/${encodeURIComponent(id)}?f=json`, { signal: withFetchTimeout(signal) })
-    if (!r.ok) return null
-    const value = (await r.json().catch(() => null)) as Record<string, unknown> | null
-    if (!value || value.error) return null
-    const contentStatus = typeof value.contentStatus === 'string' ? value.contentStatus : undefined
-    const groupDesignations = Array.isArray(value.groupDesignations)
-      ? value.groupDesignations.filter((v): v is string => typeof v === 'string')
-      : typeof value.groupDesignations === 'string'
-        ? value.groupDesignations
-        : undefined
-    return { contentStatus, groupDesignations }
-  } catch {
-    return null
-  }
-}
-
-type SearchType = (typeof SEARCH_ITEM_TYPES)[number]
-
-const SEARCH_TYPES: SearchType[] = [...SEARCH_ITEM_TYPES]
-const SEARCH_PAGE = 12
 const GALLERY_PAGE = 24
 const APPEND_STEP = 12
-/** 服务类 item 才需要服务根预检；容器（Web Map/Scene）与文件类走点开后校验。 */
-const PREFLIGHT_TYPES = new Set<string>([
-  'Map Service',
-  'Feature Service',
-  'Image Service',
-  'Scene Service',
-  'Vector Tile Service',
-  'WMS',
-  'WMTS',
-  'WFS',
-  'KML',
-])
-const PREFLIGHT_ABORT_MS = 3000
-const PREFLIGHT_CACHE_KEY = 'earth-viewer:preflight'
-const PREFLIGHT_TTL_MS = 24 * 60 * 60 * 1000
-
-type PreflightState = 'ok' | 'bad'
-
-function readPreflightCache(): Map<string, { s: PreflightState; t: number }> {
-  try {
-    const raw = localStorage.getItem(PREFLIGHT_CACHE_KEY)
-    if (!raw) return new Map()
-    const obj = JSON.parse(raw) as Record<string, { s: PreflightState; t: number }>
-    const now = Date.now()
-    const map = new Map<string, { s: PreflightState; t: number }>()
-    for (const [k, v] of Object.entries(obj)) {
-      if (v && (v.s === 'ok' || v.s === 'bad') && now - v.t < PREFLIGHT_TTL_MS) map.set(k, v)
-    }
-    return map
-  } catch {
-    return new Map()
-  }
-}
-
-function writePreflightCache(map: Map<string, { s: PreflightState; t: number }>) {
-  try {
-    localStorage.setItem(PREFLIGHT_CACHE_KEY, JSON.stringify(Object.fromEntries(map.entries())))
-  } catch {
-    /* 忽略配额/隐私限制 */
-  }
-}
-
-/** 轻量探测服务根：Token Required / Subscription canceled / 403 等 => 不可用。 */
-async function preflightService(url: string): Promise<boolean> {
-  try {
-    const sep = url.includes('?') ? '&' : '?'
-    const r = await fetch(url + sep + 'f=json', {
-      headers: { 'User-Agent': 'Mozilla/5.0' },
-      signal: AbortSignal.timeout(PREFLIGHT_ABORT_MS),
-    })
-    if (!r.ok) return false
-    const j: unknown = await r.json().catch(() => null)
-    const err = (j as { error?: unknown } | null)?.error
-    return !!j && !err
-  } catch {
-    return false
-  }
-}
-
-
-/** 按 item 类型选择预检方式：容器（Web Map/Scene）走 data（/sharing 代理），服务类走服务根。 */
-async function preflightItem(it: SearchResult): Promise<boolean> {
-  try {
-    if (isWebMapContainer(it.type ?? '')) {
-      const r = await fetch(`/sharing/rest/content/items/${it.id}/data?f=json`, {
-        signal: AbortSignal.timeout(PREFLIGHT_ABORT_MS),
-      })
-      if (!r.ok) return false
-      const j: unknown = await r.json().catch(() => null)
-      return !!j && !(j as { error?: unknown } | null)?.error
-    }
-    if (it.url) return await preflightService(it.url)
-    return true
-  } catch {
-    return false
-  }
-}
-
-const AUTHORITATIVE_FILTER =
-  'AND (contentstatus:"org_authoritative" OR contentstatus:"public_authoritative") NOT contentstatus:"deprecated"'
-
-function buildSearchQuery(type: SearchType, keyword: string): string {
-  const query = `type:"${type}" AND access:public ${AUTHORITATIVE_FILTER}`
-  return keyword ? query + ' AND (' + keyword + ')' : query
-}
-
-function mergeSearchResults(groups: SearchResult[][]): SearchResult[] {
-  const seen = new Set<string>()
-  return groups
-    .flat()
-    .filter((item) => {
-      if (!item.id || seen.has(item.id)) return false
-      seen.add(item.id)
-      return true
-    })
-    .sort((a, b) => {
-      const views = (b.numViews ?? 0) - (a.numViews ?? 0)
-      return views || a.id.localeCompare(b.id)
-    })
-}
-
-async function fetchSearchPage(
-  type: SearchType,
-  keyword: string,
-  start: number,
-  signal: AbortSignal
-): Promise<{ results: SearchResult[]; nextStart?: number | null }> {
-  const q = buildSearchQuery(type, keyword)
-  const r = await fetch(
-    '/sharing/rest/search?q=' +
-      encodeURIComponent(q) +
-      '&f=json&num=' +
-      SEARCH_PAGE +
-      '&start=' +
-      start +
-      '&sortField=numViews&sortOrder=desc',
-    { signal: withFetchTimeout(signal) }
-  )
-  if (!r.ok) throw new Error('ArcGIS 搜索失败')
-  const j = (await r.json()) as {
-    results?: SearchResult[]
-    nextStart?: number
-  }
-  return {
-    results: (j.results ?? []).map((it) => ({
-      id: it.id,
-      title: it.title,
-      thumbnail: it.thumbnail,
-      snippet: it.snippet,
-      numViews: it.numViews,
-      url: it.url,
-      type: it.type,
-      contentStatus: it.contentStatus,
-      groupDesignations: it.groupDesignations,
-      typeKeywords: it.typeKeywords,
-      tags: it.tags,
-    })),
-    nextStart: j.nextStart,
-  }
-}
 
 function thumbUrl(id: string, t?: string): string | undefined {
   if (!t) return undefined
@@ -318,7 +151,7 @@ export function LayerPanel() {
     for (const [id, v] of cache) if (v.s === 'bad') set.add(id)
     return set
   })
-  const preflightCacheRef = useRef<Map<string, { s: PreflightState; t: number }>>(readPreflightCache())
+  const preflightCacheRef = useRef<Map<string, PreflightEntry>>(readPreflightCache())
   const preflightGenRef = useRef(0)
   const preflightInflightRef = useRef<Set<string>>(new Set())
   const metadataGenRef = useRef(0)

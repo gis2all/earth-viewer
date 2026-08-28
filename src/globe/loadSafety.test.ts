@@ -1,5 +1,23 @@
 import { describe, it, expect, vi } from 'vitest'
 import { consumeFeatureBudget, riskOfLayer, degradeReason, assertUrlWithinLimit } from './loadSafety'
+import { SAFETY } from './loadSafety'
+import { DEFAULT_BUDGET_POLICY } from '../domain/policy'
+
+describe('SAFETY 与 domain BudgetPolicy 对齐（W1.4 防漂移）', () => {
+  it('默认值一致', () => {
+    expect({
+      maxFeatures: SAFETY.MAX_FEATURES,
+      maxTotalFeatures: SAFETY.MAX_TOTAL_FEATURES,
+      maxRenderFeatures: SAFETY.MAX_RENDER_FEATURES,
+      maxRenderVertices: SAFETY.MAX_RENDER_VERTICES,
+      maxFileBytes: SAFETY.MAX_FILE_BYTES,
+      kmlMaxBytes: SAFETY.KML_MAX_BYTES,
+      vectorTileMaxZoom: SAFETY.VECTOR_TILE_MAX_ZOOM,
+      sceneMaxLod: SAFETY.SCENE_MAX_LOD,
+      imageryMaxLevel: SAFETY.IMAGERY_MAX_LEVEL,
+    }).toEqual(DEFAULT_BUDGET_POLICY)
+  })
+})
 
 describe('consumeFeatureBudget', () => {
   it('空 features 原样返回，不消耗预算', () => {

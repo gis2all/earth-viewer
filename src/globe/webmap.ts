@@ -1,5 +1,23 @@
 import * as Cesium from 'cesium'
 import { SAFETY } from './loadSafety'
+import {
+  detectMapService,
+  fetchFeatureGeoJSON,
+  fetchFeatureRenderer,
+  fetchWebmap,
+  type MapServiceInfo,
+} from '../service/repository'
+import {
+  isCsvInput,
+  isFeatureCollectionInput,
+  isFeatureInput,
+  isGeoJsonInput,
+  isKmlInput,
+  isSceneInput,
+  is3dTilesInput,
+  isVectorTileInput,
+  isWfsInput,
+} from '../domain/registry'
 
 // 网络请求超时（毫秒）：慢速服务不阻塞交互
 const FETCH_TIMEOUT = 15000
@@ -48,51 +66,16 @@ function layerKind(l: WebLayer): string {
   return l.type || l.layerType || ''
 }
 
-/** 通过本地代理拉取 Web Map JSON（支持 AbortSignal 取消） */
-export async function fetchWebmap(itemId: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
-  const r = await fetch(`/sharing/rest/content/items/${itemId}/data?f=json`, { signal: withFetchTimeout(signal) })
-  if (!r.ok) throw new Error('获取 Web Map 失败')
-  return r.json()
-}
+/** 通过本地代理拉取 Web Map JSON（实现见 service/repository.ts）。 */
+export { fetchWebmap }
 
 function mapServerTileUrl(url: string): string {
   return url.replace(/\/?$/, '/tile/{z}/{y}/{x}')
 }
 
-// 服务坐标系探测缓存（同一 URL 只探测一次）
-export interface MapServiceInfo {
-  wkid: number
-  maxLevel: number
-  /** 是否有缓存瓦片（tileInfo）——false 表示动态 MapServer，不能用 /tile/ 模板请求 */
-  tiled: boolean
-}
+export type { MapServiceInfo }
 
-const CRS_CACHE = new Map<string, MapServiceInfo>()
-
-/** 探测 MapServer/ImageServer：坐标系（wkid）、最大级别、是否缓存瓦片；失败返回 null */
-export async function detectMapService(url: string): Promise<MapServiceInfo | null> {
-  const base = url.replace(/\/?$/, '')
-  const cached = CRS_CACHE.get(base)
-  if (cached) return cached
-  try {
-    const r = await fetch(`${base}?f=json`, { signal: withFetchTimeout() })
-    if (!r.ok) return null
-    const j = (await r.json()) as {
-      spatialReference?: { wkid?: number; latestWkid?: number }
-      tileInfo?: { lods?: unknown[] }
-    }
-    const wkid = j.spatialReference?.wkid ?? j.spatialReference?.latestWkid
-    if (typeof wkid !== 'number') return null
-    const lods = j.tileInfo?.lods
-    const maxLevel = Array.isArray(lods) && lods.length ? lods.length - 1 : 0
-    const info: MapServiceInfo = { wkid, maxLevel, tiled: !!j.tileInfo }
-    CRS_CACHE.set(base, info)
-    return info
-  } catch {
-    return null
-  }
-}
-
+/** 服务坐标系探测（实现见 service/repository.ts，带 CRS_CACHE）。 */
 const detectCrs = detectMapService
 
 /** 瓦片服务 → Provider：4326 用 GeographicTilingScheme，其余（3857/未知）用默认 Web Mercator；动态服务（无 tileInfo）返回 null */
@@ -203,125 +186,30 @@ export interface FeatureStyle {
   fill?: Cesium.Color
 }
 
-export function isFeatureLayer(layer: WebLayer): boolean {
-  return /FeatureLayer|FeatureServer/i.test(layerKind(layer))
-}
+// M1 W1.2：判定逻辑收敛到 domain/registry（纯函数），这里保留导出别名保持兼容；
+// M3 后随 GlobeViewer 瘦身清理。
+export const isFeatureLayer = (layer: WebLayer): boolean => isFeatureInput(layer)
 
-export function isGeoJsonLayer(layer: WebLayer): boolean {
-  return /GeoJSONLayer/i.test(layerKind(layer))
-}
+export const isGeoJsonLayer = (layer: WebLayer): boolean => isGeoJsonInput(layer)
 
-export function isFeatureCollectionLayer(layer: WebLayer): boolean {
-  return /featureCollection|Feature Collection/i.test(layerKind(layer)) || !!layer.layerDefinition?.featureCollection
-}
+export const isFeatureCollectionLayer = (layer: WebLayer): boolean => isFeatureCollectionInput(layer)
 
-export function isKmlLayer(layer: WebLayer): boolean {
-  return /KMLLayer|KML/i.test(layerKind(layer))
-}
-export function isVectorTileLayer(layer: WebLayer): boolean {
-  return /VectorTileLayer/i.test(layerKind(layer))
-}
+export const isKmlLayer = (layer: WebLayer): boolean => isKmlInput(layer)
 
-export function isSceneLayer(layer: WebLayer): boolean {
-  return /SceneLayer|ArcGISSceneServiceLayer|ArcGISSceneLayer|I3S|IntegratedMesh|PointCloud|3DObject|BuildingScene/i.test(layerKind(layer))
-}
+export const isVectorTileLayer = (layer: WebLayer): boolean => isVectorTileInput(layer)
 
-export function is3dTilesLayer(layer: WebLayer): boolean {
-  return /3DTiles|Cesium3DTiles|Tileset/i.test(layerKind(layer)) || /tileset\.json/i.test(layer.url ?? '')
-}
+export const isSceneLayer = (layer: WebLayer): boolean => isSceneInput(layer)
 
-export function isWfsLayer(layer: WebLayer): boolean {
-  return /WFS|OGCFeatureServer|OGCFeatureService/i.test(layerKind(layer))
-}
+export const is3dTilesLayer = (layer: WebLayer): boolean => is3dTilesInput(layer)
 
-export function isCsvLayer(layer: WebLayer): boolean {
-  return /CSVLayer/i.test(layerKind(layer))
-}
+export const isWfsLayer = (layer: WebLayer): boolean => isWfsInput(layer)
+
+export const isCsvLayer = (layer: WebLayer): boolean => isCsvInput(layer)
 
 
 
-/** 要素服务 → GeoJSON（按 resultOffset 分页拉取，上限 limit 防止超大服务拖垮页面） */
-// ArcGIS JSON (f=json) query -> GeoJSON FeatureCollection (Point/Line/Polygon).
-function arcgisQueryToFeatureCollection(j: { features?: Array<{ attributes?: Record<string, unknown>; geometry?: unknown }> }): { type: 'FeatureCollection'; features: unknown[] } {
-  const features: unknown[] = []
-  for (const f of j.features ?? []) {
-    const g = f.geometry as { x?: number; y?: number; paths?: unknown[]; rings?: unknown[] } | null
-    let geometry: unknown = null
-    if (g && typeof g.x === 'number' && typeof g.y === 'number') {
-      geometry = { type: 'Point', coordinates: [g.x, g.y] }
-    } else if (g && Array.isArray(g.paths)) {
-      geometry = { type: g.paths.length === 1 ? 'LineString' : 'MultiLineString', coordinates: g.paths.length === 1 ? (g.paths[0] as unknown[]) : g.paths }
-    } else if (g && Array.isArray(g.rings)) {
-      geometry = { type: 'Polygon', coordinates: g.rings }
-    }
-    features.push({ type: 'Feature', properties: f.attributes ?? {}, geometry })
-  }
-  return { type: 'FeatureCollection', features }
-}
-
-/** FeatureServer -> GeoJSON (paged, capped so huge services don't drag the page) */
-export async function fetchFeatureGeoJSON(url: string, limit: number = SAFETY.MAX_FEATURES, signal?: AbortSignal): Promise<unknown> {
-  const base = url.replace(/\/+$/, '')
-  let pageSize = 2000
-  let layerId = 0
-  try {
-    const meta = await fetch(`${base}?f=json`, { signal: withFetchTimeout() })
-    if (meta.ok) {
-      const m = (await meta.json()) as { maxRecordCount?: number; layers?: Array<{ id?: number }> }
-      if (typeof m.maxRecordCount === 'number' && m.maxRecordCount > 0 && m.maxRecordCount <= 4000) pageSize = m.maxRecordCount
-      const firstLayer = m.layers?.find((l) => typeof l.id === 'number')
-      if (firstLayer) layerId = firstLayer.id as number
-    }
-  } catch {
-    // default
-  }
-  const features: unknown[] = []
-  let offset = 0
-  let guard = 0
-  let lastKey: string | null = null
-  while (offset < limit && guard < 50) {
-    guard++
-    const geojsonUrl = `${base}/${layerId}/query?where=1%3D1&f=geojson&outFields=1&outSR=4326&resultOffset=${offset}&resultRecordCount=${pageSize}`
-    const r = await fetch(geojsonUrl, { signal: withFetchTimeout(signal) })
-    let feats: unknown[]
-    if (r.ok) {
-      const gj = (await r.json()) as { features?: unknown[] }
-      feats = gj.features ?? []
-    } else {
-      const jsonUrl = `${base}/${layerId}/query?where=1%3D1&f=json&outFields=*&outSR=4326&resultOffset=${offset}&resultRecordCount=${pageSize}`
-      const rj = await fetch(jsonUrl, { signal: withFetchTimeout(signal) })
-      if (!rj.ok) throw new Error('要素服务查询失败')
-      const jj = (await rj.json()) as { features?: Array<{ attributes?: Record<string, unknown>; geometry?: unknown }>; error?: { message?: string } }
-      if (jj.error) throw new Error('要素服务查询失败：' + (jj.error.message ?? ''))
-      feats = arcgisQueryToFeatureCollection(jj).features
-    }
-    if (feats.length === 0) break
-    if (feats.length < pageSize) {
-      features.push(...feats)
-      break
-    }
-    const key = JSON.stringify(feats[0])
-    if (key === lastKey) break
-    lastKey = key
-    features.push(...feats)
-    offset += feats.length
-    if (offset >= limit) break
-  }
-  return { type: 'FeatureCollection', features }
-}
-
-export async function fetchFeatureRenderer(url: string): Promise<Record<string, unknown> | null> {
-  const base = url.replace(/\/?$/, '')
-  try {
-    const r = await fetch(base + '?f=json', { signal: withFetchTimeout() })
-    if (!r.ok) return null
-    const j = (await r.json()) as { drawingInfo?: { renderer?: Record<string, unknown> } }
-    const renderer = j.drawingInfo?.renderer
-    return renderer && typeof renderer === 'object' ? renderer : null
-  } catch {
-    return null
-  }
-}
+/** 要素服务 → GeoJSON / renderer（实现见 service/repository.ts）。 */
+export { fetchFeatureGeoJSON, fetchFeatureRenderer }
 
 export async function fetchFeatureStyle(url: string): Promise<FeatureStyle | null> {
   const base = url.replace(/\/?$/, '')

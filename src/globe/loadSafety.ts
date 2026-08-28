@@ -1,4 +1,5 @@
 import type { WebLayer } from './webmap'
+import type { RiskLevel } from '../domain/types'
 
 // Unified load-safety limits: keep heavy layers from freezing the main thread.
 export const SAFETY = {
@@ -22,7 +23,8 @@ export const SAFETY = {
   IMAGERY_MAX_LEVEL: 16,
 } as const
 
-export type LoadRisk = 'light' | 'medium' | 'heavy'
+/** 与 domain RiskLevel 对齐（M1 W1.1）；后续统一使用 domain 类型。 */
+export type LoadRisk = RiskLevel
 
 // Classify a layer's load risk; heavy layers are degraded / limited before rendering.
 export function riskOfLayer(op: WebLayer): LoadRisk {
