@@ -8,6 +8,8 @@ import { SAFETY } from './loadSafety'
 
 // 批量渲染块尺寸：一帧 MapLibre 渲染 3x3 瓦片，读回次数降为 1/9（避免与 Cesium 抢 GPU 导致每片 1s+ 的读回停顿）
 const BLOCK = 3
+// 并行 MapLibre 实例数：全球底图标注层需要追平影像的细化速度，单实例串行太慢
+const MAP_POOL_SIZE = 3
 // MapLibre vector tile 固定按 512 CSS 像素定义世界坐标；Cesium 默认影像瓦片是 256px
 const MAPLIBRE_VECTOR_TILE_SIZE = 512
 // 512px 原生输出时每块像素数是旧 256px 输出的四倍，保留 12 块可维持约 108MB 的像素预算。
@@ -77,6 +79,132 @@ export function normalizeArcGisStyle(style: Record<string, unknown>, baseUrl: st
     next[name] = s
   }
   out.sources = next
+  return out
+}
+
+/** 仅保留带 text-field 的 symbol 图层，移除填充/线/图标等重度图层 */
+function keepTextLayersOnly(
+  style: Record<string, unknown>,
+  scope: 'all' | 'country-city'
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...style }
+  if (!Array.isArray(out.layers)) return out
+  const isMajorLabel = (id: string): boolean =>
+    // 排除 forest or park（景区/公园）：该类图层多为当地语言名，不是主要地名
+    !/forest or park/i.test(id) &&
+    /^(Continent|Admin0|Admin1|Admin2|City |Disputed label|Place\/Unclassified)/.test(id)
+  out.layers = out.layers.filter((layer) => {
+    if (!layer || typeof layer !== 'object') return false
+    const rec = layer as Record<string, unknown>
+    if (rec.type !== 'symbol' || !rec.layout || typeof rec.layout !== 'object') return false
+    const tf = (rec.layout as Record<string, unknown>)['text-field']
+    // 语言改写后可能是 coalesce 表达式数组，两种形式都算文字图层
+    if (typeof tf !== 'string' && !Array.isArray(tf)) return false
+    if (scope === 'country-city') return isMajorLabel(String(rec.id ?? ''))
+    return true
+  })
+  return out
+}
+
+export interface TextScaleRamp {
+  /** 起始缩放级（低于此级用 lowScale） */
+  lowZoom: number
+  /** 终端缩放级（高于此级用 highScale） */
+  highZoom: number
+  lowScale: number
+  highScale: number
+}
+
+/** 按缩放级线性插值字号倍数 */
+export function textScaleFactorAtZoom(ramp: TextScaleRamp, zoom: number): number {
+  if (zoom <= ramp.lowZoom) return ramp.lowScale
+  if (zoom >= ramp.highZoom) return ramp.highScale
+  const t = (zoom - ramp.lowZoom) / (ramp.highZoom - ramp.lowZoom)
+  return ramp.lowScale + (ramp.highScale - ramp.lowScale) * t
+}
+
+export interface LabelStyleOverrides {
+  /** 字号倍数：数值为全级统一，或指定随缩放级增大的梯度 */
+  textScale?: number | TextScaleRamp
+  textFont?: string[]
+  textColor?: string
+  haloColor?: string
+  haloWidth?: number
+}
+
+/** 把样式覆盖应用到所有文字图层：只改 paint/layout，不动 text-field */
+export function applyStyleOverrides(
+  style: Record<string, unknown>,
+  overrides: LabelStyleOverrides | undefined
+): Record<string, unknown> {
+  if (!overrides) return style
+  const out: Record<string, unknown> = { ...style }
+  if (!Array.isArray(out.layers)) return out
+  const scale = overrides.textScale
+  const ramp = typeof scale === 'object' ? scale : undefined
+  const scaleAt = (zoom: number): number =>
+    ramp ? textScaleFactorAtZoom(ramp, zoom) : (typeof scale === 'number' ? scale : 1)
+  out.layers = out.layers.map((layer) => {
+    if (!layer || typeof layer !== 'object' || (layer as Record<string, unknown>).type !== 'symbol') return layer
+    const rec = layer as Record<string, unknown>
+    const hasText = !!rec.layout && typeof rec.layout === 'object' && (rec.layout as Record<string, unknown>)['text-field']
+    if (!hasText) return layer
+    const layout = { ...(rec.layout as Record<string, unknown>) }
+    const paint = { ...((rec.paint as Record<string, unknown>) ?? {}) }
+    if (scale !== undefined) {
+      const size = layout['text-size']
+      const layerMaxZoom = typeof rec.maxzoom === 'number' ? rec.maxzoom : ramp?.highZoom
+      if (typeof size === 'number') {
+        layout['text-size'] = size * scaleAt(layerMaxZoom ?? ramp?.highZoom ?? 1)
+      } else if (size && typeof size === 'object') {
+        const stops = (size as { stops?: unknown }).stops
+        if (Array.isArray(stops)) {
+          layout['text-size'] = {
+            ...(size as Record<string, unknown>),
+            stops: stops.map((entry) => {
+              if (Array.isArray(entry) && typeof entry[1] === 'number') return [entry[0], entry[1] * scaleAt(entry[0] as number)]
+              return entry
+            }),
+          }
+        }
+      }
+    }
+    if (overrides.textFont) layout['text-font'] = overrides.textFont
+    if (overrides.textColor) paint['text-color'] = overrides.textColor
+    if (overrides.haloColor) paint['text-halo-color'] = overrides.haloColor
+    if (overrides.haloWidth !== undefined) paint['text-halo-width'] = overrides.haloWidth
+    const next: Record<string, unknown> = { ...rec, layout }
+    if (Object.keys(paint).length > 0) next.paint = paint
+    return next
+  })
+  return out
+}
+
+/** 地名语言改写：'en' 统一优先英文并回退，'local' 把水系全球名换成当地语言名 */
+export function applyLabelLanguage(
+  style: Record<string, unknown>,
+  language: 'en' | 'local' | undefined
+): Record<string, unknown> {
+  if (!language) return style
+  const out: Record<string, unknown> = { ...style }
+  if (!Array.isArray(out.layers)) return out
+  out.layers = out.layers.map((layer) => {
+    if (!layer || typeof layer !== 'object' || (layer as Record<string, unknown>).type !== 'symbol') return layer
+    const rec = layer as Record<string, unknown>
+    if (!rec.layout || typeof rec.layout !== 'object') return layer
+    const layout = { ...(rec.layout as Record<string, unknown>) }
+    const tf = layout['text-field']
+    const m = typeof tf === 'string' ? tf.match(/^\{(_name|_name_global|_name_local)\}$/) : undefined
+    if (!m) return layer
+    if (language === 'local' && m[1] === '_name_global') {
+      layout['text-field'] = '{_name_local}'
+    } else if (language === 'en') {
+      // 仅英文：_name_en 优先，其次 _name_global/_name；
+      // 不回退到当地语言（中文景区名由范围过滤排除）
+      layout['text-field'] = ['coalesce', ['get', '_name_en'], ['get', '_name_global'], ['get', '_name']]
+    }
+    return { ...rec, layout }
+  })
   return out
 }
 
@@ -231,6 +359,16 @@ export interface VectorTileImageryOptions {
   minimumLevel?: number
   maximumLevel?: number
   signal?: AbortSignal
+  /** 地名语言：'en' 优先英文，'local' 用当地语言 */
+  language?: 'en' | 'local'
+  /** 仅保留文字图层（丢掉填充/线等重度图层，大幅加快基底标注渲染） */
+  labelsOnly?: boolean
+  /** 标注范围：'country-city' 仅保留大陆/国家/州省/城市等主要地名层 */
+  labelScope?: 'all' | 'country-city'
+  /** 并行 MapLibre 实例数（默认 3） */
+  mapPoolSize?: number
+  /** 字体/颜色等样式覆盖（用于对齐 Map Viewer 的标注字体观感） */
+  styleOverrides?: LabelStyleOverrides
   /** 测试注入：替换真实 MapLibre Map 构造 */
   createMap?: (container: HTMLElement, style: unknown, pixelRatio: number) => MapLike
 }
@@ -323,7 +461,7 @@ function waitForMapIdle(map: MapLike, timeoutMs = 20000): Promise<void> {
 
 /**
  * 用 MapLibre 按 ArcGIS 官方样式渲染矢量瓦片的 Cesium ImageryProvider。
- * requestImage 串行渲染（共享一个隐藏 Map，避免相机竞态），默认返回原生 512px canvas。
+ * requestImage 走并行 MapLibre 实例池（默认 3 个，每实例严格串行），默认返回原生 512px canvas。
  * 只实现 ImageryProvider 协议字段，交给 Cesium.ImageryLayer 消费（鸭子类型，不继承基类）。
  */
 export class ArcGisVectorTileImageryProvider {
@@ -356,22 +494,35 @@ export class ArcGisVectorTileImageryProvider {
   defaultMinificationFilter: unknown = undefined
   defaultMagnificationFilter: unknown = undefined
 
-  private _map: MapLike | undefined
-  private _container: HTMLDivElement | undefined
+  private _maps: MapLike[] = []
+  private _containers: HTMLDivElement[] = []
+  private _mapViewportSizes: number[] = []
   private _pending = new Map<string, Array<{ x: number; y: number; level: number; resolve: (c: HTMLCanvasElement) => void; reject: (e: unknown) => void }>>()
   private _inFlight: Array<{ reject: (e: unknown) => void }> = []
-  private _draining = false
+  private _active = 0
+  /** 每个 Map 实例当前是否在渲染块：并发派发时只选空闲实例，保证同一 canvas 严格串行 */
+  private _mapActiveCount: number[] = []
   private _blockCache = new Map<string, HTMLCanvasElement[]>()
   private _destroyed = false
   private readonly _styleUrl: string | undefined
   private readonly _signal: AbortSignal | undefined
   private readonly _createMap: (container: HTMLElement, style: unknown, pixelRatio: number) => MapLike
+  private readonly _language: 'en' | 'local' | undefined
+  private readonly _labelsOnly: boolean
+  private readonly _labelScope: 'all' | 'country-city'
+  private readonly _styleOverrides: LabelStyleOverrides | undefined
   private readonly _mapPixelRatio: number
+  private readonly _poolSize: number
   private _mapViewportSize = 0
 
   constructor(options: VectorTileImageryOptions) {
     // ArcGIS VectorTileServer 与 MapLibre 均以 512px 瓦片为原生单位。
     // 直接交给 Cesium 可让其用 tileWidth 参与 LOD 选择，避免 256px 下采样造成层级补偿漂移。
+    this._language = options.language
+    this._labelsOnly = options.labelsOnly ?? false
+    this._labelScope = options.labelScope ?? 'all'
+    this._poolSize = Math.max(1, Math.min(4, options.mapPoolSize ?? MAP_POOL_SIZE))
+    this._styleOverrides = options.styleOverrides
     this.tileWidth = this.tileHeight = options.tileSize ?? MAPLIBRE_VECTOR_TILE_SIZE
     this.minimumLevel = options.minimumLevel ?? 0
     this.maximumLevel = options.maximumLevel ?? SAFETY.VECTOR_TILE_MAX_ZOOM
@@ -428,105 +579,149 @@ export class ArcGisVectorTileImageryProvider {
     const response = await fetch(styleUrl, { signal: withFetchTimeout(this._signal) })
     if (!response.ok) throw new Error('矢量瓦片样式加载失败：HTTP ' + response.status)
     const raw = (await response.json()) as Record<string, unknown>
-    const style = normalizeArcGisStyle(raw, styleUrl)
-    const container = document.createElement('div')
-    container.style.position = 'absolute'
-    container.style.left = '-10000px'
-    container.style.top = '-10000px'
-    // 最低层级使用原生 512px 世界；后续渲染会按实际 Cesium LOD 动态调整为对齐视口。
+    const style = applyStyleOverrides(applyLabelLanguage(normalizeArcGisStyle(raw, styleUrl), this._language), this._styleOverrides)
+    const finalStyle = this._labelsOnly ? keepTextLayersOnly(style, this._labelScope) : style
     this._mapViewportSize = mapLibreRenderPlan(this.minimumLevel, this.tileWidth).viewportSize
-    container.style.width = this._mapViewportSize + 'px'
-    container.style.height = this._mapViewportSize + 'px'
-    container.style.overflow = 'hidden'
-    document.body.appendChild(container)
-    this._container = container
-    const map = this._createMap(container, style, this._mapPixelRatio)
-    this._map = map
+    for (let i = 0; i < this._poolSize; i += 1) {
+      const container = document.createElement('div')
+      container.style.position = 'absolute'
+      container.style.left = '-10000px'
+      container.style.top = '-10000px'
+      // 最低层级使用原生 512px 世界；后续渲染会按实际 Cesium LOD 动态调整为对齐视口。
+      container.style.width = this._mapViewportSize + 'px'
+      container.style.height = this._mapViewportSize + 'px'
+      container.style.overflow = 'hidden'
+      document.body.appendChild(container)
+      const map = this._createMap(container, finalStyle, this._mapPixelRatio)
+      this._maps.push(map)
+      this._containers.push(container)
+      this._mapViewportSizes.push(this._mapViewportSize)
+    }
     if (this._destroyed) {
       // 初始化期间被销毁（例如移除图层）：立刻清理，避免泄漏隐藏容器
       this._teardown()
       return
     }
-    await waitForEvent(map, 'load', 20000, 'MapLibre 样式加载')
+    await Promise.all(this._maps.map((m) => waitForEvent(m, 'load', 20000, 'MapLibre 样式加载')))
     if (this._destroyed) {
       this._teardown()
       return
     }
     // 等待首屏稳定：确保 sprite/glyphs 在对外 ready 前拉取完成，避免首屏瓦片缺字
-    await waitForMapIdle(map)
+    await Promise.all(this._maps.map((m) => waitForMapIdle(m)))
   }
 
   private _teardown(): void {
-    try {
-      this._map?.remove()
-    } catch {
-      // ignore
+    for (const m of this._maps) {
+      try {
+        m.remove()
+      } catch {
+        // ignore
+      }
     }
-    try {
-      this._container?.remove()
-    } catch {
-      // ignore
+    for (const c of this._containers) {
+      try {
+        c.remove()
+      } catch {
+        // ignore
+      }
     }
-    this._map = undefined
-    this._container = undefined
+    this._maps = []
+    this._containers = []
+    this._mapViewportSizes = []
   }
 
   private _drain(): void {
-    if (this._draining || this._destroyed) return
-    this._draining = true
-    const loop = async () => {
-      try {
-        while (this._pending.size > 0 && !this._destroyed) {
-          this.stats.queueDepth = this._pending.size
-          const [key, jobs] = this._pending.entries().next().value as [
-            string,
-            Array<{ x: number; y: number; level: number; resolve: (c: HTMLCanvasElement) => void; reject: (e: unknown) => void }>
-          ]
-          this._pending.delete(key)
-          this._inFlight = jobs
-          try {
-            const block = await this._renderBlock(jobs[0].x, jobs[0].y, jobs[0].level)
-            this._rememberBlock(key, block)
-            for (const j of jobs) {
-              j.resolve(tileFromBlock(block, j.x, j.y, j.level, this.tileWidth, this.tileHeight))
-            }
-          } catch (e) {
-            for (const j of jobs) j.reject(e)
-          } finally {
-            if (this._inFlight === jobs) this._inFlight = []
-          }
+    if (this._destroyed) return
+    // 并发派发：有空闲 MapLibre 实例就接下一个块，直到队列清空
+    while (this._pending.size > 0 && this._active < this._poolSize) {
+      this.stats.queueDepth = this._pending.size
+      // 优先渲染更精细的块：低空观察时深层城市名先出现，避免久停在粗级别标注
+      let bestKey: string | undefined
+      let bestLevel = -1
+      for (const [k, jobs] of this._pending) {
+        const lv = jobs[0]?.level ?? -1
+        if (lv > bestLevel) {
+          bestLevel = lv
+          bestKey = k
         }
-      } finally {
-        this._draining = false
-        if (this._pending.size > 0 && !this._destroyed) this._drain()
       }
+      if (bestKey === undefined) break
+      const jobs = this._pending.get(bestKey) as Array<{ x: number; y: number; level: number; resolve: (c: HTMLCanvasElement) => void; reject: (e: unknown) => void }>
+      // 只选当前空闲的 Map：轮询复用（0,1,2,0…）会在先完成的任务释放前把新块派到
+      // 仍在渲染的实例上，同一 canvas 被并发 jumpTo/快照 → 读到别的块的帧，标注整体错位 ~90°
+      let mapIndex = -1
+      for (let i = 0; i < this._poolSize; i += 1) {
+        if ((this._mapActiveCount[i] ?? 0) === 0) {
+          mapIndex = i
+          break
+        }
+      }
+      if (mapIndex < 0) break
+      this._pending.delete(bestKey)
+      this._active += 1
+      for (const j of jobs) this._inFlight.push(j)
+      this._mapActiveCount[mapIndex] = 1
+      this._renderBlock(mapIndex, jobs[0].x, jobs[0].y, jobs[0].level)
+        .then((block) => {
+          this._rememberBlock(bestKey, block)
+          for (const j of jobs) {
+            j.resolve(tileFromBlock(block, j.x, j.y, j.level, this.tileWidth, this.tileHeight))
+          }
+        })
+        .catch((e) => {
+          for (const j of jobs) j.reject(e)
+        })
+        .finally(() => {
+          this._active -= 1
+          this._mapActiveCount[mapIndex] = 0
+          for (const j of jobs) {
+            const idx = this._inFlight.indexOf(j)
+            if (idx >= 0) this._inFlight.splice(idx, 1)
+          }
+          if (this._pending.size > 0 && !this._destroyed) this._drain()
+        })
     }
-    void loop()
   }
 
   /** 渲染一个 3x3 块（一帧），返回九张 Cesium 瓦片；仅最低层级需要下采样。 */
-  private async _renderBlock(x: number, y: number, level: number): Promise<HTMLCanvasElement[]> {
-    const map = this._map
+  private async _renderBlock(mapIndex: number, x: number, y: number, level: number): Promise<HTMLCanvasElement[]> {
+    const map = this._maps[mapIndex]
     if (!map || this._destroyed) throw new Error('矢量瓦片 provider 未就绪')
     const t0 = performance.now()
     const tFetch = performance.now()
     const plan = mapLibreRenderPlan(level, this.tileWidth)
     this.stats.lastBlockZoom = plan.mapZoom
     this.stats.zoomHistogram[String(plan.mapZoom)] = (this.stats.zoomHistogram[String(plan.mapZoom)] ?? 0) + 1
-    this._setMapViewport(plan.viewportSize)
+    this._setMapViewport(mapIndex, plan.viewportSize)
     const gx = Math.floor(x / BLOCK) * BLOCK
     const gy = Math.floor(y / BLOCK) * BLOCK
     // 块几何中心（内部块=中间瓦片中心；边缘块 clamp，避免 wrap 错位）
     const { cx, cy } = blockCenterIndex(gx, gy, level)
-    const { lng, lat } = indexToLngLat(cx, cy, level)
+    // renderWorldCopies=false 时，视口超出世界范围的边缘块会被 MapLibre 钳制中心；
+    // 我们自己先在 x/y 两个方向钳制，并按钳制后的中心计算裁剪，避免依赖 MapLibre 的不可预测收拢。
+    const n = 2 ** level
+    const half = BLOCK / 2
+    const clampedCx = Math.min(n - half, Math.max(half, cx))
+    const clampedCy = Math.min(n - half, Math.max(half, cy))
+    const expectedCenter = { cx: clampedCx, cy: clampedCy }
+    const { lng, lat } = indexToLngLat(clampedCx, clampedCy, level)
     map.jumpTo({ center: [lng, lat], zoom: plan.mapZoom })
-    // renderWorldCopies=false 时，MapLibre 会把接近世界边缘的中心收拢。
-    // 裁剪必须使用收拢后的实际中心，否则会错取相邻瓦片并产生巨大位置偏移。
+    // 用 getCenter 校验；若返回的中心与预期偏差超过半瓦片（如并发时取到旧中心），直接采用预期中心
     const actualCenter = map.getCenter?.()
-    const renderedCenter = actualCenter ? lngLatToIndex(actualCenter.lng, actualCenter.lat, level) : { cx, cy }
+    const actualIdx = actualCenter ? lngLatToIndex(actualCenter.lng, actualCenter.lat, level) : expectedCenter
+    const renderedCenter =
+      Math.abs(actualIdx.cx - expectedCenter.cx) < 0.5 && Math.abs(actualIdx.cy - expectedCenter.cy) < 0.5
+        ? actualIdx
+        : expectedCenter
     this.stats.lastTileFetchMs = performance.now() - tFetch
     const tRender = performance.now()
     await waitForMapIdle(map)
+    // 硬件 GPU 下 WebGL canvas 的读回可能滞后一帧（读到上一个块的内容），
+    // 等两次 rAF 确保合成器已展示当前帧再截取，避免标注置位。
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    })
     this.stats.lastRenderMs = performance.now() - tRender
     const tCopy = performance.now()
     // 关键：WebGL canvas 每 drawImage 一次 = 一次 GPU readPixels。
@@ -555,14 +750,14 @@ export class ArcGisVectorTileImageryProvider {
     return block
   }
 
-  private _setMapViewport(size: number): void {
-    if (this._mapViewportSize === size) return
-    const container = this._container
+  private _setMapViewport(mapIndex: number, size: number): void {
+    if (this._mapViewportSizes[mapIndex] === size) return
+    const container = this._containers[mapIndex]
     if (!container) return
     container.style.width = size + 'px'
     container.style.height = size + 'px'
-    this._mapViewportSize = size
-    this._map?.resize?.()
+    this._mapViewportSizes[mapIndex] = size
+    this._maps[mapIndex]?.resize?.()
   }
 
   private _rememberBlock(key: string, block: HTMLCanvasElement[]): void {

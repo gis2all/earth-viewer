@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   resolveStyleUrl,
   normalizeArcGisStyle,
+  applyLabelLanguage,
+  applyStyleOverrides,
   inferStyleUrl,
   styleUrlForLayer,
   tileCenterLngLat,
@@ -513,7 +515,7 @@ describe('ArcGisVectorTileImageryProvider', () => {
       return m
     }) as never
     setTimeout(() => m._emit('load'), 0)
-    const provider = new ArcGisVectorTileImageryProvider({ styleUrl: 'https://x/root.json', createMap: () => m })
+    const provider = new ArcGisVectorTileImageryProvider({ styleUrl: 'https://x/root.json', mapPoolSize: 1, createMap: () => m })
     try {
       await provider.readyPromise
       const pending = provider.requestImage(0, 0, 2)
@@ -521,6 +523,67 @@ describe('ArcGisVectorTileImageryProvider', () => {
       expect(m.getCanvas).not.toHaveBeenCalled()
       m._emit('idle')
       await expect(pending).resolves.toBeDefined()
+    } finally {
+      provider.destroy()
+    }
+  })
+
+  it('并发请求不同块时，忙碌中的 Map 实例不会被再次派发（同一 canvas 严格串行）', async () => {
+    stubStyleFetch()
+    const mkControllable = () => {
+      const m = fakeMap()
+      let repaints = 0
+      m.triggerRepaint = vi.fn(() => {
+        repaints += 1
+        queueMicrotask(() => {
+          m._emit('render')
+          // 初始化预热（第 1 次）可以 idle；块渲染故意挂起，等测试手动释放
+          if (repaints === 1) m._emit('idle')
+        })
+        return m
+      }) as never
+      return m
+    }
+    const m1 = mkControllable()
+    const m2 = mkControllable()
+    let created = 0
+    setTimeout(() => m1._emit('load'), 0)
+    setTimeout(() => m2._emit('load'), 0)
+    const provider = new ArcGisVectorTileImageryProvider({
+      styleUrl: 'https://x/root.json',
+      mapPoolSize: 2,
+      createMap: () => (created++ === 0 ? m1 : m2),
+    })
+    try {
+      await provider.readyPromise
+      const pA = provider.requestImage(0, 0, 2) // 块 2/0/0 → m1
+      const pB = provider.requestImage(3, 0, 2) // 块 2/1/0 → m2
+      const pC = provider.requestImage(0, 3, 2) // 块 2/0/1：两实例都忙，必须排队
+      // 关键断言：C 不能落到仍在渲染的 m1（旧轮询实现会跳回 m1 → 同一 canvas 并发 → 块内容整体错位）
+      expect(m1.jumpTo).toHaveBeenCalledTimes(1)
+      expect(m2.jumpTo).toHaveBeenCalledTimes(1)
+      let cSettled = false
+      pC.then(
+        () => {
+          cSettled = true
+        },
+        () => {
+          cSettled = true
+        }
+      )
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(cSettled).toBe(false)
+      // 释放 m1：A 完成后 C 才被派到 m1（此时 m1 已空闲）
+      m1._emit('idle')
+      await new Promise((resolve) => setTimeout(resolve, 120))
+      expect(m1.jumpTo).toHaveBeenCalledTimes(2)
+      expect(cSettled).toBe(false)
+      // 释放 m1（C）与 m2（B）
+      m1._emit('idle')
+      m2._emit('idle')
+      await expect(pA).resolves.toBeDefined()
+      await expect(pB).resolves.toBeDefined()
+      await expect(pC).resolves.toBeDefined()
     } finally {
       provider.destroy()
     }
@@ -576,11 +639,240 @@ describe('ArcGisVectorTileImageryProvider', () => {
       })
       return m
     }) as never
-    const provider = new ArcGisVectorTileImageryProvider({ styleUrl: 'https://x/root.json', createMap: () => m })
+    const provider = new ArcGisVectorTileImageryProvider({ styleUrl: 'https://x/root.json', mapPoolSize: 1, createMap: () => m })
     await provider.readyPromise
     await expect(provider.requestImage(0, 0, 0)).rejects.toThrow(/render boom/)
     const ok = await provider.requestImage(1, 0, 1)
     expect(ok).toBeDefined()
     provider.destroy()
   })
+})
+
+describe('applyStyleOverrides', () => {
+  it('字号倍数支持数值和 stops，并设置字体/颜色/描边', () => {
+    const style = applyStyleOverrides(
+      {
+        layers: [
+          { id: 'a', type: 'symbol', layout: { 'text-field': '{_name}', 'text-size': 12 }, paint: {} },
+          { id: 'b', type: 'symbol', layout: { 'text-field': '{_name}', 'text-size': { base: 1.2, stops: [[3, 9], [10, 13]] } }, paint: {} },
+          { id: 'fill', type: 'fill', layout: {} },
+        ],
+      },
+      {
+        textScale: 1.5,
+        textFont: ['Libertinus Sans Regular'],
+        textColor: '#000000',
+        haloColor: '#d5dcc8',
+        haloWidth: 1,
+      }
+    )
+    const layers = style.layers as Array<{ layout: { 'text-size': unknown; 'text-font'?: unknown }; paint: Record<string, unknown> }>
+    expect(layers[0].layout['text-size']).toBe(18)
+    expect(layers[0].layout['text-font']).toEqual(['Libertinus Sans Regular'])
+    expect(layers[0].paint['text-color']).toBe('#000000')
+    expect(layers[0].paint['text-halo-color']).toBe('#d5dcc8')
+    expect(layers[0].paint['text-halo-width']).toBe(1)
+    expect(layers[1].layout['text-size']).toEqual({ base: 1.2, stops: [[3, 13.5], [10, 19.5]] })
+    expect(layers[2].layout['text-size']).toBeUndefined()
+  })
+
+  it('字号梯度：低级小倍率、高级大倍率，按停点 zoom 逐个缩放', () => {
+    const style = applyStyleOverrides(
+      {
+        layers: [
+          { id: 'city', type: 'symbol', layout: { 'text-field': '{_name}', 'text-size': { base: 1.2, stops: [[4, 10], [10, 14], [16, 20]] } } },
+        ],
+      },
+      { textScale: { lowZoom: 6, highZoom: 16, lowScale: 1.15, highScale: 1.6 } }
+    )
+    const l = (style.layers as Array<{ layout: { 'text-size': { stops: number[][] } } }>)[0]
+    const stops = l.layout['text-size'].stops
+    expect(stops[0][0]).toBe(4)
+    expect(stops[0][1]).toBeCloseTo(11.5, 5)
+    expect(stops[1][0]).toBe(10)
+    expect(stops[1][1]).toBeCloseTo(18.62, 5)
+    expect(stops[2]).toEqual([16, 32])
+  })
+
+  it('labelScope country-city 保留 Place/Unclassified 层', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          version: 8,
+          sources: { esri: { type: 'vector', url: 'https://basemaps.example/World_Basemap_v2/VectorTileServer' } },
+          layers: [
+            { id: 'Place/Unclassified', type: 'symbol', layout: { 'text-field': '{_name}' } },
+            { id: 'Place/POI Other/Color6', type: 'symbol', layout: { 'text-field': '{_name}' } },
+            { id: 'Admin0 point/medium', type: 'symbol', layout: { 'text-field': '{_name}' } },
+          ],
+        }),
+      }))
+    )
+    const m = fakeMap()
+    const seenStyles: unknown[] = []
+    setTimeout(() => m._emit('load'), 0)
+    const provider = new ArcGisVectorTileImageryProvider({
+      styleUrl: 'https://x/root.json',
+      labelsOnly: true,
+      labelScope: 'country-city',
+      createMap: (_node, style) => {
+        seenStyles.push(style)
+        return m
+      },
+    })
+    await provider.readyPromise
+    const layers = (seenStyles[0] as { layers: Array<{ id: string }> }).layers
+    expect(layers.map((l) => l.id)).toEqual(['Place/Unclassified', 'Admin0 point/medium'])
+    provider.destroy()
+  })
+})
+
+describe('world-edge block center', () => {
+  it('MapLibre 返回过期中心时，裁剪仍使用钳制后的预期中心', async () => {
+    stubStyleFetch()
+    const m = fakeMap()
+    const drawCalls: number[][] = []
+    const fakeCtx = {
+      drawImage: (_src: unknown, sx: number, sy: number, ...rest: number[]) => {
+        drawCalls.push([sx, sy, ...rest])
+      },
+    }
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(fakeCtx as unknown as CanvasRenderingContext2D)
+    // 模拟并发时取到的旧中心：z3 东边缘块（瓦片 x=6..7）预期中心经钳制后 lng=112.5（cx=6.5），但 getCenter 返回 22.5
+    m.getCenter = vi.fn(() => ({ lng: 22.5, lat: 0 }))
+    setTimeout(() => m._emit('load'), 0)
+    const provider = new ArcGisVectorTileImageryProvider({
+      styleUrl: 'https://x/root.json',
+      mapPoolSize: 1,
+      createMap: () => m,
+    })
+    try {
+      await provider.readyPromise
+      await provider.requestImage(6, 0, 3)
+      // tile x=6 位于块中间位置：sx=(6-(6.5-1.5))*512=512
+      expect(drawCalls.some((c) => c[0] === 512 && c[1] === 0 && c[4] === 0 && c[5] === 0)).toBe(true)
+    } finally {
+      provider.destroy()
+      vi.restoreAllMocks()
+    }
+  })
+})
+
+describe('labelsOnly', () => {
+  it('仅保留带 text-field 的 symbol 图层', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          version: 8,
+          sources: { esri: { type: 'vector', url: 'https://basemaps.example/World_Basemap_v2/VectorTileServer' } },
+          layers: [
+            { id: 'bg', type: 'background' },
+            { id: 'fill', type: 'fill', layout: {} },
+            { id: 'line', type: 'line', layout: {} },
+            { id: 'label', type: 'symbol', layout: { 'text-field': '{_name}' } },
+            { id: 'labelExpr', type: 'symbol', layout: { 'text-field': ['coalesce', ['get', '_name_en'], ['get', '_name']] } },
+            { id: 'place', type: 'symbol', layout: { 'text-field': '{_name}' } },
+            { id: 'city', type: 'symbol', layout: { 'text-field': '{_name}' } },
+            { id: 'icon', type: 'symbol', layout: {} },
+          ],
+        }),
+      }))
+    )
+    const m = fakeMap()
+    const seenStyles: unknown[] = []
+    setTimeout(() => m._emit('load'), 0)
+    const provider = new ArcGisVectorTileImageryProvider({
+      styleUrl: 'https://x/root.json',
+      labelsOnly: true,
+      createMap: (_node, style) => {
+        seenStyles.push(style)
+        return m
+      },
+    })
+    await provider.readyPromise
+    const layers = (seenStyles[0] as { layers: Array<{ id: string }> }).layers
+    expect(layers.map((l) => l.id)).toEqual(['label', 'labelExpr', 'place', 'city'])
+    provider.destroy()
+  })
+
+  it('labelScope country-city 只保留主要地名层', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          version: 8,
+          sources: { esri: { type: 'vector', url: 'https://basemaps.example/World_Basemap_v2/VectorTileServer' } },
+          layers: [
+            { id: 'Continent', type: 'symbol', layout: { 'text-field': '{_name}' } },
+            { id: 'Admin0 point', type: 'symbol', layout: { 'text-field': '{_name}' } },
+            { id: 'City large scale', type: 'symbol', layout: { 'text-field': '{_name}' } },
+            { id: 'Place/Unclassified', type: 'symbol', layout: { 'text-field': '{_name}' } },
+            { id: 'Admin0 forest or park/label', type: 'symbol', layout: { 'text-field': '{_name}' } },
+            { id: 'Water point/Sea or ocean', type: 'symbol', layout: { 'text-field': '{_name}' } },
+            { id: 'Road', type: 'symbol', layout: { 'text-field': '{_name}' } },
+          ],
+        }),
+      }))
+    )
+    const m = fakeMap()
+    const seenStyles: unknown[] = []
+    setTimeout(() => m._emit('load'), 0)
+    const provider = new ArcGisVectorTileImageryProvider({
+      styleUrl: 'https://x/root.json',
+      labelsOnly: true,
+      labelScope: 'country-city',
+      createMap: (_node, style) => {
+        seenStyles.push(style)
+        return m
+      },
+    })
+    await provider.readyPromise
+    const layers = (seenStyles[0] as { layers: Array<{ id: string }> }).layers
+    expect(layers.map((l) => l.id)).toEqual(['Continent', 'Admin0 point', 'City large scale', 'Place/Unclassified'])
+    provider.destroy()
+  })
+})
+
+describe('applyLabelLanguage', () => {
+  it('applyLabelLanguage: en 优先英文并回退', () => {
+    const style = applyLabelLanguage(
+      {
+        layers: [
+          { id: 'place', type: 'symbol', layout: { 'text-field': '{_name}' } },
+          { id: 'water', type: 'symbol', layout: { 'text-field': '{_name_global}' } },
+          { id: 'fill', type: 'fill', layout: {} },
+        ],
+      },
+      'en'
+    )
+    const layers = style.layers as Array<{ layout: { 'text-field': unknown } }>
+    const expected = ['coalesce', ['get', '_name_en'], ['get', '_name_global'], ['get', '_name']]
+    expect(layers[0].layout['text-field']).toEqual(expected)
+    expect(layers[1].layout['text-field']).toEqual(expected)
+    expect(layers[2].layout['text-field']).toBeUndefined()
+  })
+
+  it('applyLabelLanguage: local 把水系全球名换成当地名', () => {
+    const style = applyLabelLanguage(
+      {
+        layers: [
+          { id: 'water', type: 'symbol', layout: { 'text-field': '{_name_global}' } },
+          { id: 'place', type: 'symbol', layout: { 'text-field': '{_name}' } },
+        ],
+      },
+      'local'
+    )
+    const layers = style.layers as Array<{ layout: { 'text-field': unknown } }>
+    expect(layers[0].layout['text-field']).toBe('{_name_local}')
+    expect(layers[1].layout['text-field']).toBe('{_name}')
+  })
+
 })
