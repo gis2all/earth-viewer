@@ -8,6 +8,7 @@
  * - SSE 切换（缩放中 2 → 稳定后 1，高分屏清晰度对齐）。
  * 依赖注入 CameraSurface（CesiumFacade 实现），不 import Cesium。
  */
+import { DEFAULT_APP_CONFIG } from '../domain/config'
 
 export interface CameraPosition {
   longitude: number
@@ -59,19 +60,8 @@ export interface CameraControllerDeps {
   doubleClickZoomRatio?: number
 }
 
-const DEFAULT_MIN_ZOOM = 20
-const DEFAULT_MAX_ZOOM = 25000000
-const DEFAULT_MIN_PITCH = (-89.9 * Math.PI) / 180
-const DEFAULT_MAX_PITCH = 0
-const WHEEL_ZOOM_OUT_FACTOR = 1.25
-const WHEEL_ZOOM_IN_FACTOR = 0.8
-const AUTO_ROTATE_IDLE_MS = 3000
-const AUTO_ROTATE_STEP_RAD = 0.0012
-const ZOOM_EASE = 0.25
-const SSE_ZOOMING = 2
-const SSE_SETTLED = 1
-const DOUBLE_CLICK_ZOOM_RATIO = 0.5
-const WHEEL_ACTIVE_WINDOW_MS = 1500
+// W4.2：默认值统一来自 domain/config.ts（唯一来源）；deps 传入时优先。
+const CAMERA_DEFAULTS = DEFAULT_APP_CONFIG.camera
 
 export class CameraController {
   private cleanup: Array<() => void> = []
@@ -96,18 +86,18 @@ export class CameraController {
   private readonly doubleClickRatio: number
 
   constructor(private deps: CameraControllerDeps) {
-    this.minZoom = deps.minZoom ?? DEFAULT_MIN_ZOOM
-    this.maxZoom = deps.maxZoom ?? DEFAULT_MAX_ZOOM
-    this.minPitch = deps.minPitch ?? DEFAULT_MIN_PITCH
-    this.maxPitch = deps.maxPitch ?? DEFAULT_MAX_PITCH
-    this.wheelOut = deps.wheelOutFactor ?? WHEEL_ZOOM_OUT_FACTOR
-    this.wheelIn = deps.wheelInFactor ?? WHEEL_ZOOM_IN_FACTOR
-    this.idleMs = deps.autoRotateIdleMs ?? AUTO_ROTATE_IDLE_MS
-    this.stepRad = deps.autoRotateStepRad ?? AUTO_ROTATE_STEP_RAD
-    this.zoomEase = deps.zoomEase ?? ZOOM_EASE
-    this.sseZooming = deps.sseZooming ?? SSE_ZOOMING
-    this.sseSettled = deps.sseSettled ?? SSE_SETTLED
-    this.doubleClickRatio = deps.doubleClickZoomRatio ?? DOUBLE_CLICK_ZOOM_RATIO
+    this.minZoom = deps.minZoom ?? CAMERA_DEFAULTS.minZoom
+    this.maxZoom = deps.maxZoom ?? CAMERA_DEFAULTS.maxZoom
+    this.minPitch = deps.minPitch ?? CAMERA_DEFAULTS.minPitch
+    this.maxPitch = deps.maxPitch ?? CAMERA_DEFAULTS.maxPitch
+    this.wheelOut = deps.wheelOutFactor ?? CAMERA_DEFAULTS.wheelOutFactor
+    this.wheelIn = deps.wheelInFactor ?? CAMERA_DEFAULTS.wheelInFactor
+    this.idleMs = deps.autoRotateIdleMs ?? CAMERA_DEFAULTS.autoRotateIdleMs
+    this.stepRad = deps.autoRotateStepRad ?? CAMERA_DEFAULTS.autoRotateStepRad
+    this.zoomEase = deps.zoomEase ?? CAMERA_DEFAULTS.zoomEase
+    this.sseZooming = deps.sseZooming ?? CAMERA_DEFAULTS.sseZooming
+    this.sseSettled = deps.sseSettled ?? CAMERA_DEFAULTS.sseSettled
+    this.doubleClickRatio = deps.doubleClickZoomRatio ?? CAMERA_DEFAULTS.doubleClickZoomRatio
     this.targetH = deps.surface.cameraPosition().height
   }
 
@@ -196,7 +186,7 @@ export class CameraController {
     // 滚轮缓动 + SSE 切换
     const h = s.cameraPosition().height
     const diff = h - this.targetH
-    const wheelActive = performance.now() - this.lastWheel < WHEEL_ACTIVE_WINDOW_MS
+    const wheelActive = performance.now() - this.lastWheel < CAMERA_DEFAULTS.wheelActiveWindowMs
     if (wheelActive) {
       if (Math.abs(diff) > 1) s.moveForward(diff * this.zoomEase)
       if (Math.abs(diff) > h * 0.005) {

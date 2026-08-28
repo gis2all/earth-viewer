@@ -8,6 +8,7 @@
  */
 import type { CesiumFacade } from '../infra/CesiumFacade'
 import type { LayerRenderJob } from '../domain/render'
+import { DEFAULT_APP_CONFIG } from '../domain/config'
 import { renderableLayersFromWebmap, skippedBusinessLayers, MAX_BUSINESS_LAYERS } from './assess'
 import { SAFETY, assertUrlWithinLimit, consumeFeatureBudget } from './loadSafety'
 import { applyVertexBudget } from './viewport/budget'
@@ -35,10 +36,10 @@ import { fetchOgcFeatureGeoJSON } from './ogc'
 import { fetchCsvGeoJSON } from './csv'
 import { viewpointCameraFromWebmap } from './viewpoint'
 
-export const VIEWPORT_FALLBACK: ViewEnvelope = { west: -180, south: -90, east: 180, north: 90 }
+export const VIEWPORT_FALLBACK: ViewEnvelope = DEFAULT_APP_CONFIG.viewportFallback
 
-const EVENT_LAYER_MAX = 800
-const REF_LAYER_MAX = 150
+const EVENT_LAYER_MAX = DEFAULT_APP_CONFIG.eventLayerMax
+const REF_LAYER_MAX = DEFAULT_APP_CONFIG.refLayerMax
 
 /** 将服务 fullExtent 重投影到 4326（失败保留原范围）。 */
 function reprojectExtent(e: { west: number; south: number; east: number; north: number; wkid: number }) {

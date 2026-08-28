@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { createBudgetPolicy, DEFAULT_BUDGET_POLICY } from './policy'
 
-// 默认值镜像 globe/loadSafety.ts 的 SAFETY 常量；loadSafety.test.ts 里另有对齐断言防漂移。
+// 默认值统一来自 domain/config.ts（W4.2）；loadSafety.test.ts 里另有对齐断言防漂移。
 describe('BudgetPolicy', () => {
   it('默认值对齐 SAFETY', () => {
     expect(DEFAULT_BUDGET_POLICY).toEqual({

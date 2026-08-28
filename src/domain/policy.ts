@@ -1,8 +1,8 @@
 /**
  * 预算策略接口（W1.4）。
- * 零依赖纯类型 + 默认实现；默认值镜像 globe/loadSafety.ts 的 SAFETY 常量
- * （SAFETY 仍是运行时默认值来源，W4.2 常量收敛时统一到 domain/config.ts）。
+ * 零依赖纯类型 + 默认实现；默认值统一引用 domain/config.ts（W4.2 收敛后唯一来源）。
  */
+import { DEFAULT_APP_CONFIG } from './config'
 
 export interface BudgetPolicy {
   /** Feature / WFS：每层最大拉取/渲染要素数。 */
@@ -26,15 +26,15 @@ export interface BudgetPolicy {
 }
 
 export const DEFAULT_BUDGET_POLICY: BudgetPolicy = {
-  maxFeatures: 3000,
-  maxTotalFeatures: 5000,
-  maxRenderFeatures: 1500,
-  maxRenderVertices: 200_000,
-  maxFileBytes: 8_000_000,
-  kmlMaxBytes: 2_000_000,
-  vectorTileMaxZoom: 16,
-  sceneMaxLod: 15,
-  imageryMaxLevel: 16,
+  maxFeatures: DEFAULT_APP_CONFIG.maxFeatures,
+  maxTotalFeatures: DEFAULT_APP_CONFIG.maxTotalFeatures,
+  maxRenderFeatures: DEFAULT_APP_CONFIG.maxRenderFeatures,
+  maxRenderVertices: DEFAULT_APP_CONFIG.maxRenderVertices,
+  maxFileBytes: DEFAULT_APP_CONFIG.maxFileBytes,
+  kmlMaxBytes: DEFAULT_APP_CONFIG.kmlMaxBytes,
+  vectorTileMaxZoom: DEFAULT_APP_CONFIG.vectorTileMaxZoom,
+  sceneMaxLod: DEFAULT_APP_CONFIG.sceneMaxLod,
+  imageryMaxLevel: DEFAULT_APP_CONFIG.imageryMaxLevel,
 }
 
 export function createBudgetPolicy(overrides?: Partial<BudgetPolicy>): BudgetPolicy {

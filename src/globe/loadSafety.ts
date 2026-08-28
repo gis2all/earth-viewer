@@ -1,26 +1,28 @@
 import type { WebLayer } from './webmap'
 import type { RiskLevel } from '../domain/types'
+import { DEFAULT_APP_CONFIG } from '../domain/config'
 
 // Unified load-safety limits: keep heavy layers from freezing the main thread.
+// W4.2：值统一来自 domain/config.ts（唯一来源）；保留大写下划线导出以兼容既有消费方。
 export const SAFETY = {
   // Feature / WFS: max features fetched/renderable per layer
-  MAX_FEATURES: 3000,
+  MAX_FEATURES: DEFAULT_APP_CONFIG.maxFeatures,
   // 一个 webmap 内业务层合计要素预算：超出则跳过后续层，防叠加 OOM
-  MAX_TOTAL_FEATURES: 5000,
+  MAX_TOTAL_FEATURES: DEFAULT_APP_CONFIG.maxTotalFeatures,
   // 单层渲染要素上限：数据更大时只取前 N 个（降级），防 GeoJsonDataSource.load 阻塞
-  MAX_RENDER_FEATURES: 1500,
+  MAX_RENDER_FEATURES: DEFAULT_APP_CONFIG.maxRenderFeatures,
   // 单层几何顶点预算：超限先抽稀再截断（防单个大 polygon 内存爆炸）
-  MAX_RENDER_VERTICES: 200_000,
+  MAX_RENDER_VERTICES: DEFAULT_APP_CONFIG.maxRenderVertices,
   // GeoJSON / CSV / KML: max file payload bytes accepted before degrading
-  MAX_FILE_BYTES: 8_000_000,
+  MAX_FILE_BYTES: DEFAULT_APP_CONFIG.maxFileBytes,
   // KML：更严格（KmlDataSource 解析开销大）
-  KML_MAX_BYTES: 2_000_000,
+  KML_MAX_BYTES: DEFAULT_APP_CONFIG.kmlMaxBytes,
   // Vector tile (MapLibre 栅格化): 最大请求级别（MapLibre 逐瓦片 GPU 渲染，预算放宽到 16）
-  VECTOR_TILE_MAX_ZOOM: 16,
+  VECTOR_TILE_MAX_ZOOM: DEFAULT_APP_CONFIG.vectorTileMaxZoom,
   // Scene / 3D Tiles: cap LOD (kept conservative)
-  SCENE_MAX_LOD: 15,
+  SCENE_MAX_LOD: DEFAULT_APP_CONFIG.sceneMaxLod,
   // WMS / imagery providers: cap detail level to avoid tile storms
-  IMAGERY_MAX_LEVEL: 16,
+  IMAGERY_MAX_LEVEL: DEFAULT_APP_CONFIG.imageryMaxLevel,
 } as const
 
 /** 与 domain RiskLevel 对齐（M1 W1.1）；后续统一使用 domain 类型。 */

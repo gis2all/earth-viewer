@@ -1,7 +1,8 @@
 import type { WebLayer } from './webmap'
+import { DEFAULT_APP_CONFIG } from '../domain/config'
 
 export type LayerSupport = 'full' | 'partial' | 'none'
-export const MAX_BUSINESS_LAYERS = 5
+export const MAX_BUSINESS_LAYERS = DEFAULT_APP_CONFIG.maxBusinessLayers
 export type LayerRole = 'basemap' | 'overlay' | 'business'
 
 export interface LayerAssessment {

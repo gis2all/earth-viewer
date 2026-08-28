@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAppStore } from '../state/store'
+import { appConfig } from '../infra/config.defaults'
 import { assessWebmap } from '../globe/assess'
 import { isWebMapContainer } from '../globe/itemTypes'
 import { resolveServiceItem } from '../globe/serviceItem'
@@ -92,8 +93,9 @@ function itemDetailsUrl(id: string): string {
   return 'https://www.arcgis.com/home/item.html?id=' + encodeURIComponent(id)
 }
 
-const GALLERY_PAGE = 24
-const APPEND_STEP = 12
+// W4.2：UI 常量统一来自运行时配置（infra/config.defaults，默认值在 domain/config.ts）
+const GALLERY_PAGE = appConfig().panel.galleryPage
+const APPEND_STEP = appConfig().panel.appendStep
 
 function thumbUrl(id: string, t?: string): string | undefined {
   if (!t) return undefined
@@ -101,10 +103,10 @@ function thumbUrl(id: string, t?: string): string | undefined {
 }
 
 // 无缩略图 / 缩略图加载失败时的默认封面
-const DEFAULT_COVER = import.meta.env.BASE_URL + 'covers/default.png'
+const DEFAULT_COVER = import.meta.env.BASE_URL + appConfig().panel.defaultCover
 
 // 缩略图请求可能长期 pending（既不到 load 也不到 error），超时后强制走回退链路
-const THUMB_TIMEOUT_MS = 60000
+const THUMB_TIMEOUT_MS = appConfig().panel.thumbTimeoutMs
 export function thumbTimeout(img: HTMLImageElement, ms = THUMB_TIMEOUT_MS) {
   window.setTimeout(() => {
     if (img.complete) return // 已成功（naturalWidth>0，onLoad 已隐藏动画）或已失败（onError 已处理）
