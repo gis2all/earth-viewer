@@ -558,7 +558,7 @@ describe('ArcGisVectorTileImageryProvider', () => {
       await provider.readyPromise
       const pA = provider.requestImage(0, 0, 2) // 块 2/0/0 → m1
       const pB = provider.requestImage(3, 0, 2) // 块 2/1/0 → m2
-      const pC = provider.requestImage(0, 3, 2) // 块 2/0/1：两实例都忙，必须排队
+      const pC = provider.requestImage(0, 3, 2)! // 块 2/0/1：两实例都忙，必须排队
       // 关键断言：C 不能落到仍在渲染的 m1（旧轮询实现会跳回 m1 → 同一 canvas 并发 → 块内容整体错位）
       expect(m1.jumpTo).toHaveBeenCalledTimes(1)
       expect(m2.jumpTo).toHaveBeenCalledTimes(1)
