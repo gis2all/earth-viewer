@@ -1,6 +1,6 @@
 import { VectorTile } from '@mapbox/vector-tile'
 import { PbfReader } from 'pbf'
-import { withFetchTimeout, type WebLayer } from './webmap'
+import { withFetchTimeout, type WebLayer } from './facade/webmap'
 
 /** 单条解码后的矢量要素（geometry 为瓦片局部坐标，需用瓦片 z/y/x 转成经纬度） */
 export interface VectorTileFeature {

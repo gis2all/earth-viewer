@@ -5,20 +5,20 @@
  */
 import * as Cesium from 'cesium'
 import type { LayerRuntime } from '../domain/runtime'
-import { ArcGisVectorTileImageryProvider } from '../globe/maplibreImagery'
+import { ArcGisVectorTileImageryProvider } from '../globe/facade/maplibreImagery'
 import {
   providerForWebLayer,
   WORLD_IMAGERY_WGS84_TILES,
   WORLD_VECTOR_LABELS_STYLE_URL,
   type WebLayer,
-} from '../globe/webmap'
+} from '../globe/facade/webmap'
 import { viewEnvelopeFromCamera } from '../globe/viewport/envelope'
 import {
   createViewportController,
   type ViewportController,
 } from '../globe/viewport/viewportController'
-import { loadI3S, load3DTiles } from '../globe/scene'
-import { registerViewer, unregisterViewer, flyToHome } from '../globe/cameraApi'
+import { loadI3S, load3DTiles } from '../globe/facade/scene'
+import { registerViewer, unregisterViewer, flyToHome } from '../globe/facade/cameraApi'
 import type { ViewEnvelope } from '../globe/viewport/featureQuery'
 
 // 地形：Terrain3D (GCSv2, EPSG:4326)，覆盖 ±90°（3857 版只到 ±85.05°，会导致极区无 globe tile）

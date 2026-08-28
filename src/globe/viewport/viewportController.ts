@@ -1,7 +1,7 @@
 import type { ViewEnvelope, FeatureQueryOptions } from './featureQuery'
 import { queryViewportData } from './query'
 import { featuresToGeometryModel } from './geometryModel'
-import { buildLayerPrimitive, hasPrimitiveRendering } from './primitive'
+import { buildLayerPrimitive, hasPrimitiveRendering } from '../facade/primitive'
 import { createLru, viewportCacheKey } from './lru'
 
 export interface ViewportControllerOptions extends FeatureQueryOptions {

@@ -2,7 +2,7 @@ import type { ViewEnvelope, FeatureQueryOptions } from './featureQuery'
 import { buildFeatureQueryUrl, parseFeatureCollection, resolveFeatureQueryBase } from './featureQuery'
 import { runViewportProcess } from './worker'
 import type { ViewportProcessResult } from './process'
-import { withFetchTimeout } from '../webmap'
+import { withFetchTimeout } from '../facade/webmap'
 
 export interface ViewportQueryOptions extends FeatureQueryOptions {
   maxVertices?: number

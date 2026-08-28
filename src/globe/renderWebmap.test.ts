@@ -21,8 +21,8 @@ const primMock = vi.hoisted(() => ({ hasPrimitiveRendering: vi.fn(() => false) }
 const ogcMock = vi.hoisted(() => ({ fetchOgcFeatureGeoJSON: vi.fn() }))
 const csvMock = vi.hoisted(() => ({ fetchCsvGeoJSON: vi.fn() }))
 
-vi.mock('./webmap', async (importOriginal) => {
-  const mod = await importOriginal<typeof import('./webmap')>()
+vi.mock('./facade/webmap', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('./facade/webmap')>()
   return {
     ...mod,
     fetchFeatureStyle: webmapMock.fetchFeatureStyle,
@@ -41,8 +41,8 @@ vi.mock('./viewport/query', async (importOriginal) => {
   const mod = await importOriginal<typeof import('./viewport/query')>()
   return { ...mod, queryViewportData: queryMock.queryViewportData }
 })
-vi.mock('./viewport/primitive', async (importOriginal) => {
-  const mod = await importOriginal<typeof import('./viewport/primitive')>()
+vi.mock('./facade/primitive', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('./facade/primitive')>()
   return { ...mod, hasPrimitiveRendering: primMock.hasPrimitiveRendering }
 })
 vi.mock('./ogc', async (importOriginal) => {

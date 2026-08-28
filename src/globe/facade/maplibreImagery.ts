@@ -4,7 +4,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 // maplibre 的 worker 通过 new URL(..., import.meta.url) 动态加载，vite 无法静态解析 → 显式 ?worker&url 打包（内联依赖）并 setWorkerUrl
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import { withFetchTimeout } from './webmap'
-import { SAFETY } from './loadSafety'
+import { SAFETY } from '../loadSafety'
 
 // 批量渲染块尺寸：一帧 MapLibre 渲染 3x3 瓦片，读回次数降为 1/9（避免与 Cesium 抢 GPU 导致每片 1s+ 的读回停顿）
 const BLOCK = 3

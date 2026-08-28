@@ -3,7 +3,7 @@ import { GlobeViewer } from '../globe/GlobeViewer'
 import { LayerPanel } from './LayerPanel'
 import { EffectsPanel } from './EffectsPanel'
 import { useAppStore } from '../state/store'
-import { resetView, orientView } from '../globe/cameraApi'
+import { resetView, orientView } from '../globe/facade/cameraApi'
 
 function PanelChevronIcon({ direction }: { direction: 'left' | 'right' }) {
   return <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="square" strokeLinejoin="miter" aria-hidden="true"><path d={direction === 'right' ? 'm6 4 4 4-4 4' : 'm10 4-4 4 4 4'} /></svg>

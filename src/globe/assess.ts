@@ -1,4 +1,4 @@
-import type { WebLayer } from './webmap'
+import type { WebLayer } from './facade/webmap'
 import { DEFAULT_APP_CONFIG } from '../domain/config'
 
 export type LayerSupport = 'full' | 'partial' | 'none'

@@ -15,12 +15,12 @@ import { applyVertexBudget } from './viewport/budget'
 import { queryViewportData } from './viewport/query'
 import { resolveFeatureQueryBase, resolveFeatureService, type ViewEnvelope } from './viewport/featureQuery'
 import { runViewportProcess } from './viewport/worker'
-import { hasPrimitiveRendering } from './viewport/primitive'
+import { hasPrimitiveRendering } from './facade/primitive'
 import {
   fetchFeatureStyle,
   fetchFeatureRenderer,
   withFetchTimeout,
-} from './webmap'
+} from './facade/webmap'
 import {
   isVectorTileInput,
   isFeatureCollectionInput,
@@ -32,11 +32,11 @@ import {
   isGeoJsonInput,
   isKmlInput,
 } from '../domain/registry'
-import { rendererToStyleFn, applyFeatureStyler, reprojectCoordinates, type FeatureStyleSpec } from './vector'
+import { rendererToStyleFn, applyFeatureStyler, reprojectCoordinates, type FeatureStyleSpec } from './facade/vector'
 import { parseKmlToGeoJSON, kmlStyleToFeatureStyle, type KmlStyleSpec } from './kml'
 import { fetchOgcFeatureGeoJSON } from './ogc'
 import { fetchCsvGeoJSON } from './csv'
-import { viewpointCameraFromWebmap } from './viewpoint'
+import { viewpointCameraFromWebmap } from './facade/viewpoint'
 
 const VIEWPORT_FALLBACK: ViewEnvelope = DEFAULT_APP_CONFIG.viewportFallback
 

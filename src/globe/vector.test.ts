@@ -4,7 +4,7 @@ import {
   reprojectFeatureCollection,
   crsWkidFromGeoJson,
   detectServiceWkid,
-} from './vector'
+} from './facade/vector'
 
 describe('reprojectCoordinates', () => {
   it('点 [x,y] 重投影为 [lon,lat]', () => {
@@ -66,7 +66,7 @@ describe('detectServiceWkid', () => {
 })
 
 
-import { rendererToStyleFn } from './vector'
+import { rendererToStyleFn } from './facade/vector'
 
 describe('rendererToStyleFn', () => {
   it('simple: 固定样式', () => {
@@ -110,7 +110,7 @@ describe('rendererToStyleFn', () => {
 })
 
 
-import { applyFeatureStyler } from './vector'
+import { applyFeatureStyler } from './facade/vector'
 
 describe('applyFeatureStyler', () => {
   function colorClose(c: { red: number; green: number; blue: number } | undefined, r: number, g: number, b: number) {

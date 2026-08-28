@@ -1,12 +1,12 @@
 import * as Cesium from 'cesium'
-import { SAFETY } from './loadSafety'
+import { SAFETY } from '../loadSafety'
 import {
   detectMapService,
   fetchFeatureGeoJSON,
   fetchFeatureRenderer,
   fetchWebmap,
   type MapServiceInfo,
-} from '../service/repository'
+} from '../../service/repository'
 
 // 网络请求超时（毫秒）：慢速服务不阻塞交互
 const FETCH_TIMEOUT = 15000

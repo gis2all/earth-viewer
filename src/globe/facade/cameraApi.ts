@@ -1,6 +1,6 @@
 import * as Cesium from 'cesium'
-import { fetchUserHome, type UserHome } from './geo'
-import { useAppStore } from '../state/store'
+import { fetchUserHome, type UserHome } from '../geo'
+import { useAppStore } from '../../state/store'
 
 let viewer: Cesium.Viewer | null = null
 // 程序默认启动时的相机高度（用于"回到用户位置"的缩放）

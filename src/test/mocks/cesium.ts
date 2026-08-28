@@ -176,7 +176,7 @@ const maplibreMock = vi.hoisted(() => {
   return { instances }
 })
 
-vi.mock('../../globe/maplibreImagery', () => {
+vi.mock('../../globe/facade/maplibreImagery', () => {
   class MockVectorProvider {
     ready = false
     readyPromise: Promise<boolean>

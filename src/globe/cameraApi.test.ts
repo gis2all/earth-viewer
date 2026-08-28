@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { registerViewer, unregisterViewer, resetView, orientView } from './cameraApi'
+import { registerViewer, unregisterViewer, resetView, orientView } from './facade/cameraApi'
 import { useAppStore } from '../state/store'
 
 vi.mock('cesium', () => ({

@@ -1,4 +1,4 @@
-import { withFetchTimeout, type WebLayer } from './webmap'
+import { withFetchTimeout, type WebLayer } from './facade/webmap'
 import { SAFETY } from './loadSafety'
 
 type FeatureCollection = {

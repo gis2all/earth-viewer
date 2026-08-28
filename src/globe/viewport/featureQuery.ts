@@ -1,5 +1,5 @@
 import { SAFETY } from '../loadSafety'
-import { withFetchTimeout } from '../webmap'
+import { withFetchTimeout } from '../facade/webmap'
 
 /** 视口经纬度范围（度）。 */
 export interface ViewEnvelope {

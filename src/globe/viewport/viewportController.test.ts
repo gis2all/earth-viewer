@@ -2,12 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createViewportController } from './viewportController'
 
 vi.mock('./query', () => ({ queryViewportData: vi.fn() }))
-vi.mock('./primitive', () => ({
+vi.mock('../facade/primitive', () => ({
   buildLayerPrimitive: vi.fn((_scene, model) => ({ collection: { model }, dispose: vi.fn() })),
   hasPrimitiveRendering: vi.fn(() => true),
 }))
 import { queryViewportData } from './query'
-import { buildLayerPrimitive } from './primitive'
+import { buildLayerPrimitive } from '../facade/primitive'
 
 describe('createViewportController', () => {
   beforeEach(() => {

@@ -5,7 +5,7 @@ import {
   isWebglAvailable,
 } from './CesiumFacade'
 import type { LayerRuntime } from '../domain/runtime'
-import { flyToHome } from '../globe/cameraApi'
+import { flyToHome } from '../globe/facade/cameraApi'
 
 // ---- Cesium mock（fake Viewer，记录创建参数/图层/地形） ----
 const cesiumMock = vi.hoisted(() => {
@@ -203,7 +203,7 @@ const maplibreMock = vi.hoisted(() => {
   }
 })
 
-vi.mock('../globe/maplibreImagery', () => {
+vi.mock('../globe/facade/maplibreImagery', () => {
   class MockVectorProvider {
     readyPromise: Promise<void>
     destroy = vi.fn()
@@ -224,18 +224,18 @@ vi.mock('../globe/maplibreImagery', () => {
   }
 })
 
-vi.mock('../globe/webmap', () => ({
+vi.mock('../globe/facade/webmap', () => ({
   providerForWebLayer: vi.fn(async (op: { fail?: boolean }) => (op.fail ? null : { provider: 'web' })),
   WORLD_IMAGERY_WGS84_TILES: 'https://imagery.example/{z}/{y}/{x}',
   WORLD_VECTOR_LABELS_STYLE_URL: 'https://labels.example/style.json',
 }))
 
-vi.mock('../globe/scene', () => ({
+vi.mock('../globe/facade/scene', () => ({
   loadI3S: vi.fn(async (url: string) => ({ prim: 'i3s-' + url })),
   load3DTiles: vi.fn(async (url: string) => ({ tileset: '3d-' + url })),
 }))
 
-vi.mock('../globe/cameraApi', () => ({
+vi.mock('../globe/facade/cameraApi', () => ({
   registerViewer: vi.fn(),
   unregisterViewer: vi.fn(),
   flyToHome: vi.fn(),

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { assessWebmap, classifyLayer, renderableLayersFromWebmap, skippedBusinessLayers } from './assess'
-import type { WebLayer } from './webmap'
+import type { WebLayer } from './facade/webmap'
 
 const layer = (l: Partial<WebLayer>): WebLayer => ({ title: 't', ...l })
 

@@ -14,7 +14,7 @@ import {
   mapLibreRenderPlan,
   ArcGisVectorTileImageryProvider,
   type MapLike,
-} from './maplibreImagery'
+} from './facade/maplibreImagery'
 
 // 默认 createMap 会 new maplibregl.Map：mock 掉真实模块，jsdom 无 WebGL
 vi.mock('maplibre-gl', () => {
