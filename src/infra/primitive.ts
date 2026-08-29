@@ -1,6 +1,5 @@
 import * as Cesium from 'cesium'
-import type { GeometryModel } from '../domain/geometry/geometryModel'
-import { clusterPoints } from '../domain/geometry/cluster'
+import { clusterPoints, type GeometryModel } from '../domain/geometry/geometry'
 
 export interface LayerPrimitive {
   /** 加入 scene.primitives 的集合；dispose 时移除 */

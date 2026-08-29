@@ -15,7 +15,7 @@ import { applyVertexBudget } from '../service/processing/budget'
 import { queryViewportData } from './viewport/viewportQuery'
 import { resolveFeatureQueryBase, resolveFeatureService } from './viewport/featureQuery'
 import { createViewportDriver } from './viewport/viewportController'
-import type { ViewEnvelope } from '../domain/geometry/envelope'
+import type { ViewEnvelope } from '../domain/geometry/geometry'
 import { runViewportProcess } from '../service/processing/viewportWorker'
 import { hasPrimitiveRendering } from '../infra/primitive'
 import {

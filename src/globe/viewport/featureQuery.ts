@@ -1,6 +1,6 @@
 import { SAFETY } from '../../domain/loadSafety'
 import { fetchJson } from '../../service/http'
-import type { ViewEnvelope } from '../../domain/geometry/envelope'
+import type { ViewEnvelope } from '../../domain/geometry/geometry'
 import {
   parseFeatureCollection,
   countVertices,

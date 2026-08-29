@@ -18,10 +18,9 @@ import {
   WORLD_VECTOR_LABELS_STYLE_URL,
 } from './webmapProviders'
 import type { WebLayer } from '../domain/types'
-import { viewEnvelopeFromCamera } from '../domain/geometry/envelope'
+import { viewEnvelopeFromCamera, type ViewEnvelope } from '../domain/geometry/geometry'
 import { loadI3S, load3DTiles } from './scene'
 import { registerViewer, unregisterViewer, flyToHome } from './cameraActions'
-import type { ViewEnvelope } from '../domain/geometry/envelope'
 
 // 地形：Terrain3D (GCSv2, EPSG:4326)，覆盖 ±90°（3857 版只到 ±85.05°，会导致极区无 globe tile）
 const TERRAIN_URL =
