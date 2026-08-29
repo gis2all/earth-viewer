@@ -10,6 +10,7 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src",
+    "check:arch": "node scripts/check-arch.mjs && npm run lint",
     "test:e2e": "playwright test"
   },
   "dependencies": {

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { EffectsPanel } from './EffectsPanel'
-import { useAppStore } from '../state/store'
+import { useAppStore } from './store'
 
 describe('EffectsPanel', () => {
   beforeEach(() => {

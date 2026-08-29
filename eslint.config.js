@@ -18,5 +18,24 @@ export default tseslint.config(
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
     },
+  },
+  {
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            { name: 'cesium', message: 'Cesium 仅允许在 src/infra/** 引用（CLAUDE.md §4.1，子路径由 check-arch 覆盖）' },
+            { name: 'maplibre-gl', message: 'MapLibre 仅允许在 src/infra/** 引用（CLAUDE.md §4.1，子路径由 check-arch 覆盖）' },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ['src/infra/**'],
+    rules: {
+      'no-restricted-imports': 'off',
+    },
   }
 )
