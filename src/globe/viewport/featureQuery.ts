@@ -1,13 +1,13 @@
-import { SAFETY } from '../loadSafety'
-import { withFetchTimeout } from '../facade/webmap'
+import { SAFETY } from '../../domain/loadSafety'
+import { fetchJson } from '../../service/http'
+import type { ViewEnvelope } from '../../domain/geometry/envelope'
+import {
+  parseFeatureCollection,
+  countVertices,
+  countFeatureCollectionVertices,
+} from '../../service/processing/featureParse'
 
-/** 视口经纬度范围（度）。 */
-export interface ViewEnvelope {
-  west: number
-  south: number
-  east: number
-  north: number
-}
+export { parseFeatureCollection, countVertices, countFeatureCollectionVertices }
 
 export interface FeatureQueryOptions {
   /** 单次查询返回要素上限（防一屏拉爆） */
@@ -33,7 +33,7 @@ async function layerRendererType(layerUrl: string): Promise<string> {
   const cached = layerRendererCache.get(layerUrl)
   if (cached) return cached
   try {
-    const r = await fetch(layerUrl + '?f=json', { signal: withFetchTimeout() })
+    const r = await fetchJson<Response>(layerUrl + '?f=json', undefined, { throwHttpErrors: false })
     if (r.ok) {
       const j = (await r.json()) as { drawingInfo?: { renderer?: { type?: string } } } | null
       const t = j?.drawingInfo?.renderer?.type ?? ''
@@ -50,7 +50,7 @@ export async function resolveFeatureQueryBase(serviceUrl: string): Promise<strin
   const cached = queryBaseCache.get(url)
   if (cached) return cached
   try {
-    const r = await fetch(url + '?f=json', { signal: withFetchTimeout() })
+    const r = await fetchJson<Response>(url + '?f=json', undefined, { throwHttpErrors: false })
     if (r.ok) {
       const j = (await r.json()) as { layers?: { id?: number }[] } | null
       const layers = j?.layers ?? []
@@ -82,7 +82,7 @@ export async function resolveFeatureService(serviceUrl: string): Promise<Feature
   const cached = featureServiceCache.get(url)
   if (cached) return cached
   try {
-    const r = await fetch(url + '?f=json', { signal: withFetchTimeout() })
+    const r = await fetchJson<Response>(url + '?f=json', undefined, { throwHttpErrors: false })
     if (r.ok) {
       const j = (await r.json()) as {
         layers?: { id?: number }[]
@@ -124,42 +124,4 @@ export function buildFeatureQueryUrl(
   p.set('f', 'geojson')
   p.set('resultRecordCount', String(opts.maxFeatures ?? SAFETY.MAX_FEATURES))
   return queryBase + sep + p.toString()
-}
-
-/** 把 Geojson/ArcGIS 响应统一成 { type, features }。 */
-export function parseFeatureCollection(json: unknown): { type: 'FeatureCollection'; features: Record<string, unknown>[] } {
-  const j = json as { type?: string; features?: Record<string, unknown>[]; geometry?: unknown; properties?: unknown } | null
-  if (!j || typeof j !== 'object') return { type: 'FeatureCollection', features: [] }
-  if (Array.isArray(j.features)) return { type: 'FeatureCollection', features: j.features }
-  // 单个 Feature（GeoJSON 文件可能直接给一个 Feature）
-  if (j.type === 'Feature' || j.geometry || j.properties) return { type: 'FeatureCollection', features: [j as Record<string, unknown>] }
-  return { type: 'FeatureCollection', features: [] }
-}
-
-/** 统计单个 feature 的几何顶点数（坐标对数）。 */
-export function countVertices(feature: Record<string, unknown>): number {
-  const g = feature?.geometry as { coordinates?: unknown } | undefined
-  const c = g?.coordinates
-  if (!Array.isArray(c)) return 0
-  if (typeof c[0] === 'number') return 1
-  let n = 0
-  const walk = (arr: unknown[]): void => {
-    for (const item of arr) {
-      if (Array.isArray(item)) {
-        if (typeof item[0] === 'number') n++
-        else walk(item as unknown[])
-      }
-    }
-  }
-  walk(c)
-  return n
-}
-
-/** 统计 FeatureCollection 的总顶点数（比"要素数"更能反映内存占用）。 */
-export function countFeatureCollectionVertices(fc: { type: string; features: Record<string, unknown>[] } | unknown): number {
-  const features = (fc as { features?: Record<string, unknown>[] } | null)?.features
-  if (!Array.isArray(features)) return 0
-  let n = 0
-  for (const f of features) n += countVertices(f)
-  return n
 }

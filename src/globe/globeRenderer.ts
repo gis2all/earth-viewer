@@ -6,21 +6,23 @@
  *   错误提示与清错时机；
  * - 数据获取/转换仍走 globe 既有模块（webmap/viewport/kml/ogc/csv），由 LayerController 串行调度。
  */
-import type { CesiumFacade } from '../infra/CesiumFacade'
-import type { LayerRenderJob } from '../domain/render'
+import type { CesiumFacade } from '../infra/cesiumFacade'
+import type { LayerRenderJob } from '../domain/renderContract'
 import { DEFAULT_APP_CONFIG } from '../domain/config'
-import { renderableLayersFromWebmap, skippedBusinessLayers, MAX_BUSINESS_LAYERS } from './assess'
-import { SAFETY, assertUrlWithinLimit, consumeFeatureBudget } from './loadSafety'
-import { applyVertexBudget } from './viewport/budget'
-import { queryViewportData } from './viewport/query'
-import { resolveFeatureQueryBase, resolveFeatureService, type ViewEnvelope } from './viewport/featureQuery'
-import { runViewportProcess } from './viewport/worker'
-import { hasPrimitiveRendering } from './facade/primitive'
+import { renderableLayersFromWebmap, skippedBusinessLayers, MAX_BUSINESS_LAYERS } from '../domain/layerAssessment'
+import { SAFETY, assertUrlWithinLimit, consumeFeatureBudget } from '../domain/loadSafety'
+import { applyVertexBudget } from '../service/processing/budget'
+import { queryViewportData } from './viewport/viewportQuery'
+import { resolveFeatureQueryBase, resolveFeatureService } from './viewport/featureQuery'
+import { createViewportDriver } from './viewport/viewportController'
+import type { ViewEnvelope } from '../domain/geometry/envelope'
+import { runViewportProcess } from '../service/processing/viewportWorker'
+import { hasPrimitiveRendering } from '../infra/primitive'
 import {
   fetchFeatureStyle,
   fetchFeatureRenderer,
-  withFetchTimeout,
-} from './facade/webmap'
+} from '../infra/webmapProviders'
+import { withFetchTimeout } from '../service/http'
 import {
   isVectorTileInput,
   isFeatureCollectionInput,
@@ -31,12 +33,13 @@ import {
   isFeatureInput,
   isGeoJsonInput,
   isKmlInput,
-} from '../domain/registry'
-import { rendererToStyleFn, applyFeatureStyler, reprojectCoordinates, type FeatureStyleSpec } from './facade/vector'
-import { parseKmlToGeoJSON, kmlStyleToFeatureStyle, type KmlStyleSpec } from './kml'
-import { fetchOgcFeatureGeoJSON } from './ogc'
-import { fetchCsvGeoJSON } from './csv'
-import { viewpointCameraFromWebmap } from './facade/viewpoint'
+} from '../domain/layerRegistry'
+import { rendererToStyleFn, applyFeatureStyler, reprojectCoordinates } from '../infra/vector'
+import type { FeatureStyleSpec } from '../domain/types'
+import { parseKmlToGeoJSON, kmlStyleToFeatureStyle, type KmlStyleSpec } from '../service/formats/kml'
+import { fetchOgcFeatureGeoJSON } from '../service/formats/ogc'
+import { fetchCsvGeoJSON } from '../service/formats/csv'
+import { viewpointCameraFromWebmap } from '../infra/webmapCamera'
 
 const VIEWPORT_FALLBACK: ViewEnvelope = DEFAULT_APP_CONFIG.viewportFallback
 
@@ -270,8 +273,14 @@ async function renderFeatureLayer(
       if (hasPrimitiveRendering() && !hasRendererStyle) {
         try {
           const base2 = await resolveFeatureQueryBase(op.url as string)
-          const handle = f.createViewport(base2, SAFETY.MAX_FEATURES)
-          job.attachViewport?.(handle)
+          const surface = f.viewportSurface()
+          if (surface) {
+            const handle = createViewportDriver(surface, {
+              serviceUrl: base2,
+              maxFeatures: SAFETY.MAX_FEATURES,
+            })
+            job.attachViewport?.(handle)
+          }
           job.onClearError()
           return
         } catch (e) {

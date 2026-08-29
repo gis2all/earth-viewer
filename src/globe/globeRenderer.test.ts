@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import '../test/mocks/cesium'
-import type { CesiumFacade } from '../infra/CesiumFacade'
-import type { LayerRenderJob } from '../domain/render'
-import { createEmptyRuntime, type LayerRuntime } from '../domain/runtime'
-import { SAFETY } from './loadSafety'
+import '../testing/mocks/cesium'
+import type { CesiumFacade } from '../infra/cesiumFacade'
+import type { LayerRenderJob } from '../domain/renderContract'
+import { createEmptyRuntime, type LayerRuntime } from '../domain/layerRuntime'
+import { SAFETY } from '../domain/loadSafety'
 import type { FeatureServiceInfo } from './viewport/featureQuery'
-import { renderWebmap } from './renderWebmap'
+import { renderWebmap } from './globeRenderer'
 
 // ---- mock 数据获取/查询层（纯渲染分支用假数据驱动，避免真网络） ----
 const webmapMock = vi.hoisted(() => ({
@@ -21,8 +21,8 @@ const primMock = vi.hoisted(() => ({ hasPrimitiveRendering: vi.fn(() => false) }
 const ogcMock = vi.hoisted(() => ({ fetchOgcFeatureGeoJSON: vi.fn() }))
 const csvMock = vi.hoisted(() => ({ fetchCsvGeoJSON: vi.fn() }))
 
-vi.mock('./facade/webmap', async (importOriginal) => {
-  const mod = await importOriginal<typeof import('./facade/webmap')>()
+vi.mock('../infra/webmapProviders', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../infra/webmapProviders')>()
   return {
     ...mod,
     fetchFeatureStyle: webmapMock.fetchFeatureStyle,
@@ -37,20 +37,20 @@ vi.mock('./viewport/featureQuery', async (importOriginal) => {
     resolveFeatureQueryBase: fqMock.resolveFeatureQueryBase,
   }
 })
-vi.mock('./viewport/query', async (importOriginal) => {
-  const mod = await importOriginal<typeof import('./viewport/query')>()
+vi.mock('./viewport/viewportQuery', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('./viewport/viewportQuery')>()
   return { ...mod, queryViewportData: queryMock.queryViewportData }
 })
-vi.mock('./facade/primitive', async (importOriginal) => {
-  const mod = await importOriginal<typeof import('./facade/primitive')>()
+vi.mock('../infra/primitive', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../infra/primitive')>()
   return { ...mod, hasPrimitiveRendering: primMock.hasPrimitiveRendering }
 })
-vi.mock('./ogc', async (importOriginal) => {
-  const mod = await importOriginal<typeof import('./ogc')>()
+vi.mock('../service/formats/ogc', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../service/formats/ogc')>()
   return { ...mod, fetchOgcFeatureGeoJSON: ogcMock.fetchOgcFeatureGeoJSON }
 })
-vi.mock('./csv', async (importOriginal) => {
-  const mod = await importOriginal<typeof import('./csv')>()
+vi.mock('../service/formats/csv', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../service/formats/csv')>()
   return { ...mod, fetchCsvGeoJSON: csvMock.fetchCsvGeoJSON }
 })
 
@@ -87,7 +87,13 @@ function makeFacade(overrides: Partial<Record<keyof CesiumFacade, unknown>> = {}
     addKmlNative: vi.fn(async () => ({ entities: { values: [] } })),
     addScene: vi.fn(async () => ({ prim: true })),
     add3dTiles: vi.fn(async () => ({ tileset: true })),
-    createViewport: vi.fn(() => ({ controller: { dispose: vi.fn() }, unsubscribeMoveEnd: vi.fn() })),
+    viewportSurface: vi.fn(() => ({
+      scene: {},
+      prims: { add: vi.fn() },
+      onMoveEnd: vi.fn(() => () => {}),
+      viewEnvelope: vi.fn(() => null),
+      requestFrame: vi.fn(),
+    })),
     viewEnvelope: vi.fn(() => null),
     flyTo: vi.fn(),
     flyToExtent: vi.fn(),
@@ -235,16 +241,27 @@ describe('renderWebmap：分支渲染', () => {
     expect(job.onClearError).toHaveBeenCalled()
   })
 
-  it('Feature 单层 Primitive 路径：createViewport + attachViewport，不再手动渲染', async () => {
+  it('Feature 单层 Primitive 路径：viewportSurface + createViewportDriver + attachViewport，不再手动渲染', async () => {
     const f = makeFacade()
     primMock.hasPrimitiveRendering.mockReturnValue(true)
     fqMock.resolveFeatureService.mockResolvedValue(makeFeatureService(['https://x/FeatureServer/0']))
     const job = makeJob(webmapWithLayer({ id: 'ft', title: 'Quakes', url: 'https://x/FeatureServer/0', layerType: 'ArcGISFeatureLayer' }))
     await renderWebmap(job, f)
     expect(fqMock.resolveFeatureQueryBase).toHaveBeenCalledWith('https://x/FeatureServer/0')
-    expect(f.createViewport).toHaveBeenCalledWith('https://x/FeatureServer/0', SAFETY.MAX_FEATURES)
+    expect(f.viewportSurface).toHaveBeenCalledTimes(1)
     expect(job.attachViewport).toHaveBeenCalled()
     expect(f.addGeoJson).not.toHaveBeenCalled()
+    expect(job.onClearError).toHaveBeenCalled()
+  })
+
+  it('Feature 单层 Primitive 路径：viewer 不可用时跳过 attachViewport 仍标记完成', async () => {
+    const f = makeFacade({ viewportSurface: vi.fn(() => null) })
+    primMock.hasPrimitiveRendering.mockReturnValue(true)
+    fqMock.resolveFeatureService.mockResolvedValue(makeFeatureService(['https://x/FeatureServer/0']))
+    const job = makeJob(webmapWithLayer({ id: 'ft', title: 'Quakes', url: 'https://x/FeatureServer/0', layerType: 'ArcGISFeatureLayer' }))
+    await renderWebmap(job, f)
+    expect(f.viewportSurface).toHaveBeenCalledTimes(1)
+    expect(job.attachViewport).not.toHaveBeenCalled()
     expect(job.onClearError).toHaveBeenCalled()
   })
 

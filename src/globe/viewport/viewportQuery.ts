@@ -1,8 +1,9 @@
-import type { ViewEnvelope, FeatureQueryOptions } from './featureQuery'
+import type { FeatureQueryOptions } from './featureQuery'
+import type { ViewEnvelope } from '../../domain/geometry/envelope'
 import { buildFeatureQueryUrl, parseFeatureCollection, resolveFeatureQueryBase } from './featureQuery'
-import { runViewportProcess } from './worker'
-import type { ViewportProcessResult } from './process'
-import { withFetchTimeout } from '../facade/webmap'
+import { runViewportProcess } from '../../service/processing/viewportWorker'
+import type { ViewportProcessResult } from '../../service/processing/viewportProcess'
+import { fetchJson } from '../../service/http'
 
 export interface ViewportQueryOptions extends FeatureQueryOptions {
   maxVertices?: number
@@ -18,7 +19,7 @@ export async function queryViewportData(
   // 先解析可查询层（不硬编码 /0），再构建视口 query URL
   const base = await resolveFeatureQueryBase(serviceUrl)
   const url = buildFeatureQueryUrl(base, env, opts)
-  const r = await fetch(url, { signal: withFetchTimeout(signal) })
+  const r = await fetchJson<Response>(url, { signal }, { throwHttpErrors: false })
   if (!r.ok) throw new Error('ArcGIS 视口查询失败')
   const json: unknown = await r.json().catch(() => null)
   return await runViewportProcess({

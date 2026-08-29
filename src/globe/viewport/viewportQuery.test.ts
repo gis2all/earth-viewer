@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { queryViewportData } from './query'
+import { queryViewportData } from './viewportQuery'
 import { resolveFeatureQueryBase, resolveFeatureService } from './featureQuery'
 
 describe('queryViewportData', () => {
