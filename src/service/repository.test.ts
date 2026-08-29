@@ -171,6 +171,19 @@ describe('repository detectMapService（W2.1）', () => {
     await expect(detectMapService('https://d4/MapServer')).resolves.toBeNull()
     vi.unstubAllGlobals()
   })
+
+  it('外部 signal 中止时探测被取消并返回 null', async () => {
+    const ac = new AbortController()
+    vi.stubGlobal('fetch', vi.fn((_url: string, init?: RequestInit) => {
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+      })
+    }))
+    const p = detectMapService('https://d5/MapServer', ac.signal)
+    ac.abort()
+    await expect(p).resolves.toBeNull()
+    vi.unstubAllGlobals()
+  })
 })
 
 describe('repository 要素数据（W2.1）', () => {
@@ -206,6 +219,33 @@ describe('repository 要素数据（W2.1）', () => {
       return { ok: false, status: 500 }
     }))
     await expect(fetchFeatureGeoJSON('https://f/FeatureServer', 10)).rejects.toThrow('要素服务查询失败')
+    vi.unstubAllGlobals()
+  })
+
+  it('pageSize 大于 limit 时按剩余预算截断，不突破上限', async () => {
+    const requested: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const u = String(url)
+      if (u.includes('?f=json') && !u.includes('/query')) return { ok: true, json: async () => ({ maxRecordCount: 2000, layers: [{ id: 0 }] }) }
+      if (u.includes('f=geojson')) {
+        requested.push(u)
+        const params = new URL(u).searchParams
+        const count = Number(params.get('resultRecordCount'))
+        const offset = Number(params.get('resultOffset'))
+        const feats = Array.from({ length: count }, (_, i) => ({
+          type: 'Feature',
+          properties: { n: offset + i },
+          geometry: { type: 'Point', coordinates: [offset + i, offset + i] },
+        }))
+        return { ok: true, json: async () => ({ features: feats }) }
+      }
+      return { ok: false, status: 404 }
+    }))
+    const out = await fetchFeatureGeoJSON('https://f/FeatureServer', 3000)
+    const feats = (out as { features: unknown[] }).features
+    expect(feats).toHaveLength(3000)
+    expect(requested).toHaveLength(2)
+    expect(requested[1]).toContain('resultRecordCount=1000')
     vi.unstubAllGlobals()
   })
 

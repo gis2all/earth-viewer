@@ -232,7 +232,7 @@ export interface MapServiceInfo {
 const CRS_CACHE = new Map<string, MapServiceInfo>()
 
 /** 探测 MapServer/ImageServer：坐标系（wkid）、最大级别、是否缓存瓦片；失败返回 null。 */
-export async function detectMapService(url: string): Promise<MapServiceInfo | null> {
+export async function detectMapService(url: string, signal?: AbortSignal): Promise<MapServiceInfo | null> {
   const base = url.replace(/\/?$/, '')
   const cached = CRS_CACHE.get(base)
   if (cached) return cached
@@ -240,7 +240,7 @@ export async function detectMapService(url: string): Promise<MapServiceInfo | nu
     const j = await fetchJson<{
       spatialReference?: { wkid?: number; latestWkid?: number }
       tileInfo?: { lods?: unknown[] }
-    }>(`${base}?f=json`)
+    }>(`${base}?f=json`, { signal })
     const wkid = j.spatialReference?.wkid ?? j.spatialReference?.latestWkid
     if (typeof wkid !== 'number') return null
     const lods = j.tileInfo?.lods
@@ -301,7 +301,9 @@ export async function fetchFeatureGeoJSON(
   let lastKey: string | null = null
   while (offset < limit && guard < 50) {
     guard++
-    const geojsonUrl = `${base}/${layerId}/query?where=1%3D1&f=geojson&outFields=1&outSR=4326&resultOffset=${offset}&resultRecordCount=${pageSize}`
+    // 每页按剩余预算截断，避免 pageSize > limit 时末页整页超拉突破上限
+    const take = Math.min(pageSize, limit - offset)
+    const geojsonUrl = `${base}/${layerId}/query?where=1%3D1&f=geojson&outFields=1&outSR=4326&resultOffset=${offset}&resultRecordCount=${take}`
     let feats: unknown[]
     try {
       const gj = await fetchJson<{ features?: unknown[] }>(geojsonUrl, { signal })
@@ -309,7 +311,7 @@ export async function fetchFeatureGeoJSON(
     } catch (e) {
       // 仅 HTTP 失败回退到 f=json 查询；网络错误 / 取消原样抛出（与旧行为一致）。
       if (!(e instanceof HttpError)) throw e
-      const jsonUrl = `${base}/${layerId}/query?where=1%3D1&f=json&outFields=*&outSR=4326&resultOffset=${offset}&resultRecordCount=${pageSize}`
+      const jsonUrl = `${base}/${layerId}/query?where=1%3D1&f=json&outFields=*&outSR=4326&resultOffset=${offset}&resultRecordCount=${take}`
       try {
         const jj = await fetchJson<{ features?: Array<{ attributes?: Record<string, unknown>; geometry?: unknown }>; error?: { message?: string } }>(jsonUrl, { signal })
         if (jj.error) throw new Error('要素服务查询失败：' + (jj.error.message ?? ''), { cause: e })
@@ -320,7 +322,7 @@ export async function fetchFeatureGeoJSON(
       }
     }
     if (feats.length === 0) break
-    if (feats.length < pageSize) {
+    if (feats.length < take) {
       features.push(...feats)
       break
     }
