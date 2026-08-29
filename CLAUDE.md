@@ -158,7 +158,7 @@ flowchart TD
 2. **src/testing 专属**：`src/testing/**` 是测试设施，仅测试文件可引用。
 3. **未知/已删除层目录**（如 `src/state`）直接报错。
 
-改依赖方向后必须跑 `npm run check:arch`（CI 未跑此步，靠本地自觉）。
+改依赖方向后必须跑 `npm run check:arch`（CI 已跑此步）。
 
 ### 4.2 目录树
 
@@ -533,12 +533,13 @@ stateDiagram-v2
 
 ## 10. 测试与质量门禁
 
-- **单测**：Vitest（jsdom），**539 个用例 / 42 个文件 / 161 套件全过**（2026-08-29 `output/test-results.json` 实测）。`npm run test:coverage`
+- **单测**：Vitest（jsdom），**617 个用例 / 44 个文件全过**（2026-08-29 `output/test-results.json` 实测）。`npm run test:coverage`
 - **覆盖率门槛**（vitest.config.ts）：★statements ≥90 / lines ≥90 / functions ≥85 / branches ≥70；include **全 src**，exclude 入口壳、测试文件与 `service/processing/viewportWorker.entry.ts`、`infra/primitive.ts`——真实口径，不玩数字。
-- **架构门禁**：`npm run check:arch`（scripts/check-arch.mjs，含 lint）——全依赖矩阵（§4.1）：Cesium/MapLibre 仅限 `src/infra/**`（测试豁免）、domain 零外部依赖、app 不被反向导入、未知层目录报错；CI 未跑此步，本地改依赖方向时必须跑。
-- **E2E**：Playwright **28 项**（app.spec 2 / ui.spec 7 / integration.spec 19；integration 走真实 ArcGIS，具体以 CI/output/e2e-results.json 为准）。★E2E 轻量模式：`app.spec.ts`、`ui.spec.ts` 注入 `window.__E2E__`，GlobeViewer 跳过 Cesium 创建（CI 无头软件渲染极慢）；「球真实渲染+图层上球」由线上/容器验证覆盖。
+- **覆盖率实测**（2026-08-29）：statements **94.21** / branches **86.61** / functions **95.59** / lines **96.93**。
+- **架构门禁**：`npm run check:arch`（scripts/check-arch.mjs，含 lint）——全依赖矩阵（§4.1）：Cesium/MapLibre 仅限 `src/infra/**`（测试豁免）、domain 零外部依赖、app 不被反向导入、未知层目录报错；CI 已跑此步。
+- **E2E**：Playwright **35 项**（app.spec 2 / ui.spec 14 / integration.spec 19；integration 走真实 ArcGIS，具体以 CI/output/e2e-results.json 为准）。★E2E 轻量模式：`app.spec.ts`、`ui.spec.ts` 注入 `window.__E2E__`，GlobeViewer 跳过 Cesium 创建（CI 无头软件渲染极慢）；「球真实渲染+图层上球」由线上/容器验证覆盖。
 - **徽章**：6 个（CI / License / Coverage / Deps / Tests / E2E）；`scripts/badge.mjs` 从 coverage-summary/audit/output/test-results/output/e2e-results 生成 → GitHub Actions 发布 → shields endpoint 渲染，每次 CI 实时生成。
-- **CI**（.github/workflows/ci.yml）：audit（--omit=dev）→ lint → test:coverage → build → e2e → badge → upload-pages-artifact（main 分支 deploy 到 Pages）。
+- **CI**（.github/workflows/ci.yml）：audit（--omit=dev）→ check:arch（含 lint）→ test:coverage → build → e2e → badge → upload-pages-artifact（main 分支 deploy 到 Pages）。
 - 每次改动建议验证顺序：`npm run lint` → `npm run check:arch` → `npm run test:coverage` → `npm run build` → `git diff --check`。
 
 ---
