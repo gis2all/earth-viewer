@@ -25,15 +25,15 @@ export default tseslint.config(
         'error',
         {
           paths: [
-            { name: 'cesium', message: 'Cesium 仅允许在 src/infra/** 与 src/globe/facade/** 引用（架构约束 W4.4，子路径由 check-arch 覆盖）' },
-            { name: 'maplibre-gl', message: 'MapLibre 仅允许在 src/infra/** 与 src/globe/facade/** 引用（架构约束 W4.4，子路径由 check-arch 覆盖）' },
+            { name: 'cesium', message: 'Cesium 仅允许在 src/infra/** 引用（CLAUDE.md §4.1，子路径由 check-arch 覆盖）' },
+            { name: 'maplibre-gl', message: 'MapLibre 仅允许在 src/infra/** 引用（CLAUDE.md §4.1，子路径由 check-arch 覆盖）' },
           ],
         },
       ],
     },
   },
   {
-    files: ['src/infra/**', 'src/globe/facade/**'],
+    files: ['src/infra/**'],
     rules: {
       'no-restricted-imports': 'off',
     },
