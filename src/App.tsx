@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { AppShell } from './app/AppShell'
-import { useAppStore } from './state/store'
+import { useAppStore } from './app/store'
 
 export default function App() {
   const theme = useAppStore((s) => s.theme)

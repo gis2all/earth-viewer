@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { AppShell } from './AppShell'
-import { useAppStore } from '../state/store'
+import { useAppStore } from './store'
 
-vi.mock('../globe/GlobeViewer', () => ({ GlobeViewer: () => <div data-testid="globe" /> }))
+vi.mock('./GlobeViewer', () => ({ GlobeViewer: () => <div data-testid="globe" /> }))
 vi.mock('./LayerPanel', () => ({ LayerPanel: () => <div data-testid="layers" /> }))
 vi.mock('./EffectsPanel', () => ({ EffectsPanel: () => <div data-testid="effects" /> }))
 

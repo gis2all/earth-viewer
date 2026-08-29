@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 // 必须最先导入：注册 Cesium/MapLibre mock，保证 CesiumFacade/controllers 模块图加载前生效
-import '../test/mocks/cesium'
+import '../testing/mocks/cesium'
 import { render, act, cleanup, screen } from '@testing-library/react'
 import { GlobeViewer } from './GlobeViewer'
-import { useAppStore } from '../state/store'
-import { getCesiumMock, resetCesiumMocks } from '../test/mocks/cesium'
+import { useAppStore } from './store'
+import { getCesiumMock, resetCesiumMocks } from '../testing/mocks/cesium'
 
 const cesiumMock = getCesiumMock()
 

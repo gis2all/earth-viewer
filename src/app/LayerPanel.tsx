@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { useAppStore } from '../state/store'
-import { appConfig } from '../infra/config.defaults'
-import { assessWebmap } from '../globe/assess'
-import { isWebMapContainer } from '../globe/itemTypes'
-import { resolveServiceItem } from '../globe/serviceItem'
+import { useAppStore } from './store'
+import { appConfig } from '../domain/config'
+import { assessWebmap } from '../domain/layerAssessment'
+import { isWebMapContainer } from '../domain/itemTypes'
+import { resolveServiceItem } from '../service/arcgisItem'
 import {
   PREFLIGHT_TYPES,
   SEARCH_TYPES,
@@ -93,7 +93,7 @@ function itemDetailsUrl(id: string): string {
   return 'https://www.arcgis.com/home/item.html?id=' + encodeURIComponent(id)
 }
 
-// W4.2：UI 常量统一来自运行时配置（infra/config.defaults，默认值在 domain/config.ts）
+// W4.2：UI 常量统一来自运行时配置（domain/config.ts 唯一来源）
 const GALLERY_PAGE = appConfig().panel.galleryPage
 const APPEND_STEP = appConfig().panel.appendStep
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
 import { LayerPanel, thumbTimeout } from './LayerPanel'
-import { useAppStore } from '../state/store'
+import { useAppStore } from './store'
 
 const searchResponse = {
   results: [{ id: 'wm1', title: 'Test Imagery', thumbnail: null, numViews: 100 }],

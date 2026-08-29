@@ -1,4 +1,4 @@
-import { useAppStore, type Effects } from '../state/store'
+import { useAppStore, type Effects } from './store'
 
 type Item =
   | { key: keyof Effects; label: string; kind: 'switch'; note?: string; disabled?: boolean }

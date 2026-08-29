@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { UserHome } from '../globe/geo'
+import type { UserHome } from '../domain/types'
 import { persist } from 'zustand/middleware'
 
 export type Theme = 'dark' | 'light'

@@ -7,13 +7,15 @@
  * - Cesium 接触面收敛到 CesiumFacade（本组件只保留 WebGL 守卫与提示浮层）。
  */
 import { useEffect, useRef, useState } from 'react'
-import { useAppStore } from '../state/store'
-import { CesiumFacade, isWebglAvailable } from '../infra/CesiumFacade'
-import { CameraController } from '../controller/CameraController'
-import { EffectsController } from '../controller/EffectsController'
-import { LayerController } from '../controller/LayerController'
-import { renderWebmap } from './renderWebmap'
-import { createEmptyRuntime } from '../domain/runtime'
+import { useAppStore } from './store'
+import { CesiumFacade, isWebglAvailable } from '../infra/cesiumFacade'
+import { setUserHomeResolver } from '../infra/cameraActions'
+import { CameraController } from '../controller/cameraController'
+import { EffectsController } from '../controller/effectsController'
+import { LayerController } from '../controller/layerController'
+import { renderWebmap } from '../globe/globeRenderer'
+import { createEmptyRuntime } from '../domain/layerRuntime'
+import { fetchUserHome } from '../service/userLocation'
 
 const WEBGL_UNAVAILABLE_MSG =
   '当前浏览器无法创建 WebGL，地球无法渲染。请使用开启硬件加速的 Chrome/Edge 访问（Codex内置浏览器 / 无GPU环境不支持）'
@@ -49,6 +51,15 @@ export function GlobeViewer() {
     })
     if (!ok) return
     facadeRef.current = facade
+
+    // 用户定位解析器（组合根注入）：优先 store 内存缓存，否则请求 /api/geo 并回写
+    setUserHomeResolver(async () => {
+      const fromStore = useAppStore.getState().userHome
+      if (fromStore) return fromStore
+      const h = await fetchUserHome()
+      useAppStore.getState().setUserHome(h)
+      return h
+    })
 
     // 真实地形 + 首次视角 + 底图（影像 + 矢量标注）
     void facade.applyTerrain()
@@ -94,6 +105,7 @@ export function GlobeViewer() {
     effectsCtrlRef.current = effectsCtrl
 
     return () => {
+      setUserHomeResolver(null)
       effectsCtrl.dispose()
       cameraCtrl.dispose()
       layerCtrl.dispose()
