@@ -150,19 +150,29 @@ test.describe('real data per type', () => {
     expect(xml).toMatch(/<Name>BlackWhite1930<\/Name>/i)
   })
 
-  test('WMTS GetTile template parses layer/scale', async ({ request }) => {
-    const url = 'https://service.pdok.nl/brt/achtergrondkaart/wmts/v2_0?SERVICE=WMTS&VERSION=1.0.0&REQUEST=GetTile&LAYER=grijs&STYLE=default&FORMAT=image/png&TILEMATRIXSET=EPSG:28992&TILEMATRIX={level}&TILEROW={row}&TILECOL={col}'
-    const u = new URL(url)
-    expect(u.searchParams.get('LAYER')).toBe('grijs')
-    expect(u.searchParams.get('TILEMATRIXSET')).toBe('EPSG:28992')
+  test('WMTS GetCapabilities 解析 TileMatrixSet，GetTile 可返回瓦片', async ({ request }) => {
+    const caps = await request.get(
+      'https://service.pdok.nl/brt/achtergrondkaart/wmts/v2_0?service=WMTS&request=GetCapabilities&version=1.0.0',
+      { timeout: T }
+    )
+    expect(caps.ok()).toBeTruthy()
+    const xml = await caps.text()
+    expect(xml).toMatch(/<TileMatrixSet>EPSG:28992<\/TileMatrixSet>/)
+    const tile = await request.get(
+      'https://service.pdok.nl/brt/achtergrondkaart/wmts/v2_0?SERVICE=WMTS&VERSION=1.0.0&REQUEST=GetTile&LAYER=grijs&STYLE=default&FORMAT=image/png&TILEMATRIXSET=EPSG:28992&TILEMATRIX=0&TILEROW=0&TILECOL=0',
+      { timeout: T }
+    )
+    expect(tile.ok()).toBeTruthy()
+    expect(tile.headers()['content-type'] ?? '').toMatch(/image\//)
   })
 
   test('WFS GetCapabilities resolves feature type', async ({ request }) => {
-    const cap = 'https://zms.zonehaven.com/geoserver/z/wfs?authkey=IsNUsotPDBcZXvfWXTkKCo4erzkstHRA3Fw8aeXyVAtqKFLUuBPj4kGTr5FT3nkoJ1xi2xiuFogCAy8OZcMkhy1AmxyelvL5RB4NJxjGgzMbRM2VmsU28SxccRmvOt6Y&service=WFS&request=GetCapabilities&version=2.0.0'
+    // 公开 demo 服务，避免任何硬编码 authkey 泄漏
+    const cap = 'https://demo.mapserver.org/cgi-bin/wfs?service=WFS&version=2.0.0&request=GetCapabilities'
     const r = await request.get(cap, { timeout: T })
     expect(r.ok()).toBeTruthy()
     const xml = await r.text()
-    expect(xml).toMatch(/<[A-Za-z]*:?Name>z:evacuation_zone_status_CA<\/[A-Za-z]*:?Name>/i)
+    expect(xml).toMatch(/<[A-Za-z]*:?Name>ms:cities<\/[A-Za-z]*:?Name>/i)
   })
 
   test('Vector Tile Service style sources parse', async ({ request }) => {
