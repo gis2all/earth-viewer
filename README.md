@@ -57,11 +57,13 @@ docker compose up --build
 | `npm run build` | 类型检查 + 生产构建 |
 | `npm run preview` | 本地预览生产构建产物 |
 | `npm run test` | 运行 Vitest 单元测试 |
+| `npm run test:coverage` | 单元测试 + 覆盖率门槛（≥90%） |
 | `npm run lint` | ESLint 代码检查 |
+| `npm run check:arch` | 架构门禁（依赖矩阵 + lint） |
 | `npm run test:e2e` | 运行 Playwright E2E（含真实 ArcGIS 集成，需网络） |
 | `node server/proxy.mjs 5173` | 生产静态托管 + ArcGIS 代理（先执行 `npm run build`） |
 
-GitHub Actions 在 `push`（main）与 `pull_request` 时执行：`npm audit --omit=dev`（生产依赖审计）、lint、单元测试、生产构建、Playwright E2E。
+GitHub Actions 在 `push`（main）与 `pull_request` 时执行：`npm audit --omit=dev`（生产依赖审计）、`npm run check:arch`（架构门禁，含 lint）、`npm run test:coverage`（单元测试 + 覆盖率门槛）、生产构建、Playwright E2E。
 
 ## 架构
 
