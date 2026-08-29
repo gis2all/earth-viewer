@@ -138,7 +138,14 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
 
 let current: AppConfig = DEFAULT_APP_CONFIG
 
-export function configureApp(overrides: Partial<AppConfig>): AppConfig {
+// 运行时覆盖：camera/panel 等子对象按字段浅合并；
+// viewportFallback 是整体替换语义，保持完整类型（避免把经纬度拆成 undefined 字段）。
+export type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K] }
+export type AppConfigOverrides = Omit<DeepPartial<AppConfig>, 'viewportFallback'> & {
+  viewportFallback?: ViewEnvelopeConfig
+}
+
+export function configureApp(overrides: AppConfigOverrides): AppConfig {
   current = {
     ...current,
     ...overrides,

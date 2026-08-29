@@ -809,14 +809,14 @@ describe('CesiumFacade（W3.4）', () => {
 
     it('addBaseLayers 无 GPU 管理器时跳过矢量标注', () => {
       const { facade } = makeFacade()
-      ;(facade as { _gpu: unknown })._gpu = null
+      ;(facade as unknown as { _gpu: unknown })._gpu = null
       facade.addBaseLayers(freshRuntime())
       expect(maplibreMock.instances.length).toBe(0)
     })
 
     it('addVectorTile 无 GPU 管理器时直接返回，不创建 provider', () => {
       const { facade } = makeFacade()
-      ;(facade as { _gpu: unknown })._gpu = null
+      ;(facade as unknown as { _gpu: unknown })._gpu = null
       facade.addVectorTile({ styleUrl: 'https://style' } as never, undefined, freshRuntime(), () => true, vi.fn(), vi.fn())
       expect(maplibreMock.instances.length).toBe(0)
     })
@@ -826,7 +826,7 @@ describe('CesiumFacade（W3.4）', () => {
       const runtime = freshRuntime()
       facade.addBaseLayers(runtime)
       const first = maplibreMock.instances[0]
-      ;(facade as { _vectorRebuilds: Map<string, () => void> })._vectorRebuilds.get('labels')!()
+      ;(facade as unknown as { _vectorRebuilds: Map<string, () => void> })._vectorRebuilds.get('labels')!()
       await flush()
       expect(first.destroy).toHaveBeenCalled()
       expect(v.imageryLayers.list.length).toBe(2) // 底图 + 新标注
@@ -840,7 +840,7 @@ describe('CesiumFacade（W3.4）', () => {
       maplibreMock.failNext = true
       facade.addBaseLayers(runtime)
       const first = maplibreMock.instances[0]
-      ;(facade as { _vectorRebuilds: Map<string, () => void> })._vectorRebuilds.get('labels')!()
+      ;(facade as unknown as { _vectorRebuilds: Map<string, () => void> })._vectorRebuilds.get('labels')!()
       await flush()
       expect(first.destroy).toHaveBeenCalled()
       expect(console.error).not.toHaveBeenCalled()
@@ -856,7 +856,7 @@ describe('CesiumFacade（W3.4）', () => {
       maplibreMock.failNext = true
       facade.addVectorTile({ styleUrl: 'https://style' } as never, undefined, runtime, () => true, onError, vi.fn())
       const first = maplibreMock.instances[0]
-      const rebuilds = (facade as { _vectorRebuilds: Map<string, () => void> })._vectorRebuilds
+      const rebuilds = (facade as unknown as { _vectorRebuilds: Map<string, () => void> })._vectorRebuilds
       const key = [...rebuilds.keys()].find((k) => k.startsWith('vt:'))!
       rebuilds.get(key)!()
       await flush()
@@ -876,7 +876,7 @@ describe('CesiumFacade（W3.4）', () => {
       await flush()
       expect(v.resolutionScale).toBe(1)
       const before = maplibreMock.instances.length
-      const gpu = (facade as { _gpu: { reportContextLost(): unknown; tierName(): string } })._gpu
+      const gpu = (facade as unknown as { _gpu: { reportContextLost(): unknown; tierName(): string } })._gpu
       gpu.reportContextLost()
       gpu.reportContextLost()
       gpu.reportContextLost()
@@ -888,15 +888,15 @@ describe('CesiumFacade（W3.4）', () => {
 
     it('_applyTier 重入或被销毁 viewer 时直接跳过', () => {
       const { facade } = makeFacade()
-      ;(facade as { _applyingTier: boolean })._applyingTier = true
+      ;(facade as unknown as { _applyingTier: boolean })._applyingTier = true
       expect(() =>
-        (facade as { _applyTier(t: unknown): void })._applyTier({ resolutionScale: 0.5 })
+        (facade as unknown as { _applyTier(t: unknown): void })._applyTier({ resolutionScale: 0.5 })
       ).not.toThrow()
 
       const { facade: f2, v: v2 } = makeFacade()
       v2.isDestroyed.mockReturnValue(true)
       expect(() =>
-        (f2 as { _applyTier(t: unknown): void })._applyTier({ resolutionScale: 0.5 })
+        (f2 as unknown as { _applyTier(t: unknown): void })._applyTier({ resolutionScale: 0.5 })
       ).not.toThrow()
       // 销毁的 viewer 跳过应用档位：保持创建时 high 档的 1，而不是传入的 0.5
       expect(v2.resolutionScale).toBe(1)
@@ -909,12 +909,12 @@ describe('CesiumFacade（W3.4）', () => {
       facade.addBaseLayers(freshRuntime())
       const startCb = cam.moveStart.addEventListener.mock.calls[0][0]
       const endCb = cam.moveEnd.addEventListener.mock.calls[0][0]
-      expect((facade as { _cameraTracked: boolean })._cameraTracked).toBe(true)
+      expect((facade as unknown as { _cameraTracked: boolean })._cameraTracked).toBe(true)
       startCb()
-      expect((facade as { _cameraMoving: boolean })._cameraMoving).toBe(true)
+      expect((facade as unknown as { _cameraMoving: boolean })._cameraMoving).toBe(true)
       const rendersBefore = v.scene.requestRender.mock.calls.length
       endCb()
-      expect((facade as { _cameraMoving: boolean })._cameraMoving).toBe(false)
+      expect((facade as unknown as { _cameraMoving: boolean })._cameraMoving).toBe(false)
       expect(v.scene.requestRender.mock.calls.length).toBe(rendersBefore + 1)
 
       facade.addVectorTile({ styleUrl: 'https://x' } as never, undefined, freshRuntime(), () => true, vi.fn(), vi.fn())
@@ -971,18 +971,18 @@ describe('CesiumFacade（W3.4）', () => {
       const provider = { marker: 'p' }
       const layer = { marker: 'il' }
       const runtime = { imagery: [{ id: '1', layer, provider }] } as unknown as LayerRuntime
-      ;(facade as { _removeVectorImagery(r: LayerRuntime, p: unknown): void })._removeVectorImagery(runtime, provider)
+      ;(facade as unknown as { _removeVectorImagery(r: LayerRuntime, p: unknown): void })._removeVectorImagery(runtime, provider)
       expect(v.imageryLayers.remove).toHaveBeenCalledWith(layer, true)
       expect(runtime.imagery.length).toBe(0)
 
       const p2 = { marker: 'p2' }
       const rt2 = { imagery: [{ id: '2', provider: p2 }] } as unknown as LayerRuntime
-      ;(facade as { _removeVectorImagery(r: LayerRuntime, p: unknown): void })._removeVectorImagery(rt2, p2)
+      ;(facade as unknown as { _removeVectorImagery(r: LayerRuntime, p: unknown): void })._removeVectorImagery(rt2, p2)
       expect(v.imageryLayers.remove).toHaveBeenCalledTimes(1)
       expect(rt2.imagery.length).toBe(0)
 
       const rt3 = { imagery: [{ id: '3', provider: { marker: 'other' } }] } as unknown as LayerRuntime
-      ;(facade as { _removeVectorImagery(r: LayerRuntime, p: unknown): void })._removeVectorImagery(rt3, { marker: 'none' })
+      ;(facade as unknown as { _removeVectorImagery(r: LayerRuntime, p: unknown): void })._removeVectorImagery(rt3, { marker: 'none' })
       expect(rt3.imagery.length).toBe(1)
     })
 
