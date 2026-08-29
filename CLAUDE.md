@@ -194,9 +194,9 @@ earth-viz-hub/
     controller/                       # layerController / cameraController / effectsController（§8）
     service/                          # repository / loader / scheduler / http / userLocation / arcgisItem（§7）
       formats/                        # 各数据源转换：csv / kml / ogc / vectorTile
-      processing/                     # 视口数据加工：viewportWorker / viewportProcess / budget / viewportWorker.entry / featureParse
+      processing/                     # 视口数据加工：viewportWorker / viewportPipeline / viewportWorker.entry
     domain/                           # types / config / renderContract / layerRuntime / layerAdapter / layerRegistry / layerStateMachine / budgetPolicy
-      geometry/                       # simplify / cluster / lru / envelope / geometryModel（纯几何，各配单测）
+      geometry/                       # geometry / lru（纯几何，各配单测）
       itemTypes.ts / layerAssessment.ts / loadSafety.ts    # 类型白名单 / 能力评估 / 预算兼容（纯 TS）
     infra/                            # cesiumFacade / gpuMemoryManager / cameraActions / arcgisVectorTileImageryProvider / scene / vector / webmapCamera / webmapProviders / primitive / gpuTiers（§6）
     globe/                            # globeRenderer / viewport（视口编排）
@@ -271,6 +271,7 @@ sequenceDiagram
 | `src/domain/layerRegistry.ts` | 适配器注册表 + 纯分类 | `LAYER_REGISTRY`、`is*Input`；★真实 adapter 未注册（M2 backlog，loader 走回退，见 §15） |
 | `src/domain/layerStateMachine.ts` | 图层状态机（纯函数） | `LAYER_STATE_TRANSITIONS`、`canTransition`、`assertTransition`、`isTerminal`、`canStartLoad`（§8.2） |
 | `src/domain/budgetPolicy.ts` | 预算策略 | `BudgetPolicy`、`DEFAULT_BUDGET_POLICY` |
+| `src/domain/geometry/` | 纯几何算法与模型（零渲染依赖）：视口 envelope、点聚类、点/线/面模型转换、Douglas-Peucker 抽稀 + LRU | `geometry.ts`（`ViewEnvelope`/`viewEnvelopeFromCamera`/`clusterPoints`/`featuresToGeometryModel`/`simplifyFeatureCollection`）、`lru.ts`（`createLru`/`viewportCacheKey`） |
 | `src/service/repository.ts` | ★ArcGIS 请求与缓存唯一收口：搜索/元数据/数据/服务探测/预检/特性分页 | 函数清单见 §7.1 |
 | `src/service/loader.ts` | 预检→取数→转换→预算的加载管线 | `loadLayerData`、`kindOf`（委托 registry，回退纯分类）、`applyLayerBudget` |
 | `src/service/scheduler.ts` | 视口优先级 + 串行渲染调度 | `LayerScheduler`（并发默认 1、`priority()` 实时插队、cancel 只移除排队、dispose） |
@@ -289,7 +290,7 @@ sequenceDiagram
 | `src/infra/cameraActions.ts` | 顶部按钮复位/回正 + 用户定位飞行（纯命令） | `resetView`/`orientView`/`flyToHome`/`setInitialHeightForTest` |
 | `src/infra/vector.ts` | 坐标重投影（proj4）/ CRS 与 wkid 探测 / ArcGIS renderer → FeatureStyleSpec 转换（跨层几何工具，依赖 service/http 做 wkid 探测） | `reprojectCoordinates`/`crsWkidFromGeoJson`/`detectServiceWkid`/`rendererToStyleFn`/`applyFeatureStyler` |
 | `src/infra/scene.ts / webmapCamera.ts / primitive.ts` | Scene Service/3D Tiles 的 Cesium 侧 provider/Primitive 构建 + webmap 相机 | `buildLayerPrimitive`/`loadI3S`/`load3DTiles` |
-| `src/service/processing/` | ★视口数据加工管线：Worker 解析/抽稀/预算 + 纯解析（§6.4） | `runViewportProcess`/`processViewportData`/`applyVertexBudget`/`clusterPoints`/`parseFeatureCollection`；`viewportWorker.entry.ts` 不计覆盖率 |
+| `src/service/processing/` | ★视口数据加工管线：Worker 解析/抽稀/预算 + 纯解析（§6.4） | `viewportPipeline.ts`（`processViewportData`/`applyVertexBudget`/`parseFeatureCollection`）+ `viewportWorker.ts`（`runViewportProcess`）；`viewportWorker.entry.ts` 不计覆盖率 |
 | `src/globe/viewport/` | 视口驱动编排：按相机视口查询 FeatureLayer + LRU + Primitive（§6.4） | `queryViewportData`/`createViewportController`/`createViewportDriver`/`viewportCacheKey`；`infra/primitive.ts` 不计覆盖率 |
 | `src/domain/loadSafety.ts` | 预算兼容层 + 风险分级/预算消费 | `SAFETY`（值唯一来源 domain/config）+ `riskOfLayer`/`degradeReason`/`assertUrlWithinLimit`/`consumeFeatureBudget` |
 | `src/service/userLocation.ts / src/domain/itemTypes.ts` | 用户定位（/api/geo + 兜底）/ 可搜索 item type 白名单 | `fetchUserHome`、`SEARCH_ITEM_TYPES`（13 类型）、`isWebMapContainer`、`layerTypeForItemType` |
@@ -532,7 +533,7 @@ stateDiagram-v2
 
 ## 10. 测试与质量门禁
 
-- **单测**：Vitest（jsdom），**539 个用例 / 46 个文件 / 165 套件全过**（2026-08-29 `output/test-results.json` 实测）。`npm run test:coverage`
+- **单测**：Vitest（jsdom），**539 个用例 / 42 个文件 / 161 套件全过**（2026-08-29 `output/test-results.json` 实测）。`npm run test:coverage`
 - **覆盖率门槛**（vitest.config.ts）：★statements ≥90 / lines ≥90 / functions ≥85 / branches ≥70；include **全 src**，exclude 入口壳、测试文件与 `service/processing/viewportWorker.entry.ts`、`infra/primitive.ts`——真实口径，不玩数字。
 - **架构门禁**：`npm run check:arch`（scripts/check-arch.mjs，含 lint）——全依赖矩阵（§4.1）：Cesium/MapLibre 仅限 `src/infra/**`（测试豁免）、domain 零外部依赖、app 不被反向导入、未知层目录报错；CI 未跑此步，本地改依赖方向时必须跑。
 - **E2E**：Playwright **28 项**（app.spec 2 / ui.spec 7 / integration.spec 19；integration 走真实 ArcGIS，具体以 CI/output/e2e-results.json 为准）。★E2E 轻量模式：`app.spec.ts`、`ui.spec.ts` 注入 `window.__E2E__`，GlobeViewer 跳过 Cesium 创建（CI 无头软件渲染极慢）；「球真实渲染+图层上球」由线上/容器验证覆盖。
