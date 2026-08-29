@@ -1,5 +1,5 @@
 // Cloudflare Pages Functions：/sharing/* 代理到 www.arcgis.com（生产环境等价于 vite 开发代理）
-// 加固：仅白名单路径 + 仅 GET/HEAD + Referer 检查 + 内存 Rate Limit
+// 加固：仅白名单路径 + 仅 GET/HEAD + Origin 检查 + 内存 Rate Limit
 // 更强限流建议在 Cloudflare dashboard 配置 Rate Limiting 规则
 const ALLOWED_PATHS = [
   /^\/sharing\/rest\/search($|\?)/,
@@ -44,7 +44,7 @@ export async function onRequest(context) {
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     return new Response('Method Not Allowed', { status: 405 })
   }
-  // 3) Referer / Origin 检查（防止第三方站点滥用）
+  // 3) Origin 检查（防止第三方站点滥用）
   if (!originAllowed(request, allowedOrigins)) {
     return new Response('Forbidden', { status: 403 })
   }
