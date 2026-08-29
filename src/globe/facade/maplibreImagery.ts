@@ -5,15 +5,12 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import { withFetchTimeout } from './webmap'
 import { SAFETY } from '../loadSafety'
+import { GPU_TIERS, type GpuTierConfig } from './gpuBudget'
 
 // 批量渲染块尺寸：一帧 MapLibre 渲染 3x3 瓦片，读回次数降为 1/9（避免与 Cesium 抢 GPU 导致每片 1s+ 的读回停顿）
 const BLOCK = 3
-// 并行 MapLibre 实例数：全球底图标注层需要追平影像的细化速度，单实例串行太慢
-const MAP_POOL_SIZE = 3
 // MapLibre vector tile 固定按 512 CSS 像素定义世界坐标；Cesium 默认影像瓦片是 256px
 const MAPLIBRE_VECTOR_TILE_SIZE = 512
-// 512px 原生输出时每块像素数是旧 256px 输出的四倍，保留 12 块可维持约 108MB 的像素预算。
-const BLOCK_CACHE_LIMIT = 12
 
 /**
  * MapLibre → Cesium ImageryProvider 桥（方案 A）。
@@ -53,6 +50,23 @@ export function normalizeArcGisStyle(style: Record<string, unknown>, baseUrl: st
   const out: Record<string, unknown> = { ...style }
   if (typeof out.sprite === 'string') out.sprite = resolveStyleUrl(out.sprite, baseUrl)
   if (typeof out.glyphs === 'string') out.glyphs = resolveStyleUrl(out.glyphs, baseUrl)
+  // 无 sprite 资源时移除纯 icon 图层的 icon-image，避免 MapLibre 缺失图片告警/重试风暴
+  if (typeof out.sprite !== 'string' && Array.isArray(out.layers)) {
+    out.layers = out.layers.map((layer) => {
+      if (!layer || typeof layer !== 'object') return layer
+      const rec = layer as Record<string, unknown>
+      if (rec.type !== 'symbol' || !rec.layout || typeof rec.layout !== 'object') return rec
+      const layout = rec.layout as Record<string, unknown>
+      const tf = layout['text-field']
+      if (layout['icon-image'] && typeof tf !== 'string' && !Array.isArray(tf)) {
+        // 无 sprite 时移除纯 icon 图层的 icon-image：MapLibre 校验器对 undefined/null 都会报错，
+        // 必须彻底删除该键，让图层回退到"无图标"默认值
+        const { 'icon-image': _drop, ...rest } = layout
+        return { ...rec, layout: rest }
+      }
+      return rec
+    })
+  }
   const sources = (out.sources ?? {}) as Record<string, StyleSource>
   const next: Record<string, StyleSource> = {}
   for (const [name, src] of Object.entries(sources)) {
@@ -93,7 +107,7 @@ function keepTextLayersOnly(
     // 排除 forest or park（景区/公园）：该类图层多为当地语言名，不是主要地名
     !/forest or park/i.test(id) &&
     /^(Continent|Admin0|Admin1|Admin2|City |Disputed label|Place\/Unclassified)/.test(id)
-  out.layers = out.layers.filter((layer) => {
+  const filtered = out.layers.filter((layer) => {
     if (!layer || typeof layer !== 'object') return false
     const rec = layer as Record<string, unknown>
     if (rec.type !== 'symbol' || !rec.layout || typeof rec.layout !== 'object') return false
@@ -102,6 +116,16 @@ function keepTextLayersOnly(
     if (typeof tf !== 'string' && !Array.isArray(tf)) return false
     if (scope === 'country-city') return isMajorLabel(String(rec.id ?? ''))
     return true
+  })
+  // labelsOnly 模式只渲染文字：去掉 icon-image，避免依赖 sprite 与 icon-only 图层
+  out.layers = filtered.map((layer) => {
+    if (!layer || typeof layer !== 'object') return layer
+    const rec = layer as Record<string, unknown>
+    if (rec.type !== 'symbol' || !rec.layout || typeof rec.layout !== 'object') return rec
+    const layout = rec.layout as Record<string, unknown>
+    if (layout['icon-image'] === undefined) return rec
+    const { 'icon-image': _drop, ...rest } = layout
+    return { ...rec, layout: rest }
   })
   return out
 }
@@ -246,18 +270,23 @@ export function tileCenterLngLat(x: number, y: number, z: number): { lng: number
   return indexToLngLat(x + 0.5, y + 0.5, z)
 }
 
-/** 3x3 块的几何中心（连续瓦片索引）。内部块 = 中间瓦片 (gx+1, gy+1)；世界边缘块 clamp 到有效范围，避免 wrap 错位 */
-export function blockCenterIndex(gx: number, gy: number, z: number): { cx: number; cy: number } {
+/** NxN 块的几何中心（连续瓦片索引）。内部块 = 中间瓦片；世界边缘块 clamp 到有效范围，避免 wrap 错位 */
+export function blockCenterIndex(
+  gx: number,
+  gy: number,
+  z: number,
+  block = BLOCK
+): { cx: number; cy: number } {
   const n = 2 ** z
-  const gx2 = Math.min(gx + BLOCK - 1, n - 1)
-  const gy2 = Math.min(gy + BLOCK - 1, n - 1)
-  // 块覆盖 [gx, gx2+1)，几何中心 = (gx + gx2 + 1) / 2（内部块 = 中间瓦片中心 gx+1.5）
+  const gx2 = Math.min(gx + block - 1, n - 1)
+  const gy2 = Math.min(gy + block - 1, n - 1)
+  // 块覆盖 [gx, gx2+1)，几何中心 = (gx + gx2 + 1) / 2
   return { cx: (gx + gx2 + 1) / 2, cy: (gy + gy2 + 1) / 2 }
 }
 
-/** 瓦片所属 3x3 块缓存键（块内任意一片命中即整块命中） */
-export function blockKey(x: number, y: number, z: number): string {
-  return z + '/' + Math.floor(x / BLOCK) + '/' + Math.floor(y / BLOCK)
+/** 瓦片所属 NxN 块缓存键（块内任意一片命中即整块命中；N 随 GPU 档位变化） */
+export function blockKey(x: number, y: number, z: number, block = BLOCK): string {
+  return z + '/' + Math.floor(x / block) + '/' + Math.floor(y / block)
 }
 
 /**
@@ -269,7 +298,8 @@ export function blockKey(x: number, y: number, z: number): string {
  */
 export function mapLibreRenderPlan(
   level: number,
-  tileSize: number
+  tileSize: number,
+  block = BLOCK
 ): { mapZoom: number; sourceScale: number; viewportSize: number } {
   const nativeScale = MAPLIBRE_VECTOR_TILE_SIZE / tileSize
   const zoomOffset = Math.log2(nativeScale)
@@ -278,17 +308,17 @@ export function mapLibreRenderPlan(
     return {
       mapZoom: level - zoomOffset,
       sourceScale: 1,
-      viewportSize: tileSize * BLOCK,
+      viewportSize: tileSize * block,
     }
   }
   return {
     mapZoom: level,
     sourceScale: nativeScale,
-    viewportSize: MAPLIBRE_VECTOR_TILE_SIZE * BLOCK,
+    viewportSize: MAPLIBRE_VECTOR_TILE_SIZE * block,
   }
 }
 
-/** 从 MapLibre 3x3 块快照中裁剪指定 Cesium 瓦片；自定义较小 tileSize 时按 sourceScale 下采样。 */
+/** 从 MapLibre NxN 块快照中裁剪指定 Cesium 瓦片；自定义较小 tileSize 时按 sourceScale 下采样。 */
 export function cropTile(
   snapshot: HTMLCanvasElement,
   x: number,
@@ -297,7 +327,8 @@ export function cropTile(
   tileWidth: number,
   tileHeight: number,
   sourceScale = 1,
-  renderedCenter?: { cx: number; cy: number }
+  renderedCenter?: { cx: number; cy: number },
+  block = BLOCK
 ): HTMLCanvasElement {
   const n = 2 ** z
   const out = document.createElement('canvas')
@@ -305,36 +336,37 @@ export function cropTile(
   out.height = tileHeight
   const ctx = out.getContext('2d')
   if (x < 0 || y < 0 || x >= n || y >= n) return out
-  const gx = Math.floor(x / BLOCK) * BLOCK
-  const gy = Math.floor(y / BLOCK) * BLOCK
-  const { cx, cy } = renderedCenter ?? blockCenterIndex(gx, gy, z)
-  // 视口宽 = BLOCK 瓦片，中心在 cx → 视口西边界索引 = cx - BLOCK/2
+  const gx = Math.floor(x / block) * block
+  const gy = Math.floor(y / block) * block
+  const { cx, cy } = renderedCenter ?? blockCenterIndex(gx, gy, z, block)
+  // 视口宽 = block 瓦片，中心在 cx → 视口西边界索引 = cx - block/2
   const sourceWidth = tileWidth * sourceScale
   const sourceHeight = tileHeight * sourceScale
-  const sx = Math.round((x - (cx - BLOCK / 2)) * sourceWidth)
-  const sy = Math.round((y - (cy - BLOCK / 2)) * sourceHeight)
+  const sx = Math.round((x - (cx - block / 2)) * sourceWidth)
+  const sy = Math.round((y - (cy - block / 2)) * sourceHeight)
   if (sx < 0 || sy < 0 || sx + sourceWidth > snapshot.width || sy + sourceHeight > snapshot.height) return out
   if (ctx) ctx.drawImage(snapshot, sx, sy, sourceWidth, sourceHeight, 0, 0, tileWidth, tileHeight)
   return out
 }
 
-/** 从已裁剪的 3x3 块缓存取回指定瓦片；边缘块和越界位置返回透明片。 */
+/** 从已裁剪的 NxN 块缓存取回指定瓦片；边缘块和越界位置返回透明片。 */
 function tileFromBlock(
-  block: HTMLCanvasElement[],
+  canvases: HTMLCanvasElement[],
   x: number,
   y: number,
   z: number,
   tileWidth: number,
-  tileHeight: number
+  tileHeight: number,
+  block = BLOCK
 ): HTMLCanvasElement {
   const out = document.createElement('canvas')
   out.width = tileWidth
   out.height = tileHeight
   const n = 2 ** z
   if (x < 0 || y < 0 || x >= n || y >= n) return out
-  const gx = Math.floor(x / BLOCK) * BLOCK
-  const gy = Math.floor(y / BLOCK) * BLOCK
-  return block[(y - gy) * BLOCK + (x - gx)] ?? out
+  const gx = Math.floor(x / block) * block
+  const gy = Math.floor(y / block) * block
+  return canvases[(y - gy) * block + (x - gx)] ?? out
 }
 
 /** MapLibre Map 的测试友好最小接口 */
@@ -367,6 +399,12 @@ export interface VectorTileImageryOptions {
   labelScope?: 'all' | 'country-city'
   /** 并行 MapLibre 实例数（默认 3） */
   mapPoolSize?: number
+  /** GPU 预算档位（缺省 high）：决定画布尺寸/并发实例数/缓存上限 */
+  gpuTier?: GpuTierConfig
+  /** 任一 MapLibre WebGL 上下文丢失时回调（上报给 GpuMemoryManager 触发降档重建） */
+  onContextLost?: () => void
+  /** 离屏渲染许可：false 时跳过渲染并返回空瓦片（critical 档相机静止时使用） */
+  canRenderNow?: () => boolean
   /** 字体/颜色等样式覆盖（用于对齐 Map Viewer 的标注字体观感） */
   styleOverrides?: LabelStyleOverrides
   /** 测试注入：替换真实 MapLibre Map 构造 */
@@ -513,6 +551,12 @@ export class ArcGisVectorTileImageryProvider {
   private readonly _styleOverrides: LabelStyleOverrides | undefined
   private readonly _mapPixelRatio: number
   private readonly _poolSize: number
+  private readonly _blockSize: number
+  private readonly _cacheLimit: number
+  private readonly _onContextLost: (() => void) | undefined
+  private readonly _canRenderNow: (() => boolean) | undefined
+  /** 每个 Map 实例的 WebGL 上下文是否存活（丢失后置 false） */
+  private _mapAlive: boolean[] = []
   private _mapViewportSize = 0
 
   constructor(options: VectorTileImageryOptions) {
@@ -521,7 +565,12 @@ export class ArcGisVectorTileImageryProvider {
     this._language = options.language
     this._labelsOnly = options.labelsOnly ?? false
     this._labelScope = options.labelScope ?? 'all'
-    this._poolSize = Math.max(1, Math.min(4, options.mapPoolSize ?? MAP_POOL_SIZE))
+    const tier = options.gpuTier ?? GPU_TIERS.high
+    this._poolSize = Math.max(1, Math.min(4, options.mapPoolSize ?? tier.poolSize))
+    this._blockSize = tier.blockSize
+    this._cacheLimit = tier.cacheBlocks
+    this._onContextLost = options.onContextLost
+    this._canRenderNow = options.canRenderNow
     this._styleOverrides = options.styleOverrides
     this.tileWidth = this.tileHeight = options.tileSize ?? MAPLIBRE_VECTOR_TILE_SIZE
     this.minimumLevel = options.minimumLevel ?? 0
@@ -546,11 +595,11 @@ export class ArcGisVectorTileImageryProvider {
   requestImage(x: number, y: number, level: number, _request?: Cesium.Request): Promise<HTMLCanvasElement> | undefined {
     if (this._destroyed || !this.ready) return undefined
     if (level < this.minimumLevel || level > this.maximumLevel) return undefined
-    const key = blockKey(x, y, level)
+    const key = blockKey(x, y, level, this._blockSize)
     const cached = this._blockCache.get(key)
     if (cached) {
       // 命中缓存：直接返回预裁剪瓦片（先返回 Promise，避免同步阻塞 Cesium 主线程）
-      return Promise.resolve().then(() => tileFromBlock(cached, x, y, level, this.tileWidth, this.tileHeight))
+      return Promise.resolve().then(() => tileFromBlock(cached, x, y, level, this.tileWidth, this.tileHeight, this._blockSize))
     }
     return new Promise<HTMLCanvasElement>((resolve, reject) => {
       const arr = this._pending.get(key) ?? []
@@ -581,7 +630,7 @@ export class ArcGisVectorTileImageryProvider {
     const raw = (await response.json()) as Record<string, unknown>
     const style = applyStyleOverrides(applyLabelLanguage(normalizeArcGisStyle(raw, styleUrl), this._language), this._styleOverrides)
     const finalStyle = this._labelsOnly ? keepTextLayersOnly(style, this._labelScope) : style
-    this._mapViewportSize = mapLibreRenderPlan(this.minimumLevel, this.tileWidth).viewportSize
+    this._mapViewportSize = mapLibreRenderPlan(this.minimumLevel, this.tileWidth, this._blockSize).viewportSize
     for (let i = 0; i < this._poolSize; i += 1) {
       const container = document.createElement('div')
       container.style.position = 'absolute'
@@ -593,9 +642,28 @@ export class ArcGisVectorTileImageryProvider {
       container.style.overflow = 'hidden'
       document.body.appendChild(container)
       const map = this._createMap(container, finalStyle, this._mapPixelRatio)
+      // 上报上下文丢失：MapLibre 离屏上下文与主场景独立，GPU 内存耗尽时同样会丢失
+      const canvas = map.getCanvas?.()
+      if (canvas) {
+        canvas.addEventListener('webglcontextlost', (e) => {
+          e.preventDefault()
+          this._mapAlive[i] = false
+          this._onContextLost?.()
+        })
+        canvas.addEventListener('webglcontextrestored', () => {
+          this._mapAlive[i] = true
+          // 清空块缓存：丢失期间可能缓存过空白瓦片，恢复后必须重渲染而非命中空白
+          this._blockCache.clear()
+          // 唤醒丢失期间积压的未决请求（相机未移动时 Cesium 不会重新 requestImage）
+          this._drain()
+        })
+      } else {
+        console.warn('[globe] MapLibre 未暴露 getCanvas，WebGL 上下文丢失检测不可用')
+      }
       this._maps.push(map)
       this._containers.push(container)
       this._mapViewportSizes.push(this._mapViewportSize)
+      this._mapAlive.push(true)
     }
     if (this._destroyed) {
       // 初始化期间被销毁（例如移除图层）：立刻清理，避免泄漏隐藏容器
@@ -633,6 +701,8 @@ export class ArcGisVectorTileImageryProvider {
 
   private _drain(): void {
     if (this._destroyed) return
+    // 极限档：相机静止时暂停离屏渲染，避免与主场景持续抢 GPU
+    if (this._canRenderNow && !this._canRenderNow()) return
     // 并发派发：有空闲 MapLibre 实例就接下一个块，直到队列清空
     while (this._pending.size > 0 && this._active < this._poolSize) {
       this.stats.queueDepth = this._pending.size
@@ -666,11 +736,22 @@ export class ArcGisVectorTileImageryProvider {
         .then((block) => {
           this._rememberBlock(bestKey, block)
           for (const j of jobs) {
-            j.resolve(tileFromBlock(block, j.x, j.y, j.level, this.tileWidth, this.tileHeight))
+            j.resolve(tileFromBlock(block, j.x, j.y, j.level, this.tileWidth, this.tileHeight, this._blockSize))
           }
         })
         .catch((e) => {
-          for (const j of jobs) j.reject(e)
+          // 上下文丢失时用空白瓦片兜底（不抛错避免 Cesium 无限重试），等待上层降档重建
+          const dead = mapIndex < this._mapAlive.length && !this._mapAlive[mapIndex]
+          const lost = dead || /context lost|webgl/i.test(String((e as Error)?.message ?? e))
+          if (lost) {
+            const blank = this._blankBlock()
+            this._rememberBlock(bestKey, blank)
+            for (const j of jobs) {
+              j.resolve(tileFromBlock(blank, j.x, j.y, j.level, this.tileWidth, this.tileHeight, this._blockSize))
+            }
+          } else {
+            for (const j of jobs) j.reject(e)
+          }
         })
         .finally(() => {
           this._active -= 1
@@ -688,20 +769,23 @@ export class ArcGisVectorTileImageryProvider {
   private async _renderBlock(mapIndex: number, x: number, y: number, level: number): Promise<HTMLCanvasElement[]> {
     const map = this._maps[mapIndex]
     if (!map || this._destroyed) throw new Error('矢量瓦片 provider 未就绪')
+    if (mapIndex < this._mapAlive.length && !this._mapAlive[mapIndex]) {
+      throw new Error('MapLibre WebGL 上下文已丢失')
+    }
     const t0 = performance.now()
     const tFetch = performance.now()
-    const plan = mapLibreRenderPlan(level, this.tileWidth)
+    const plan = mapLibreRenderPlan(level, this.tileWidth, this._blockSize)
     this.stats.lastBlockZoom = plan.mapZoom
     this.stats.zoomHistogram[String(plan.mapZoom)] = (this.stats.zoomHistogram[String(plan.mapZoom)] ?? 0) + 1
     this._setMapViewport(mapIndex, plan.viewportSize)
-    const gx = Math.floor(x / BLOCK) * BLOCK
-    const gy = Math.floor(y / BLOCK) * BLOCK
+    const gx = Math.floor(x / this._blockSize) * this._blockSize
+    const gy = Math.floor(y / this._blockSize) * this._blockSize
     // 块几何中心（内部块=中间瓦片中心；边缘块 clamp，避免 wrap 错位）
-    const { cx, cy } = blockCenterIndex(gx, gy, level)
+    const { cx, cy } = blockCenterIndex(gx, gy, level, this._blockSize)
     // renderWorldCopies=false 时，视口超出世界范围的边缘块会被 MapLibre 钳制中心；
     // 我们自己先在 x/y 两个方向钳制，并按钳制后的中心计算裁剪，避免依赖 MapLibre 的不可预测收拢。
     const n = 2 ** level
-    const half = BLOCK / 2
+    const half = this._blockSize / 2
     const clampedCx = Math.min(n - half, Math.max(half, cx))
     const clampedCy = Math.min(n - half, Math.max(half, cy))
     const expectedCenter = { cx: clampedCx, cy: clampedCy }
@@ -733,16 +817,16 @@ export class ArcGisVectorTileImageryProvider {
     const sctx = snapshot.getContext('2d')
     if (sctx) sctx.drawImage(src, 0, 0, snapshot.width, snapshot.height)
     const block: HTMLCanvasElement[] = []
-    for (let ly = 0; ly < BLOCK; ly += 1) {
-      for (let lx = 0; lx < BLOCK; lx += 1) {
-        block.push(cropTile(snapshot, gx + lx, gy + ly, level, this.tileWidth, this.tileHeight, plan.sourceScale, renderedCenter))
+    for (let ly = 0; ly < this._blockSize; ly += 1) {
+      for (let lx = 0; lx < this._blockSize; lx += 1) {
+        block.push(cropTile(snapshot, gx + lx, gy + ly, level, this.tileWidth, this.tileHeight, plan.sourceScale, renderedCenter, this._blockSize))
       }
     }
     // 临时快照不进入 LRU 缓存，释放其像素缓冲；缓存只保留九张最终输出瓦片。
     snapshot.width = 0
     snapshot.height = 0
     this.stats.lastCopyMs = performance.now() - tCopy
-    this.renderedCount += BLOCK * BLOCK
+    this.renderedCount += this._blockSize ** 2
     const dt = performance.now() - t0
     this.stats.blockCount += 1
     this.stats.totalBlockMs += dt
@@ -763,9 +847,21 @@ export class ArcGisVectorTileImageryProvider {
   private _rememberBlock(key: string, block: HTMLCanvasElement[]): void {
     this._blockCache.delete(key)
     this._blockCache.set(key, block)
-    if (this._blockCache.size > BLOCK_CACHE_LIMIT) {
+    if (this._blockCache.size > this._cacheLimit) {
       const oldest = this._blockCache.keys().next().value as string
       this._blockCache.delete(oldest)
     }
+  }
+
+  /** 返回一块空白瓦片（上下文丢失/离屏暂停时兜底，避免 Cesium 无限重试）。 */
+  private _blankBlock(): HTMLCanvasElement[] {
+    const out: HTMLCanvasElement[] = []
+    for (let i = 0; i < this._blockSize ** 2; i += 1) {
+      const c = document.createElement('canvas')
+      c.width = this.tileWidth
+      c.height = this.tileHeight
+      out.push(c)
+    }
+    return out
   }
 }

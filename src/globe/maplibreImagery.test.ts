@@ -170,6 +170,22 @@ describe('normalizeArcGisStyle', () => {
     expect(src.tileSize).toBeUndefined()
   })
 
+  it('无 sprite 资源时，纯 icon 图层彻底移除 icon-image（MapLibre 不接受 undefined/null）', () => {
+    const style = normalizeArcGisStyle(
+      {
+        layers: [
+          { id: 'poi-icon', type: 'symbol', layout: { 'icon-image': '{_icon}' } },
+          { id: 'poi-label', type: 'symbol', layout: { 'text-field': '{_name}', 'icon-image': '{_icon}' } },
+        ],
+      },
+      'https://x/root.json'
+    )
+    const layers = style.layers as Array<{ id: string; layout: Record<string, unknown> }>
+    expect(layers[0].layout['icon-image']).toBeUndefined()
+    // 有 text-field 的图层保留 icon-image（避免误伤带文字的图标）
+    expect(layers[1].layout['icon-image']).toBe('{_icon}')
+  })
+
   it('非 VectorTileServer 的 vector url 保持为 url 并解析绝对', () => {
     const style = normalizeArcGisStyle(
       {
@@ -518,6 +534,9 @@ describe('ArcGisVectorTileImageryProvider', () => {
     const provider = new ArcGisVectorTileImageryProvider({ styleUrl: 'https://x/root.json', mapPoolSize: 1, createMap: () => m })
     try {
       await provider.readyPromise
+      // 初始化阶段注册 webglcontextlost 监听会调用一次 getCanvas，这里只验证渲染流程：
+      // 请求瓦片后、MapLibre idle 前不得截取快照。
+      m.getCanvas.mockClear()
       const pending = provider.requestImage(0, 0, 2)
       await new Promise((resolve) => setTimeout(resolve, 0))
       expect(m.getCanvas).not.toHaveBeenCalled()
@@ -584,6 +603,65 @@ describe('ArcGisVectorTileImageryProvider', () => {
       await expect(pA).resolves.toBeDefined()
       await expect(pB).resolves.toBeDefined()
       await expect(pC).resolves.toBeDefined()
+    } finally {
+      provider.destroy()
+    }
+  })
+
+  it('WebGL 上下文丢失 → 空白瓦片兜底缓存；恢复后清空缓存并重新渲染', async () => {
+    stubStyleFetch()
+    const m = fakeMap()
+    const canvas = document.createElement('canvas')
+    m.getCanvas = vi.fn(() => canvas) as never
+    setTimeout(() => m._emit('load'), 0)
+    const provider = new ArcGisVectorTileImageryProvider({
+      styleUrl: 'https://x/root.json',
+      mapPoolSize: 1,
+      createMap: () => m,
+    })
+    try {
+      await provider.readyPromise
+      // 正常渲染一块
+      await expect(provider.requestImage(0, 0, 2)).resolves.toBeDefined()
+      const jumpBefore = m.jumpTo.mock.calls.length
+      // 上下文丢失：下一次渲染以空白兜底（不抛错）
+      canvas.dispatchEvent(new Event('webglcontextlost', { cancelable: true }))
+      const blank = await provider.requestImage(0, 0, 2)
+      expect(blank).toBeDefined()
+      expect(m.jumpTo.mock.calls.length).toBe(jumpBefore) // 空白兜底，不再触发渲染
+      // 上下文恢复：缓存已清空，同 key 请求必须重新渲染
+      canvas.dispatchEvent(new Event('webglcontextrestored'))
+      const afterRestore = await provider.requestImage(0, 0, 2)
+      expect(afterRestore).toBeDefined()
+      expect(m.jumpTo.mock.calls.length).toBeGreaterThan(jumpBefore)
+    } finally {
+      provider.destroy()
+    }
+  })
+
+  it('上下文恢复时唤醒丢失期间积压的未决请求', async () => {
+    stubStyleFetch()
+    const m = fakeMap()
+    const canvas = document.createElement('canvas')
+    m.getCanvas = vi.fn(() => canvas) as never
+    setTimeout(() => m._emit('load'), 0)
+    let canRender = false
+    const provider = new ArcGisVectorTileImageryProvider({
+      styleUrl: 'https://x/root.json',
+      mapPoolSize: 1,
+      createMap: () => m,
+      canRenderNow: () => canRender,
+    })
+    try {
+      await provider.readyPromise
+      // 渲染被禁止（如极限档静止）：请求进入 pending，不派发
+      const pReq = provider.requestImage(0, 0, 2)
+      expect(m.jumpTo).not.toHaveBeenCalled()
+      // 上下文恢复且渲染许可放开：restored 必须唤醒 pending
+      canRender = true
+      canvas.dispatchEvent(new Event('webglcontextrestored'))
+      await expect(pReq).resolves.toBeDefined()
+      expect(m.jumpTo).toHaveBeenCalled()
     } finally {
       provider.destroy()
     }
@@ -775,7 +853,7 @@ describe('labelsOnly', () => {
             { id: 'bg', type: 'background' },
             { id: 'fill', type: 'fill', layout: {} },
             { id: 'line', type: 'line', layout: {} },
-            { id: 'label', type: 'symbol', layout: { 'text-field': '{_name}' } },
+            { id: 'label', type: 'symbol', layout: { 'text-field': '{_name}', 'icon-image': '{_icon}' } },
             { id: 'labelExpr', type: 'symbol', layout: { 'text-field': ['coalesce', ['get', '_name_en'], ['get', '_name']] } },
             { id: 'place', type: 'symbol', layout: { 'text-field': '{_name}' } },
             { id: 'city', type: 'symbol', layout: { 'text-field': '{_name}' } },
@@ -798,6 +876,9 @@ describe('labelsOnly', () => {
     await provider.readyPromise
     const layers = (seenStyles[0] as { layers: Array<{ id: string }> }).layers
     expect(layers.map((l) => l.id)).toEqual(['label', 'labelExpr', 'place', 'city'])
+    // 保留的图层若带 icon-image，必须彻底移除（否则 MapLibre 样式校验失败）
+    const label = layers[0] as unknown as { layout: Record<string, unknown> }
+    expect(label.layout['icon-image']).toBeUndefined()
     provider.destroy()
   })
 

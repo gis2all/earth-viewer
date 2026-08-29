@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import * as CesiumNS from 'cesium'
 import {
   CesiumFacade,
   __resetTerrainCacheForTest,
@@ -6,6 +7,8 @@ import {
 } from './CesiumFacade'
 import type { LayerRuntime } from '../domain/runtime'
 import { flyToHome } from '../globe/facade/cameraApi'
+import { loadI3S, load3DTiles } from '../globe/facade/scene'
+import { providerForWebLayer } from '../globe/facade/webmap'
 
 // ---- Cesium mock（fake Viewer，记录创建参数/图层/地形） ----
 const cesiumMock = vi.hoisted(() => {
@@ -638,6 +641,18 @@ describe('CesiumFacade（W3.4）', () => {
       expect(runtime.imagery[0].alpha).toBe(0.7)
     })
 
+    it('addWebLayerImagery 探测完成后 keepAlive=false → 不挂载且销毁 provider', async () => {
+      const { facade, v } = makeFacade()
+      const runtime = freshRuntime()
+      const provider = { provider: 'web', destroy: vi.fn() }
+      vi.mocked(providerForWebLayer).mockResolvedValueOnce(provider as never)
+      const ok = await facade.addWebLayerImagery({ opacity: 0.7 } as never, runtime, undefined, () => false)
+      expect(ok).toBe(false)
+      expect(v.imageryLayers.list.length).toBe(0)
+      expect(runtime.imagery.length).toBe(0)
+      expect(provider.destroy).toHaveBeenCalled()
+    })
+
     it('addWebLayerImagery 无 provider 时返回 false', async () => {
       const { facade } = makeFacade()
       const ok = await facade.addWebLayerImagery({ fail: true } as never, freshRuntime())
@@ -682,6 +697,32 @@ describe('CesiumFacade（W3.4）', () => {
       expect(maplibreMock.instances[maplibreMock.instances.length - 1].destroy).toHaveBeenCalled()
     })
 
+    it('addVectorTile 同一 URL 添加两次：互不干扰，移除其一不影响另一个', async () => {
+      const { facade, v } = makeFacade()
+      const rtA = freshRuntime()
+      const rtB = freshRuntime()
+      const onDoneA = vi.fn()
+      const onDoneB = vi.fn()
+      facade.addVectorTile({ styleUrl: 'https://same' } as never, undefined, rtA, () => true, vi.fn(), onDoneA)
+      facade.addVectorTile({ styleUrl: 'https://same' } as never, undefined, rtB, () => true, vi.fn(), onDoneB)
+      await flush()
+      expect(onDoneA).toHaveBeenCalledTimes(1)
+      expect(onDoneB).toHaveBeenCalledTimes(1)
+      expect(v.imageryLayers.list.length).toBe(2)
+      const providerA = (rtA.imagery[0] as unknown as { provider?: unknown }).provider
+      const providerB = (rtB.imagery[0] as unknown as { provider?: unknown }).provider
+      expect(providerA).not.toBe(providerB)
+
+      facade.removeRuntime(rtA)
+      expect(v.imageryLayers.list.length).toBe(1)
+      expect(v.imageryLayers.list[0].provider).toBe(providerB)
+      expect((providerB as { destroy: ReturnType<typeof vi.fn> }).destroy).not.toHaveBeenCalled()
+
+      facade.removeRuntime(rtB)
+      expect(v.imageryLayers.list.length).toBe(0)
+      expect((providerB as { destroy: ReturnType<typeof vi.fn> }).destroy).toHaveBeenCalled()
+    })
+
     it('addGeoJson 挂载 DataSource 并开启点聚合', async () => {
       const { facade, v } = makeFacade()
       const runtime = freshRuntime()
@@ -694,6 +735,18 @@ describe('CesiumFacade（W3.4）', () => {
       expect(runtime.dataSources.length).toBe(1)
     })
 
+    it('addGeoJson 加载完成后 keepAlive=false → 不挂载且销毁 DataSource', async () => {
+      const { facade, v } = makeFacade()
+      const runtime = freshRuntime()
+      const dsObj = { clustering: { enabled: false }, destroy: vi.fn(), loaded: {} }
+      vi.mocked(CesiumNS.GeoJsonDataSource.load).mockResolvedValueOnce(dsObj as never)
+      const ds = await facade.addGeoJson({ features: [] }, runtime, undefined, () => false)
+      expect(ds).toBeNull()
+      expect(v.dataSources.add).not.toHaveBeenCalled()
+      expect(runtime.dataSources.length).toBe(0)
+      expect(dsObj.destroy).toHaveBeenCalled()
+    })
+
     it('addKmlNative 加载并挂载 KML DataSource', async () => {
       const { facade, v } = makeFacade()
       const runtime = freshRuntime()
@@ -701,6 +754,18 @@ describe('CesiumFacade（W3.4）', () => {
       expect(ds).toEqual({ kml: 'https://x/kml' })
       expect(v.dataSources.add).toHaveBeenCalled()
       expect(runtime.dataSources.length).toBe(1)
+    })
+
+    it('addKmlNative 加载完成后 keepAlive=false → 不挂载且销毁 DataSource', async () => {
+      const { facade, v } = makeFacade()
+      const runtime = freshRuntime()
+      const dsObj = { destroy: vi.fn(), kml: 'https://x/kml' }
+      vi.mocked(CesiumNS.KmlDataSource.load).mockResolvedValueOnce(dsObj as never)
+      const ds = await facade.addKmlNative('https://x/kml', runtime, () => false)
+      expect(ds).toBeNull()
+      expect(v.dataSources.add).not.toHaveBeenCalled()
+      expect(runtime.dataSources.length).toBe(0)
+      expect(dsObj.destroy).toHaveBeenCalled()
     })
 
     it('addScene / add3dTiles 挂载 Primitive', async () => {
@@ -714,6 +779,21 @@ describe('CesiumFacade（W3.4）', () => {
       expect(tileset).toEqual({ tileset: '3d-https://tiles' })
       expect(v.scene.primitives.add).toHaveBeenCalledWith(tileset)
       expect(runtime.primitives.length).toBe(2)
+    })
+
+    it('addScene / add3dTiles keepAlive=false → 不挂载且销毁 Primitive', async () => {
+      const { facade, v } = makeFacade()
+      const runtime = freshRuntime()
+      const prim = { prim: 'i3s', destroy: vi.fn() }
+      const tileset = { tileset: '3d', destroy: vi.fn() }
+      vi.mocked(loadI3S).mockResolvedValueOnce(prim as never)
+      vi.mocked(load3DTiles).mockResolvedValueOnce(tileset as never)
+      expect(await facade.addScene('https://i3s', runtime, () => false)).toBeNull()
+      expect(await facade.add3dTiles('https://tiles', runtime, () => false)).toBeNull()
+      expect(v.scene.primitives.add).not.toHaveBeenCalled()
+      expect(runtime.primitives.length).toBe(0)
+      expect(prim.destroy).toHaveBeenCalled()
+      expect(tileset.destroy).toHaveBeenCalled()
     })
 
     it('viewer 销毁后各挂载方法安全返回', async () => {

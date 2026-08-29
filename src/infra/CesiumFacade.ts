@@ -6,6 +6,12 @@
 import * as Cesium from 'cesium'
 import type { LayerRuntime } from '../domain/runtime'
 import { ArcGisVectorTileImageryProvider } from '../globe/facade/maplibreImagery'
+import { GpuMemoryManager } from './GpuMemoryManager'
+import {
+  estimateSceneCanvasBytes,
+  estimateVectorProviderBytes,
+  type GpuTierConfig,
+} from '../globe/facade/gpuBudget'
 import {
   providerForWebLayer,
   WORLD_IMAGERY_WGS84_TILES,
@@ -74,6 +80,23 @@ export function enablePointClustering(ds: Cesium.DataSource) {
 export class CesiumFacade {
   viewer: Cesium.Viewer | null = null
 
+  /** GPU 内存预算管理器：统一档位 → 主场景 resolutionScale + provider 重建 */
+  private _gpu: GpuMemoryManager | null = null
+  private _gpuUnsub: (() => void) | null = null
+  /** 相机是否在移动（critical 档离屏渲染暂停的判据） */
+  private _cameraMoving = false
+  /** 矢量瓦片 provider 重建表：档位变化时逐个销毁重建（key → 重建 thunk） */
+  private readonly _vectorRebuilds = new Map<string, () => void>()
+  private readonly _vectorProviders = new Map<string, ArcGisVectorTileImageryProvider>()
+  private readonly _vectorTokens = new Map<string, number>()
+  private _vectorSeq = 0
+  private _labelsProvider: ArcGisVectorTileImageryProvider | null = null
+  private _labelsToken = 0
+  /** 档位重建中：阻止嵌套 _applyTier（重建时 register/unregister 触发核算） */
+  private _applyingTier = false
+  /** 相机运动监听是否已注册（有矢量 provider 时才需要） */
+  private _cameraTracked = false
+
   /** 创建并挂载 Viewer；返回是否成功。E2E 跳过由调用方（Presentation）判定。 */
   create(el: HTMLElement, cb: FacadeLifecycleCallbacks = {}): boolean {
     let v: Cesium.Viewer
@@ -138,6 +161,19 @@ export class CesiumFacade {
     scc.zoomEventTypes = [Cesium.CameraEventType.PINCH]
     v.scene.globe.tileCacheSize = 100
     v.scene.globe.preloadSiblings = false
+    // ---- GPU 内存预算：主场景渲染缓冲计入核算，档位变化 → resolutionScale + 重建 provider ----
+    this._gpu = new GpuMemoryManager()
+    const gpu = this._gpu
+    gpu.register('scene', {
+      estimateBytes: (tier) => {
+        const c = v.scene.canvas
+        const w = c.width || Math.max(1, c.clientWidth * window.devicePixelRatio)
+        const h = c.height || Math.max(1, c.clientHeight * window.devicePixelRatio)
+        return estimateSceneCanvasBytes(w, h, tier)
+      },
+    })
+    this._gpuUnsub = gpu.subscribe((tier) => this._applyTier(tier))
+    this._applyTier(gpu.current(), false)
     return true
   }
 
@@ -433,7 +469,18 @@ export class CesiumFacade {
     )
     layers.add(base, 0)
     this.pushImagery(runtime, base)
-    const labelProvider = new ArcGisVectorTileImageryProvider({
+    this._attachLabels(runtime)
+    this.requestFrame()
+  }
+
+  /** 创建/重建底图标注 provider（档位变化时由 _vectorRebuilds 触发）。 */
+  private _attachLabels(runtime: LayerRuntime) {
+    const v = this.viewer
+    const gpu = this._gpu
+    if (!v || v.isDestroyed() || !gpu) return
+    this._ensureCameraTracking()
+    const token = ++this._labelsToken
+    const provider = new ArcGisVectorTileImageryProvider({
       styleUrl: WORLD_VECTOR_LABELS_STYLE_URL,
       language: 'en',
       labelsOnly: true,
@@ -447,31 +494,61 @@ export class CesiumFacade {
         textScale: { lowZoom: 6, highZoom: 16, lowScale: 1.15, highScale: 1.6 },
       },
       title: 'World Labels',
+      gpuTier: gpu.current(),
+      onContextLost: () => this._gpu?.reportContextLost(),
+      canRenderNow: () => this._canRenderOffscreen(),
     })
-    labelProvider.readyPromise
+    this._labelsProvider = provider
+    gpu.register('labels', { estimateBytes: (tier) => estimateVectorProviderBytes(tier) })
+    this._vectorRebuilds.set('labels', () => {
+      if (this._labelsProvider) {
+        this._removeVectorImagery(runtime, this._labelsProvider)
+        this._labelsProvider.destroy()
+        this._labelsProvider = null
+      }
+      this._attachLabels(runtime)
+    })
+    provider.readyPromise
       .then(() => {
-        if (v.isDestroyed()) {
-          labelProvider.destroy()
+        if (v.isDestroyed() || token !== this._labelsToken || !this._gpu) {
+          provider.destroy()
           return
         }
-        const il = new Cesium.ImageryLayer(labelProvider as unknown as Cesium.ImageryProvider)
-        layers.add(il)
-        this.pushImagery(runtime, il, labelProvider)
+        // 重建时若旧实例已挂载则先移除（首次挂载 findIndex 为 -1，不销毁新 provider）
+        this._removeVectorImagery(runtime, provider)
+        const il = new Cesium.ImageryLayer(provider as unknown as Cesium.ImageryProvider)
+        v.imageryLayers.add(il)
+        this.pushImagery(runtime, il, provider)
         this.requestFrame()
       })
       .catch((e: unknown) => {
+        if (token !== this._labelsToken) {
+          // 已被档位重建取代：静默销毁旧实例，避免刷屏与误报
+          provider.destroy()
+          return
+        }
         console.error('[globe] 矢量标注样式加载失败', e)
-        labelProvider.destroy()
+        provider.destroy()
+        this._labelsProvider = null
       })
-    this.requestFrame()
   }
 
   /** 影像类图层（MapServer/ImageServer/WMS/WMTS/OSM/urlTemplate）→ ImageryLayer。 */
-  async addWebLayerImagery(op: WebLayer, runtime: LayerRuntime): Promise<boolean> {
+  async addWebLayerImagery(
+    op: WebLayer,
+    runtime: LayerRuntime,
+    signal?: AbortSignal,
+    keepAlive?: () => boolean
+  ): Promise<boolean> {
     const v = this.viewer
     if (!v || v.isDestroyed()) return false
-    const img = await providerForWebLayer(op)
+    const img = await providerForWebLayer(op, signal)
     if (!img) return false
+    // 探测期间图层可能已被移除：挂载前回查，避免把影像层挂到已释放的 runtime
+    if (!v || v.isDestroyed() || (keepAlive && !keepAlive())) {
+      ;(img as unknown as { destroy?: () => void }).destroy?.()
+      return false
+    }
     const il = new Cesium.ImageryLayer(img)
     if (typeof op.opacity === 'number') il.alpha = op.opacity
     v.imageryLayers.add(il)
@@ -491,18 +568,57 @@ export class CesiumFacade {
   ) {
     const v = this.viewer
     if (!v || v.isDestroyed()) return
+    // key 需唯一：同一业务 URL 可能被添加多次（多个 runtime），
+    // 若共用同一 key 会覆盖 rebuild/token/GPU 核算，导致先添加的图层静默失败或误清理。
+    const key = 'vt:' + (op.styleUrl ?? op.url ?? op.title ?? 'vector') + '#' + ++this._vectorSeq
+    this._attachVectorTile(key, op, signal, runtime, keepAlive, onError, onDone)
+  }
+
+  /** 创建/重建业务矢量瓦片 provider（档位变化时由 _vectorRebuilds 触发）。 */
+  private _attachVectorTile(
+    key: string,
+    op: WebLayer,
+    signal: AbortSignal | undefined,
+    runtime: LayerRuntime,
+    keepAlive: () => boolean,
+    onError: (msg: string) => void,
+    onDone: () => void
+  ) {
+    const v = this.viewer
+    const gpu = this._gpu
+    if (!v || v.isDestroyed() || !gpu) return
+    this._ensureCameraTracking()
+    const token = (this._vectorTokens.get(key) ?? 0) + 1
+    this._vectorTokens.set(key, token)
     const provider = new ArcGisVectorTileImageryProvider({
       styleUrl: op.styleUrl,
       url: op.url,
       title: op.title,
       signal,
+      gpuTier: gpu.current(),
+      onContextLost: () => this._gpu?.reportContextLost(),
+      canRenderNow: () => this._canRenderOffscreen(),
+    })
+    this._vectorProviders.set(key, provider)
+    gpu.register(key, { estimateBytes: (tier) => estimateVectorProviderBytes(tier) })
+    this._vectorRebuilds.set(key, () => {
+      const cur = this._vectorProviders.get(key)
+      if (cur) {
+        this._removeVectorImagery(runtime, cur)
+        cur.destroy()
+      }
+      this._vectorProviders.delete(key)
+      this._attachVectorTile(key, op, signal, runtime, keepAlive, onError, onDone)
     })
     provider.readyPromise
       .then(() => {
-        if (!keepAlive()) {
+        if (!keepAlive() || token !== this._vectorTokens.get(key) || v.isDestroyed()) {
+          if (this._vectorProviders.get(key) === provider) this._vectorProviders.delete(key)
           provider.destroy()
           return
         }
+        // 重建时若旧实例已挂载则先移除（首次挂载 findIndex 为 -1，不销毁新 provider）
+        this._removeVectorImagery(runtime, provider)
         const il = new Cesium.ImageryLayer(provider as unknown as Cesium.ImageryProvider)
         if (typeof op.opacity === 'number') il.alpha = op.opacity
         v.imageryLayers.add(il)
@@ -511,10 +627,83 @@ export class CesiumFacade {
         onDone()
       })
       .catch((e: unknown) => {
+        if (token !== this._vectorTokens.get(key)) {
+          // 已被档位重建取代：静默销毁旧实例，不向用户报错
+          provider.destroy()
+          return
+        }
         console.error('[layer] 矢量瓦片样式渲染失败', op.url || op.styleUrl, e)
+        if (this._vectorProviders.get(key) === provider) this._vectorProviders.delete(key)
         provider.destroy()
         onError('矢量瓦片渲染失败：' + (op.title || op.url || op.styleUrl))
       })
+  }
+
+  /** GPU 档位变化：主场景 resolutionScale + 以新档位重建全部矢量 provider。 */
+  private _applyTier(tier: GpuTierConfig, requestRender = true) {
+    if (this._applyingTier) return
+    const v = this.viewer
+    if (!v || v.isDestroyed()) return
+    this._applyingTier = true
+    try {
+      if (v.resolutionScale !== tier.resolutionScale) {
+        v.resolutionScale = tier.resolutionScale
+      }
+      for (const rebuild of this._vectorRebuilds.values()) rebuild()
+    } finally {
+      this._applyingTier = false
+    }
+    if (requestRender) this.requestFrame()
+  }
+
+  /** 懒注册相机运动监听：critical 档下相机静止时暂停离屏矢量渲染。 */
+  private _ensureCameraTracking() {
+    if (this._cameraTracked) return
+    const v = this.viewer
+    if (!v || v.isDestroyed()) return
+    this._cameraTracked = true
+    // 真实 Cesium 中 viewer.camera 与 viewer.scene.camera 是同一对象；双路径兼容测试 mock
+    const cam = (v.scene?.camera ?? v.camera) as { moveStart?: Cesium.Event; moveEnd?: Cesium.Event }
+    cam.moveStart?.addEventListener(() => {
+      this._cameraMoving = true
+    })
+    cam.moveEnd?.addEventListener(() => {
+      this._cameraMoving = false
+      this.requestFrame()
+    })
+  }
+
+  /** critical 档：相机静止时暂停离屏矢量渲染，移动时恢复出图。 */
+  private _canRenderOffscreen(): boolean {
+    const gpu = this._gpu
+    if (!gpu || gpu.tierName() !== 'critical') return true
+    return this._cameraMoving
+  }
+
+  /** 从 runtime.imagery 与 viewer.imageryLayers 中移除指定 provider 的影像图层（不销毁 provider）。 */
+  private _removeVectorImagery(runtime: LayerRuntime, provider: ArcGisVectorTileImageryProvider) {
+    const v = this.viewer
+    const idx = runtime.imagery.findIndex(
+      (l) => (l as unknown as { provider?: unknown }).provider === provider
+    )
+    if (idx < 0) return
+    const entry = runtime.imagery[idx] as unknown as {
+      layer?: Cesium.ImageryLayer
+      provider?: ArcGisVectorTileImageryProvider
+    }
+    if (entry.layer && v && !v.isDestroyed()) {
+      v.imageryLayers.remove(entry.layer, true)
+    }
+    runtime.imagery.splice(idx, 1)
+  }
+
+  /** 图层移除时清理 GPU 核算与重建/实例追踪（provider 由调用方销毁）。 */
+  private _forgetVectorTracking(key: string) {
+    this._gpu?.unregister(key)
+    this._vectorRebuilds.delete(key)
+    this._vectorProviders.delete(key)
+    this._vectorTokens.delete(key)
+    if (key === 'labels') this._labelsProvider = null
   }
 
   /** 加载 GeoJSON → DataSource（可带 Cesium 样式参数），挂 runtime 并开启点聚合。 */
@@ -527,7 +716,8 @@ export class CesiumFacade {
       stroke?: Cesium.Color
       strokeWidth?: number
       fill?: Cesium.Color
-    }
+    },
+    keepAlive?: () => boolean
   ): Promise<Cesium.DataSource | null> {
     const v = this.viewer
     if (!v || v.isDestroyed()) return null
@@ -543,15 +733,28 @@ export class CesiumFacade {
           }
         : undefined
     )
+    // 加载期间图层可能已被移除：挂载前回查存活状态，避免把资源挂到已释放的 runtime
+    if (!v || v.isDestroyed() || (keepAlive && !keepAlive())) {
+      ;(ds as unknown as { destroy?: () => void }).destroy?.()
+      return null
+    }
     this.addDataSource(ds as Cesium.DataSource, runtime)
     return ds as Cesium.DataSource
   }
 
   /** 原生 KML（图标/样式回退路径）。 */
-  async addKmlNative(url: string, runtime: LayerRuntime): Promise<Cesium.DataSource | null> {
+  async addKmlNative(
+    url: string,
+    runtime: LayerRuntime,
+    keepAlive?: () => boolean
+  ): Promise<Cesium.DataSource | null> {
     const v = this.viewer
     if (!v || v.isDestroyed()) return null
     const ds = await Cesium.KmlDataSource.load(url)
+    if (!v || v.isDestroyed() || (keepAlive && !keepAlive())) {
+      ;(ds as unknown as { destroy?: () => void }).destroy?.()
+      return null
+    }
     this.addDataSource(ds as Cesium.DataSource, runtime)
     return ds as Cesium.DataSource
   }
@@ -567,11 +770,15 @@ export class CesiumFacade {
   }
 
   /** 3D 场景（I3S）。 */
-  async addScene(url: string, runtime: LayerRuntime): Promise<unknown> {
+  async addScene(url: string, runtime: LayerRuntime, keepAlive?: () => boolean): Promise<unknown> {
     const v = this.viewer
     if (!v || v.isDestroyed()) return null
     const prim = await loadI3S(url)
     if (!prim) return null
+    if (!v || v.isDestroyed() || (keepAlive && !keepAlive())) {
+      ;(prim as unknown as { destroy?: () => void }).destroy?.()
+      return null
+    }
     v.scene.primitives.add(prim)
     this.pushPrimitive(runtime, prim)
     this.requestFrame()
@@ -579,11 +786,15 @@ export class CesiumFacade {
   }
 
   /** OGC 3D Tiles。 */
-  async add3dTiles(url: string, runtime: LayerRuntime): Promise<unknown> {
+  async add3dTiles(url: string, runtime: LayerRuntime, keepAlive?: () => boolean): Promise<unknown> {
     const v = this.viewer
     if (!v || v.isDestroyed()) return null
     const tileset = await load3DTiles(url)
     if (!tileset) return null
+    if (!v || v.isDestroyed() || (keepAlive && !keepAlive())) {
+      ;(tileset as unknown as { destroy?: () => void }).destroy?.()
+      return null
+    }
     v.scene.primitives.add(tileset)
     this.pushPrimitive(runtime, tileset)
     this.requestFrame()
@@ -628,9 +839,25 @@ export class CesiumFacade {
   removeRuntime(runtime: LayerRuntime) {
     const v = this.viewer
     if (!v || v.isDestroyed()) return
+    // GPU 核算/重建追踪清理：runtime 内的矢量 provider（labels 或业务矢量瓦片）
+    const keysToForget = new Set<string>()
+    for (const [key, provider] of this._vectorProviders) {
+      if (runtime.imagery.some((l) => (l as unknown as { provider?: unknown }).provider === provider)) {
+        keysToForget.add(key)
+      }
+    }
+    if (
+      this._labelsProvider &&
+      runtime.imagery.some((l) => (l as unknown as { provider?: unknown }).provider === this._labelsProvider)
+    ) {
+      keysToForget.add('labels')
+    }
+    for (const key of keysToForget) this._forgetVectorTracking(key)
     runtime.imagery.forEach((l) => {
       const il = (l as unknown as { layer?: Cesium.ImageryLayer }).layer
       if (il) v.imageryLayers.remove(il, true)
+      const provider = (l as unknown as { provider?: { destroy(): void } }).provider
+      provider?.destroy?.()
     })
     runtime.vectorProviders.forEach((p) => {
       ;(p as unknown as { provider?: { destroy(): void } }).provider?.destroy()
@@ -650,6 +877,15 @@ export class CesiumFacade {
   destroy() {
     const v = this.viewer
     if (!v) return
+    this._gpuUnsub?.()
+    this._gpuUnsub = null
+    this._gpu = null
+    for (const provider of this._vectorProviders.values()) provider.destroy()
+    this._labelsProvider?.destroy()
+    this._labelsProvider = null
+    this._vectorRebuilds.clear()
+    this._vectorProviders.clear()
+    this._vectorTokens.clear()
     this.inputHandler?.destroy()
     this.inputHandler = null
     this.inputRefs = 0
