@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import '../testing/mocks/cesium'
 import type { CesiumFacade } from '../infra/cesiumFacade'
 import type { LayerRenderJob } from '../domain/renderContract'
@@ -20,6 +20,8 @@ const queryMock = vi.hoisted(() => ({ queryViewportData: vi.fn() }))
 const primMock = vi.hoisted(() => ({ hasPrimitiveRendering: vi.fn(() => false) }))
 const ogcMock = vi.hoisted(() => ({ fetchOgcFeatureGeoJSON: vi.fn() }))
 const csvMock = vi.hoisted(() => ({ fetchCsvGeoJSON: vi.fn() }))
+const vpMock = vi.hoisted(() => ({ runViewportProcess: vi.fn(), pipe: undefined as unknown }))
+const safetyMock = vi.hoisted(() => ({ assertUrlWithinLimit: vi.fn() }))
 
 vi.mock('../infra/webmapProviders', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../infra/webmapProviders')>()
@@ -52,6 +54,16 @@ vi.mock('../service/formats/ogc', async (importOriginal) => {
 vi.mock('../service/formats/csv', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../service/formats/csv')>()
   return { ...mod, fetchCsvGeoJSON: csvMock.fetchCsvGeoJSON }
+})
+vi.mock('../service/processing/viewportWorker', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../service/processing/viewportWorker')>()
+  const pipe = await import('../service/processing/viewportPipeline')
+  vpMock.pipe = pipe
+  return { ...mod, runViewportProcess: vpMock.runViewportProcess }
+})
+vi.mock('../domain/loadSafety', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../domain/loadSafety')>()
+  return { ...mod, assertUrlWithinLimit: safetyMock.assertUrlWithinLimit }
 })
 
 function makeJob(webmap: Record<string, unknown>, overrides: Partial<LayerRenderJob> = {}): LayerRenderJob {
@@ -124,6 +136,16 @@ beforeEach(() => {
   ogcMock.fetchOgcFeatureGeoJSON.mockResolvedValue(fc())
   csvMock.fetchCsvGeoJSON.mockResolvedValue(fc())
   primMock.hasPrimitiveRendering.mockReturnValue(false)
+  vpMock.runViewportProcess.mockImplementation((input: { geojson: unknown; maxVertices?: number; maxFeatures?: number }) =>
+    Promise.resolve(
+      (vpMock.pipe as { processViewportData: (i: typeof input) => { features: unknown[]; capped: boolean; vertices: number } }).processViewportData(input)
+    )
+  )
+  safetyMock.assertUrlWithinLimit.mockResolvedValue(undefined)
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
 })
 
 describe('renderWebmap：分支渲染', () => {
@@ -416,5 +438,448 @@ describe('renderWebmap：相机', () => {
     const job = makeJob(webmapWithLayer({ id: 'ft', title: 'Q', url: 'https://x/FeatureServer/0', layerType: 'ArcGISFeatureLayer' }))
     await renderWebmap(job, f)
     expect(f.flyToExtent).toHaveBeenCalledWith({ west: 100, south: 10, east: 120, north: 30, wkid: 4326 })
+  })
+})
+
+describe('renderWebmap：keepAlive / 失败 / 降级分支', () => {
+  const featLayer = (id: string, title: string): Record<string, unknown> =>
+    webmapWithLayer({ id, title, url: 'https://x/FeatureServer/0', layerType: 'ArcGISFeatureLayer' })
+  const fcLayer = (features: unknown[]): Record<string, unknown> =>
+    webmapWithLayer({
+      id: 'fc',
+      title: '内嵌',
+      layerType: 'FeatureCollection',
+      layerDefinition: { featureCollection: { featureCollection: { features } } },
+    })
+
+  it('影像层加载后 keepAlive 失效 → 立即中止', async () => {
+    const f = makeFacade()
+    const job = makeJob(
+      webmapWithLayer({ id: 'op', title: 'I', url: 'https://x/MapServer', layerType: 'ArcGISTiledMapServiceLayer' }),
+      { keepAlive: vi.fn(() => false) }
+    )
+    await renderWebmap(job, f)
+    expect(f.addVectorTile).not.toHaveBeenCalled()
+    expect(job.onError).not.toHaveBeenCalled()
+  })
+
+  it('内嵌 FeatureCollection 超预算 → 提示降级', async () => {
+    const f = makeFacade()
+    const job = makeJob(fcLayer(Array.from({ length: 2000 }, () => ({ type: 'Feature' }))))
+    await renderWebmap(job, f)
+    expect(job.onNote).toHaveBeenCalledWith('内嵌数据量大，已按顶点/要素预算降级')
+  })
+
+  it('内嵌 FeatureCollection 处理后 keepAlive 失效 → 中止', async () => {
+    const f = makeFacade()
+    const job = makeJob(fcLayer([{ type: 'Feature' }]), {
+      keepAlive: vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false),
+    })
+    await renderWebmap(job, f)
+    expect(f.addGeoJson).not.toHaveBeenCalled()
+  })
+
+  it('内嵌 FeatureCollection addGeoJson 返回 null → 中止', async () => {
+    const f = makeFacade({ addGeoJson: vi.fn(async () => null) })
+    const job = makeJob(fcLayer([{ type: 'Feature' }]))
+    await renderWebmap(job, f)
+    expect(job.onClearError).not.toHaveBeenCalled()
+  })
+
+  it('内嵌 FeatureCollection 处理失败 → 报错', async () => {
+    const f = makeFacade()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vpMock.runViewportProcess.mockRejectedValueOnce(new Error('boom'))
+    const job = makeJob(fcLayer([{ type: 'Feature' }]))
+    await renderWebmap(job, f)
+    expect(job.onError).toHaveBeenCalledWith('内嵌要素集加载失败：内嵌')
+  })
+
+  it('Scene addScene 返回 null → 中止', async () => {
+    const f = makeFacade({ addScene: vi.fn(async () => null) })
+    const job = makeJob(webmapWithLayer({ id: 'sc', title: 'Scene', url: 'https://x/SceneServer', layerType: 'ArcGISSceneLayer' }))
+    await renderWebmap(job, f)
+    expect(job.onClearError).not.toHaveBeenCalled()
+  })
+
+  it('3D Tiles add3dTiles 返回 null → 中止', async () => {
+    const f = makeFacade({ add3dTiles: vi.fn(async () => null) })
+    const job = makeJob(webmapWithLayer({ id: 't', title: 'Tiles', url: 'https://x/tileset.json', layerType: '3DTilesLayer' }))
+    await renderWebmap(job, f)
+    expect(job.onClearError).not.toHaveBeenCalled()
+  })
+
+  it('3D Tiles 失败 → 报错', async () => {
+    const f = makeFacade({ add3dTiles: vi.fn(async () => { throw new Error('boom') }) })
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const job = makeJob(webmapWithLayer({ id: 't', title: 'Tiles', url: 'https://x/tileset.json', layerType: '3DTilesLayer' }))
+    await renderWebmap(job, f)
+    expect(job.onError).toHaveBeenCalledWith('3D Tiles 加载失败：Tiles')
+  })
+
+  it('WFS 读取后 keepAlive 失效 → 中止', async () => {
+    const f = makeFacade()
+    ogcMock.fetchOgcFeatureGeoJSON.mockResolvedValue(fc([{ type: 'Feature' }]))
+    const job = makeJob(webmapWithLayer({ id: 'w', title: 'W', url: 'https://x/wfs', layerType: 'WFS' }), {
+      keepAlive: vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false),
+    })
+    await renderWebmap(job, f)
+    expect(f.addGeoJson).not.toHaveBeenCalled()
+  })
+
+  it('WFS 单层超上限 → 提示降级', async () => {
+    const f = makeFacade()
+    ogcMock.fetchOgcFeatureGeoJSON.mockResolvedValue(fc(Array.from({ length: 2000 }, () => ({ type: 'Feature' }))))
+    const job = makeJob(webmapWithLayer({ id: 'w', title: 'W', url: 'https://x/wfs', layerType: 'WFS' }))
+    await renderWebmap(job, f)
+    expect(job.onNote).toHaveBeenCalledWith('数据量大，已按顶点/要素预算降级')
+  })
+
+  it('WFS addGeoJson 返回 null → 中止', async () => {
+    const f = makeFacade({ addGeoJson: vi.fn(async () => null) })
+    ogcMock.fetchOgcFeatureGeoJSON.mockResolvedValue(fc([{ type: 'Feature' }]))
+    const job = makeJob(webmapWithLayer({ id: 'w', title: 'W', url: 'https://x/wfs', layerType: 'WFS' }))
+    await renderWebmap(job, f)
+    expect(job.onClearError).not.toHaveBeenCalled()
+  })
+
+  it('WFS 读取失败 → 报错', async () => {
+    const f = makeFacade()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    ogcMock.fetchOgcFeatureGeoJSON.mockRejectedValue(new Error('net'))
+    const job = makeJob(webmapWithLayer({ id: 'w', title: 'W', url: 'https://x/wfs', layerType: 'WFS' }))
+    await renderWebmap(job, f)
+    expect(job.onError).toHaveBeenCalledWith('WFS/OGC 要素图层加载失败：W')
+  })
+
+  it('CSV 单层超上限 → 提示降级', async () => {
+    const f = makeFacade()
+    csvMock.fetchCsvGeoJSON.mockResolvedValue(fc(Array.from({ length: 2000 }, () => ({ type: 'Feature' }))))
+    const job = makeJob(webmapWithLayer({ id: 'c', title: 'C', url: 'https://x/data.csv', layerType: 'CSVLayer' }))
+    await renderWebmap(job, f)
+    expect(job.onNote).toHaveBeenCalledWith('数据量大，已按顶点/要素预算降级')
+  })
+
+  it('CSV 总量超预算 → 省略后续图层', async () => {
+    const f = makeFacade()
+    csvMock.fetchCsvGeoJSON.mockResolvedValue(fc(Array.from({ length: 2000 }, () => ({ type: 'Feature' }))))
+    const layers = Array.from({ length: 5 }, (_, i) => ({ id: 'c' + i, title: 'C' + i, url: 'https://x/data.csv', layerType: 'CSVLayer' }))
+    const job = makeJob({ baseMap: { baseMapLayers: [] }, operationalLayers: layers })
+    await renderWebmap(job, f)
+    expect(f.addGeoJson).toHaveBeenCalledTimes(4)
+    expect(job.onNote).toHaveBeenCalledWith('数据总量过大，已省略部分图层')
+  })
+
+  it('CSV 读取后 keepAlive 失效 → 中止', async () => {
+    const f = makeFacade()
+    csvMock.fetchCsvGeoJSON.mockResolvedValue(fc([{ type: 'Feature' }]))
+    const job = makeJob(webmapWithLayer({ id: 'c', title: 'C', url: 'https://x/data.csv', layerType: 'CSVLayer' }), {
+      keepAlive: vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false),
+    })
+    await renderWebmap(job, f)
+    expect(f.addGeoJson).not.toHaveBeenCalled()
+  })
+
+  it('CSV addGeoJson 返回 null → 中止', async () => {
+    const f = makeFacade({ addGeoJson: vi.fn(async () => null) })
+    csvMock.fetchCsvGeoJSON.mockResolvedValue(fc([{ type: 'Feature' }]))
+    const job = makeJob(webmapWithLayer({ id: 'c', title: 'C', url: 'https://x/data.csv', layerType: 'CSVLayer' }))
+    await renderWebmap(job, f)
+    expect(job.onClearError).not.toHaveBeenCalled()
+  })
+
+  it('CSV 读取失败 → 报错', async () => {
+    const f = makeFacade()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    csvMock.fetchCsvGeoJSON.mockRejectedValue(new Error('net'))
+    const job = makeJob(webmapWithLayer({ id: 'c', title: 'C', url: 'https://x/data.csv', layerType: 'CSVLayer' }))
+    await renderWebmap(job, f)
+    expect(job.onError).toHaveBeenCalledWith('CSV 图层加载失败：C')
+  })
+
+  it('GeoJSON 文件过大 → 限制加载', async () => {
+    const f = makeFacade()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    safetyMock.assertUrlWithinLimit.mockRejectedValueOnce(new Error('too big'))
+    const job = makeJob(webmapWithLayer({ id: 'gj', title: 'GJ', url: 'https://x/data.geojson', layerType: 'GeoJSONLayer' }))
+    await renderWebmap(job, f)
+    expect(job.onError).toHaveBeenCalledWith('GeoJSON 文件过大，已限制加载')
+    expect(f.addGeoJson).not.toHaveBeenCalled()
+  })
+
+  it('GeoJSON 非法 JSON → 按空集渲染并清错', async () => {
+    const f = makeFacade()
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => { throw new Error('bad') } })))
+    const job = makeJob(webmapWithLayer({ id: 'gj', title: 'GJ', url: 'https://x/data.geojson', layerType: 'GeoJSONLayer' }))
+    await renderWebmap(job, f)
+    expect(f.addGeoJson).toHaveBeenCalledTimes(1)
+    expect((f.addGeoJson.mock.calls[0][0] as { features: unknown[] }).features).toEqual([])
+    expect(job.onClearError).toHaveBeenCalled()
+  })
+
+  it('GeoJSON fetch 后 keepAlive 失效 → 中止', async () => {
+    const f = makeFacade()
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => fc([{ type: 'Feature' }]) })))
+    const job = makeJob(webmapWithLayer({ id: 'gj', title: 'GJ', url: 'https://x/data.geojson', layerType: 'GeoJSONLayer' }), {
+      keepAlive: vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false),
+    })
+    await renderWebmap(job, f)
+    expect(f.addGeoJson).not.toHaveBeenCalled()
+  })
+
+  it('GeoJSON 数据量大 → 提示降级', async () => {
+    const f = makeFacade()
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => fc(Array.from({ length: 4000 }, () => ({ type: 'Feature' }))) })))
+    const job = makeJob(webmapWithLayer({ id: 'gj', title: 'GJ', url: 'https://x/data.geojson', layerType: 'GeoJSONLayer' }))
+    await renderWebmap(job, f)
+    expect(job.onNote).toHaveBeenCalledWith('文件数据量大，已按顶点预算降级显示')
+  })
+
+  it('GeoJSON addGeoJson 返回 null → 中止', async () => {
+    const f = makeFacade({ addGeoJson: vi.fn(async () => null) })
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => fc([{ type: 'Feature' }]) })))
+    const job = makeJob(webmapWithLayer({ id: 'gj', title: 'GJ', url: 'https://x/data.geojson', layerType: 'GeoJSONLayer' }))
+    await renderWebmap(job, f)
+    expect(job.onClearError).not.toHaveBeenCalled()
+  })
+
+  it('GeoJSON 加载失败 → 报错', async () => {
+    const f = makeFacade()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('net') }))
+    const job = makeJob(webmapWithLayer({ id: 'gj', title: 'GJ', url: 'https://x/data.geojson', layerType: 'GeoJSONLayer' }))
+    await renderWebmap(job, f)
+    expect(job.onError).toHaveBeenCalledWith('GeoJSON 图层加载失败：GJ')
+  })
+
+  it('Feature 解析服务后 keepAlive 失效 → 中止', async () => {
+    const f = makeFacade()
+    const job = makeJob(featLayer('ft', 'Q'), {
+      keepAlive: vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false),
+    })
+    await renderWebmap(job, f)
+    expect(f.addGeoJson).not.toHaveBeenCalled()
+  })
+
+  it('Feature 单层样式解析后 keepAlive 失效 → 中止', async () => {
+    const f = makeFacade()
+    const job = makeJob(featLayer('ft', 'Q'), {
+      keepAlive: vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(true).mockReturnValueOnce(false),
+    })
+    await renderWebmap(job, f)
+    expect(f.addGeoJson).not.toHaveBeenCalled()
+  })
+
+  it('Feature 单层查询后 keepAlive 失效 → 中止', async () => {
+    const f = makeFacade()
+    const job = makeJob(featLayer('ft', 'Q'), {
+      keepAlive: vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(true).mockReturnValueOnce(true).mockReturnValueOnce(false),
+    })
+    await renderWebmap(job, f)
+    expect(f.addGeoJson).not.toHaveBeenCalled()
+  })
+
+  it('Feature 单层查询 capped → 提示降级', async () => {
+    const f = makeFacade()
+    queryMock.queryViewportData.mockResolvedValue({ features: [{ type: 'Feature' }], capped: true, vertices: 1 })
+    const job = makeJob(featLayer('ft', 'Q'))
+    await renderWebmap(job, f)
+    expect(job.onNote).toHaveBeenCalledWith('数据量大，已按视口/预算降级显示')
+  })
+
+  it('Feature 单层 addGeoJson 返回 null → 中止', async () => {
+    const f = makeFacade({ addGeoJson: vi.fn(async () => null) })
+    const job = makeJob(featLayer('ft', 'Q'))
+    await renderWebmap(job, f)
+    expect(job.onClearError).not.toHaveBeenCalled()
+  })
+
+  it('Feature Primitive 回退 addGeoJson 返回 null → 中止', async () => {
+    const f = makeFacade({ addGeoJson: vi.fn(async () => null) })
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    primMock.hasPrimitiveRendering.mockReturnValue(true)
+    fqMock.resolveFeatureQueryBase.mockRejectedValue(new Error('no base'))
+    const job = makeJob(featLayer('ft', 'Q'))
+    await renderWebmap(job, f)
+    expect(job.onClearError).not.toHaveBeenCalled()
+  })
+
+  it('Feature 服务解析失败 → 报错', async () => {
+    const f = makeFacade()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    fqMock.resolveFeatureService.mockRejectedValue(new Error('net'))
+    const job = makeJob(featLayer('ft', 'Q'))
+    await renderWebmap(job, f)
+    expect(job.onError).toHaveBeenCalledWith('要素图层加载失败：Q')
+  })
+
+  it('Feature 多层 makeLayer 与收尾 keepAlive 失效 → 中止', async () => {
+    const f = makeFacade()
+    fqMock.resolveFeatureService.mockResolvedValue(makeFeatureService(['https://x/FeatureServer/ref', 'https://x/FeatureServer/evt']))
+    const job = makeJob(featLayer('ft', 'Q'), {
+      keepAlive: vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false),
+    })
+    await renderWebmap(job, f)
+    expect(job.onClearError).not.toHaveBeenCalled()
+  })
+
+  it('Feature 多层查询后 keepAlive 失效 → 中止', async () => {
+    const f = makeFacade()
+    fqMock.resolveFeatureService.mockResolvedValue(makeFeatureService(['https://x/FeatureServer/ref', 'https://x/FeatureServer/evt']))
+    const job = makeJob(featLayer('ft', 'Q'), {
+      keepAlive: vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(true).mockReturnValueOnce(true).mockReturnValueOnce(false),
+    })
+    await renderWebmap(job, f)
+    expect(f.addGeoJson).not.toHaveBeenCalled()
+    expect(job.onClearError).not.toHaveBeenCalled()
+  })
+
+  it('Feature 多层查询 capped → 提示降级', async () => {
+    const f = makeFacade()
+    fqMock.resolveFeatureService.mockResolvedValue(makeFeatureService(['https://x/FeatureServer/ref', 'https://x/FeatureServer/evt']))
+    webmapMock.fetchFeatureRenderer.mockResolvedValue({ type: 'simple', symbol: { type: 'esriSFS', color: [1, 2, 3, 255] } })
+    queryMock.queryViewportData.mockResolvedValue({ features: [{ type: 'Feature' }], capped: true, vertices: 1 })
+    const job = makeJob(featLayer('ft', 'Q'))
+    await renderWebmap(job, f)
+    expect(job.onNote).toHaveBeenCalledWith('数据量大，已按视口/预算降级显示')
+    expect(job.onClearError).toHaveBeenCalled()
+  })
+
+  it('Feature 多层空要素层跳过不渲染', async () => {
+    const f = makeFacade()
+    fqMock.resolveFeatureService.mockResolvedValue(makeFeatureService(['https://x/FeatureServer/ref', 'https://x/FeatureServer/evt']))
+    webmapMock.fetchFeatureRenderer.mockImplementation((url: string) =>
+      Promise.resolve(url.includes('ref') ? { type: 'simple', symbol: { type: 'esriSFS', color: [1, 2, 3, 255] } } : { type: 'uniqueValue', uniqueValueInfos: [] })
+    )
+    queryMock.queryViewportData.mockImplementation((base: string) =>
+      Promise.resolve({ features: base.includes('ref') ? [{ type: 'Feature' }] : [], capped: false, vertices: 0 })
+    )
+    const job = makeJob(featLayer('ft', 'Q'))
+    await renderWebmap(job, f)
+    expect(f.addGeoJson).toHaveBeenCalledTimes(1)
+    expect(job.onClearError).toHaveBeenCalled()
+  })
+
+  it('Feature 多层 addGeoJson 返回 null → 该层跳过仍完成', async () => {
+    const f = makeFacade({
+      addGeoJson: vi.fn(async (data: unknown) =>
+        (data as { features: unknown[] }).features.length > 1 ? null : { data, entities: { values: [] } }
+      ),
+    })
+    fqMock.resolveFeatureService.mockResolvedValue(makeFeatureService(['https://x/FeatureServer/ref', 'https://x/FeatureServer/evt']))
+    webmapMock.fetchFeatureRenderer.mockImplementation((url: string) =>
+      Promise.resolve(url.includes('ref') ? { type: 'simple', symbol: { type: 'esriSFS', color: [1, 2, 3, 255] } } : { type: 'uniqueValue', uniqueValueInfos: [] })
+    )
+    queryMock.queryViewportData.mockImplementation((base: string) =>
+      Promise.resolve({
+        features: Array.from({ length: base.includes('ref') ? 1 : 2 }, () => ({ type: 'Feature' })),
+        capped: false,
+        vertices: 0,
+      })
+    )
+    const job = makeJob(featLayer('ft', 'Q'))
+    await renderWebmap(job, f)
+    expect(f.addGeoJson).toHaveBeenCalledTimes(2)
+    expect(job.onClearError).toHaveBeenCalled()
+  })
+
+  it('Feature 多层参考层样式透明化填充', async () => {
+    const f = makeFacade({
+      addGeoJson: vi.fn(async (data: unknown) => ({
+        data,
+        entities: { values: [{ properties: { name: 'r' }, polygon: { material: null as unknown } }] },
+      })),
+    })
+    fqMock.resolveFeatureService.mockResolvedValue(makeFeatureService(['https://x/FeatureServer/ref', 'https://x/FeatureServer/evt']))
+    webmapMock.fetchFeatureRenderer.mockImplementation((url: string) =>
+      Promise.resolve(url.includes('ref') ? { type: 'simple', symbol: { type: 'esriSFS', color: [1, 2, 3, 255] } } : { type: 'uniqueValue', uniqueValueInfos: [] })
+    )
+    queryMock.queryViewportData.mockResolvedValue({ features: [{ type: 'Feature' }], capped: false, vertices: 1 })
+    const job = makeJob(featLayer('ft', 'Q'))
+    await renderWebmap(job, f)
+    const refDs = (await f.addGeoJson.mock.results[0].value) as { entities: { values: { polygon: { material: unknown } }[] } }
+    expect(refDs.entities.values[0].polygon.material).toEqual([0, 0, 0, 0])
+  })
+
+  it('Feature extent 非 WGS84 → 重投影到 4326 后飞行', async () => {
+    const f = makeFacade({ viewEnvelope: vi.fn(() => ({ west: 0, south: 0, east: 10, north: 10 })) })
+    fqMock.resolveFeatureService.mockResolvedValue(
+      makeFeatureService(['https://x/FeatureServer/0'], { west: 11131949, south: 1118889, east: 13358338, north: 3503549, wkid: 3857 })
+    )
+    const job = makeJob(featLayer('ft', 'Q'))
+    await renderWebmap(job, f)
+    expect(f.flyToExtent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        west: expect.closeTo(100, 0.01),
+        south: expect.closeTo(10, 0.01),
+        east: expect.closeTo(120, 0.01),
+        north: expect.closeTo(30, 0.01),
+        wkid: 4326,
+      })
+    )
+  })
+
+  it('Feature extent 重投影失败 → 保留原范围飞行', async () => {
+    const f = makeFacade({ viewEnvelope: vi.fn(() => ({ west: 0, south: 0, east: 10, north: 10 })) })
+    fqMock.resolveFeatureService.mockResolvedValue(
+      makeFeatureService(['https://x/FeatureServer/0'], { west: 100, south: 10, east: 120, north: 30, wkid: 99999 })
+    )
+    const job = makeJob(featLayer('ft', 'Q'))
+    await renderWebmap(job, f)
+    expect(f.flyToExtent).toHaveBeenCalledWith({ west: 100, south: 10, east: 120, north: 30, wkid: 99999 })
+  })
+
+  it('KML 文件过大 → 限制加载', async () => {
+    const f = makeFacade()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    safetyMock.assertUrlWithinLimit.mockRejectedValueOnce(new Error('too big'))
+    const job = makeJob(webmapWithLayer({ id: 'km', title: 'KML', url: 'https://x/data.kml', layerType: 'KML' }))
+    await renderWebmap(job, f)
+    expect(job.onError).toHaveBeenCalledWith('KML 文件过大，已限制加载')
+  })
+
+  it('KML 数据量大 → 提示降级', async () => {
+    const f = makeFacade()
+    const kmlText =
+      '<kml>' +
+      Array.from({ length: 1600 }, (_, i) => `<Placemark><name>P${i}</name><Point><coordinates>${10 + (i % 100)},20,0</coordinates></Point></Placemark>`).join('') +
+      '</kml>'
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, text: async () => kmlText })))
+    const job = makeJob(webmapWithLayer({ id: 'km', title: 'KML', url: 'https://x/data.kml', layerType: 'KML' }))
+    await renderWebmap(job, f)
+    expect(job.onNote).toHaveBeenCalledWith('KML 数据量大，已按顶点/要素预算降级显示')
+  })
+
+  it('KML addGeoJson 返回 null → 中止', async () => {
+    const f = makeFacade({ addGeoJson: vi.fn(async () => null) })
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, text: async () => '<kml><Placemark><name>P</name><Point><coordinates>10,20,0</coordinates></Point></Placemark></kml>' })))
+    const job = makeJob(webmapWithLayer({ id: 'km', title: 'KML', url: 'https://x/data.kml', layerType: 'KML' }))
+    await renderWebmap(job, f)
+    expect(job.onClearError).not.toHaveBeenCalled()
+  })
+
+  it('KML 应用样式函数到要素', async () => {
+    const f = makeFacade({
+      addGeoJson: vi.fn(async (data: unknown) => ({
+        data,
+        entities: {
+          values: [{ properties: { kmlStyle: { markerColor: [255, 0, 0, 255] } }, point: { color: null as unknown, pixelSize: null as unknown } }],
+        },
+      })),
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, text: async () => '<kml><Placemark><name>P</name><Point><coordinates>10,20,0</coordinates></Point></Placemark></kml>' })))
+    const job = makeJob(webmapWithLayer({ id: 'km', title: 'KML', url: 'https://x/data.kml', layerType: 'KML' }))
+    await renderWebmap(job, f)
+    const ds = (await f.addGeoJson.mock.results[0].value) as { entities: { values: { point: { color: unknown; pixelSize: unknown } }[] } }
+    expect(ds.entities.values[0].point.color).toEqual([255, 0, 0, 255])
+  })
+
+  it('KML 原生回退 addKmlNative 返回 null → 中止', async () => {
+    const f = makeFacade({ addKmlNative: vi.fn(async () => null) })
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, text: async () => '<kml/>' })))
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const job = makeJob(webmapWithLayer({ id: 'km', title: 'KML', url: 'https://x/data.kml', layerType: 'KML' }))
+    await renderWebmap(job, f)
+    expect(job.onClearError).not.toHaveBeenCalled()
   })
 })
