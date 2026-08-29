@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import { LAYER_KINDS } from './types'
 import type { LayerKind } from './types'
-import type { LayerAdapter, LayerInput } from './adapter'
-import { LayerLoadError } from './adapter'
-import type { LayerRuntime } from './runtime'
-import { createEmptyRuntime } from './runtime'
+import type { LayerAdapter, LayerInput } from './layerAdapter'
+import { LayerLoadError } from './layerAdapter'
+import type { LayerRuntime } from './layerRuntime'
+import { createEmptyRuntime } from './layerRuntime'
 
 /**
  * LayerAdapter 契约测试模板（W0.3 骨架）。

@@ -1,4 +1,10 @@
-import type { ViewEnvelope } from './featureQuery'
+/** 视口经纬度范围（度）。 */
+export interface ViewEnvelope {
+  west: number
+  south: number
+  east: number
+  north: number
+}
 
 /** Cesium Rectangle 的 four corners（弧度）→ 经纬度（度）。视口驱动查询用。 */
 export function rectangleToEnvelope(rect: { west: number; south: number; east: number; north: number } | undefined | null): ViewEnvelope | null {

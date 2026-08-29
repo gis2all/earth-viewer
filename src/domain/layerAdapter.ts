@@ -1,5 +1,5 @@
 import type { LayerKind, RiskLevel } from './types'
-import type { LayerRuntime } from './runtime'
+import type { LayerRuntime } from './layerRuntime'
 
 /** 图层源输入：ArcGIS 搜索项或 webmap 内层（M1 后由 repository 统一产出）。 */
 export interface LayerInput {
@@ -34,7 +34,7 @@ export class LayerLoadError extends Error {
 
 /**
  * 图层适配器契约：新增图层类型只需实现此接口并注册到 LAYER_REGISTRY（W1.2）。
- * 所有 adapter 必须通过 src/domain/adapter.contract.test.ts 的契约测试。
+ * 所有 adapter 必须通过 src/domain/layerAdapter.contract.test.ts 的契约测试。
  */
 export interface LayerAdapter {
   readonly kind: LayerKind

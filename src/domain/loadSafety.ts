@@ -1,6 +1,6 @@
-import type { WebLayer } from './facade/webmap'
-import type { RiskLevel } from '../domain/types'
-import { DEFAULT_APP_CONFIG } from '../domain/config'
+import type { WebLayer } from './types'
+import type { RiskLevel } from './types'
+import { DEFAULT_APP_CONFIG } from './config'
 
 // Unified load-safety limits: keep heavy layers from freezing the main thread.
 // W4.2：值统一来自 domain/config.ts（唯一来源）；保留大写下划线导出以兼容既有消费方。

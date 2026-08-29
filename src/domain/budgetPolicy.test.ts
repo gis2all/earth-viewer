@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { createBudgetPolicy, DEFAULT_BUDGET_POLICY } from './policy'
+import { createBudgetPolicy, DEFAULT_BUDGET_POLICY } from './budgetPolicy'
 
 // 默认值统一来自 domain/config.ts（W4.2）；loadSafety.test.ts 里另有对齐断言防漂移。
 describe('BudgetPolicy', () => {

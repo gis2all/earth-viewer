@@ -15,10 +15,10 @@ import {
   isWmtsInput,
   layerKindOf,
   createRegistry,
-} from './registry'
-import type { LayerAdapter, LayerInput } from './adapter'
-import { LayerLoadError } from './adapter'
-import { createEmptyRuntime } from './runtime'
+} from './layerRegistry'
+import type { LayerAdapter, LayerInput } from './layerAdapter'
+import { LayerLoadError } from './layerAdapter'
+import { createEmptyRuntime } from './layerRuntime'
 import type { LayerKind } from './types'
 
 // —— 迁移自 webmap.test.ts 的「图层类型判断」用例（判定逻辑已收敛到 domain）——

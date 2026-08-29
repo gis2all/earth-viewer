@@ -2,11 +2,11 @@
  * Domain 层图层注册表（W1.2）。
  * 零依赖：kind 判定是纯字符串/结构匹配，不引用 Cesium / MapLibre / globe。
  * 用途：
- * - globe/renderWebmap.ts 的渲染分支判定直接引用这里的 is*Input（W4.3 起无别名）；
+ * - globe/globeRenderer.ts 的渲染分支判定直接引用这里的 is*Input（W4.3 起无别名）；
  * - M2 起真实 LayerAdapter 通过 LAYER_REGISTRY.register() 注册（当前为后备工作项），
  *   新增图层类型只需注册 adapter + 契约测试（adapter.contract.test.ts 自动覆盖）。
  */
-import type { LayerAdapter, LayerInput } from './adapter'
+import type { LayerAdapter, LayerInput } from './layerAdapter'
 import type { LayerKind } from './types'
 
 /** 判定只依赖的结构字段；WebLayer 等任意富类型均可结构化赋值给本类型。 */

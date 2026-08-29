@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { consumeFeatureBudget, riskOfLayer, degradeReason, assertUrlWithinLimit } from './loadSafety'
 import { SAFETY } from './loadSafety'
-import { DEFAULT_BUDGET_POLICY } from '../domain/policy'
+import { DEFAULT_BUDGET_POLICY } from './budgetPolicy'
 
 describe('SAFETY 与 domain BudgetPolicy 对齐（W1.4 防漂移）', () => {
   it('默认值一致', () => {

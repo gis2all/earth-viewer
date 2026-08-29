@@ -1,5 +1,5 @@
-import type { WebLayer } from './facade/webmap'
-import { DEFAULT_APP_CONFIG } from '../domain/config'
+import type { WebLayer } from './types'
+import { DEFAULT_APP_CONFIG } from './config'
 
 export type LayerSupport = 'full' | 'partial' | 'none'
 export const MAX_BUSINESS_LAYERS = DEFAULT_APP_CONFIG.maxBusinessLayers

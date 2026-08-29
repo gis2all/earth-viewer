@@ -3,7 +3,7 @@
  * 纯 TS 类型，零依赖：LayerController 只认识这些接缝，
  * 具体 webmap 渲染由 globe/infra 实现（renderWebmap + CesiumFacade）。
  */
-import type { LayerRuntime } from './runtime'
+import type { LayerRuntime } from './layerRuntime'
 
 /** 视口驱动句柄（infra 实现）；删除图层时统一释放。 */
 export interface ViewportHandleLike {

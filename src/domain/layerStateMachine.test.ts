@@ -5,8 +5,8 @@ import {
   canTransition,
   isTerminal,
   LAYER_STATE_TRANSITIONS,
-} from './stateMachine'
-import type { LayerState } from './stateMachine'
+} from './layerStateMachine'
+import type { LayerState } from './layerStateMachine'
 
 const ALL_STATES: LayerState[] = ['pending', 'preflight', 'loading', 'ready', 'error', 'cancelled']
 

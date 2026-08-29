@@ -1,7 +1,9 @@
 /**
  * 应用级配置（W4.2 常量收敛）。
  * - 零依赖纯类型 + 默认值，是全部领域/渲染/相机/UI 常量的唯一来源；
- * - 运行时可覆盖机制见 infra/config.defaults.ts（configureApp）；
+ * - configureApp() 在运行时整体/局部覆盖（如注入 window 配置、E2E 覆盖）；
+ *   appConfig() 返回当前生效配置；resetAppConfig() 恢复默认（测试用）；
+ * - 注意：模块加载时已读取的值不会自动刷新；覆盖需在相关模块初始化前完成；
  * - 主题 token 不在此处（归 DESIGN.md）。
  */
 
@@ -57,7 +59,7 @@ export interface PanelConfig {
 
 /** 应用全部可配置常量。 */
 export interface AppConfig {
-  // ---- 预算（原 globe/loadSafety.ts SAFETY）----
+  // ---- 预算（domain/loadSafety.ts SAFETY 的唯一数据来源）----
   /** Feature / WFS：每层最大拉取/渲染要素数。 */
   maxFeatures: number
   /** 一个 webmap 内业务层合计要素预算，超出跳过后续层。 */
@@ -132,4 +134,25 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     defaultCover: 'covers/default.png',
     thumbTimeoutMs: 60000,
   },
+}
+
+let current: AppConfig = DEFAULT_APP_CONFIG
+
+export function configureApp(overrides: Partial<AppConfig>): AppConfig {
+  current = {
+    ...current,
+    ...overrides,
+    viewportFallback: overrides.viewportFallback ?? current.viewportFallback,
+    camera: { ...current.camera, ...overrides.camera },
+    panel: { ...current.panel, ...overrides.panel },
+  }
+  return current
+}
+
+export function appConfig(): AppConfig {
+  return current
+}
+
+export function resetAppConfig(): void {
+  current = DEFAULT_APP_CONFIG
 }
