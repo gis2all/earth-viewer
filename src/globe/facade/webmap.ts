@@ -68,8 +68,8 @@ export type { MapServiceInfo }
 const detectCrs = detectMapService
 
 /** 瓦片服务 → Provider：4326 用 GeographicTilingScheme，其余（3857/未知）用默认 Web Mercator；动态服务（无 tileInfo）返回 null */
-async function providerForTiledMap(url: string): Promise<Cesium.ImageryProvider | null> {
-  const crs = await detectCrs(url)
+async function providerForTiledMap(url: string, signal?: AbortSignal): Promise<Cesium.ImageryProvider | null> {
+  const crs = await detectCrs(url, signal)
   // 动态 MapServer：没有缓存瓦片，/tile/{z}/{y}/{x} 无效，不构造 provider
   if (crs && !crs.tiled) return null
   const opts: Cesium.UrlTemplateImageryProvider.ConstructorOptions = {
@@ -124,19 +124,19 @@ export function providerForWmts(layer: WebLayer): Cesium.ImageryProvider | null 
   })
 }
 
-export async function providerForWebLayer(layer: WebLayer): Promise<Cesium.ImageryProvider | null> {
+export async function providerForWebLayer(layer: WebLayer, signal?: AbortSignal): Promise<Cesium.ImageryProvider | null> {
   const t = layerKind(layer)
   const url = layer.url || ''
   // 按 URL 判断 MapServer/ImageServer（兼容 layerType 为 ArcGISTiledMapServiceLayer 等）
   if (url && /\/MapServer\/?$|\/ImageServer\/?$/i.test(url)) {
-    const crs = await detectMapService(url)
+    const crs = await detectMapService(url, signal)
     if (crs && !crs.tiled) return providerForDynamicMapServer(url)
-    return providerForTiledMap(url)
+    return providerForTiledMap(url, signal)
   }
   if (/MapServer|ImageServer/i.test(t) && url) {
-    const crs = await detectMapService(url)
+    const crs = await detectMapService(url, signal)
     if (crs && !crs.tiled) return providerForDynamicMapServer(url)
-    return providerForTiledMap(url)
+    return providerForTiledMap(url, signal)
   }
   // WMS：用 WebMapServiceImageryProvider，需图层名（webmap 里可能是 layerName 或 layers 数组）
   if (/WMSLayer|WMS/i.test(t) && url) {

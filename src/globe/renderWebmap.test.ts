@@ -178,7 +178,7 @@ describe('renderWebmap：分支渲染', () => {
     const f = makeFacade()
     const job = makeJob(webmapWithLayer({ id: 'sc', title: 'Scene', url: 'https://x/SceneServer', layerType: 'ArcGISSceneLayer' }))
     await renderWebmap(job, f)
-    expect(f.addScene).toHaveBeenCalledWith('https://x/SceneServer', job.runtime)
+    expect(f.addScene).toHaveBeenCalledWith('https://x/SceneServer', job.runtime, expect.any(Function))
     expect(job.onClearError).toHaveBeenCalled()
 
     f.addScene.mockRejectedValueOnce(new Error('boom'))
@@ -192,7 +192,7 @@ describe('renderWebmap：分支渲染', () => {
     const f = makeFacade()
     const job = makeJob(webmapWithLayer({ id: 't3d', title: 'Tiles', url: 'https://x/tileset.json', layerType: '3DTilesLayer' }))
     await renderWebmap(job, f)
-    expect(f.add3dTiles).toHaveBeenCalledWith('https://x/tileset.json', job.runtime)
+    expect(f.add3dTiles).toHaveBeenCalledWith('https://x/tileset.json', job.runtime, expect.any(Function))
   })
 
   it('WFS → OGC 协议读取 + 预算 + addGeoJson + 清错', async () => {
@@ -319,7 +319,7 @@ describe('renderWebmap：分支渲染', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const job = makeJob(webmapWithLayer({ id: 'km', title: 'KML', url: 'https://x/data.kml', layerType: 'KML' }))
     await renderWebmap(job, f)
-    expect(f.addKmlNative).toHaveBeenCalledWith('https://x/data.kml', job.runtime)
+    expect(f.addKmlNative).toHaveBeenCalledWith('https://x/data.kml', job.runtime, expect.any(Function))
     expect(job.onClearError).toHaveBeenCalled()
   })
 

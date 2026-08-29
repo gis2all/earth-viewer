@@ -110,7 +110,7 @@ export async function renderWebmap(job: LayerRenderJob, f: CesiumFacade): Promis
 
   for (const op of renderableLayersFromWebmap(wm)) {
     if (op.visibility === false) continue
-    const addedImagery = await f.addWebLayerImagery(op, job.runtime)
+    const addedImagery = await f.addWebLayerImagery(op, job.runtime, signal, keepAlive)
     if (!keepAlive()) return
     if (addedImagery) continue
 
@@ -133,7 +133,7 @@ export async function renderWebmap(job: LayerRenderJob, f: CesiumFacade): Promis
         })
         if (!keepAlive()) return
         if (res.capped) job.onNote('内嵌数据量大，已按顶点/要素预算降级')
-        const ds = await f.addGeoJson({ type: 'FeatureCollection', features: res.features }, job.runtime)
+        const ds = await f.addGeoJson({ type: 'FeatureCollection', features: res.features }, job.runtime, undefined, keepAlive)
         if (!keepAlive() || !ds) return
         job.onClearError()
       } catch (e) {
@@ -144,7 +144,7 @@ export async function renderWebmap(job: LayerRenderJob, f: CesiumFacade): Promis
       if (isSceneInput(op)) {
         // ArcGIS SceneServer / I3S 3D 场景
         try {
-          const prim = await f.addScene(op.url, job.runtime)
+          const prim = await f.addScene(op.url, job.runtime, keepAlive)
           if (!keepAlive() || !prim) return
           job.onClearError()
         } catch (e) {
@@ -154,7 +154,7 @@ export async function renderWebmap(job: LayerRenderJob, f: CesiumFacade): Promis
       } else if (is3dTilesInput(op)) {
         // OGC 3D Tiles
         try {
-          const tileset = await f.add3dTiles(op.url, job.runtime)
+          const tileset = await f.add3dTiles(op.url, job.runtime, keepAlive)
           if (!keepAlive() || !tileset) return
           job.onClearError()
         } catch (e) {
@@ -178,7 +178,7 @@ export async function renderWebmap(job: LayerRenderJob, f: CesiumFacade): Promis
             return
           }
           if (b.capped) job.onNote('数据量大，仅显示部分要素')
-          const ds = await f.addGeoJson(b.data, job.runtime)
+          const ds = await f.addGeoJson(b.data, job.runtime, undefined, keepAlive)
           if (!keepAlive() || !ds) return
           job.onClearError()
         } catch (e) {
@@ -202,7 +202,7 @@ export async function renderWebmap(job: LayerRenderJob, f: CesiumFacade): Promis
             return
           }
           if (b.capped) job.onNote('数据量大，仅显示部分要素')
-          const ds = await f.addGeoJson(b.data, job.runtime)
+          const ds = await f.addGeoJson(b.data, job.runtime, undefined, keepAlive)
           if (!keepAlive() || !ds) return
           job.onClearError()
         } catch (e) {
@@ -226,7 +226,7 @@ export async function renderWebmap(job: LayerRenderJob, f: CesiumFacade): Promis
           if (!keepAlive()) return
           const res = await runViewportProcess({ geojson: json })
           if (res.capped) job.onNote('文件数据量大，已按顶点预算降级显示')
-          const ds = await f.addGeoJson({ type: 'FeatureCollection', features: res.features }, job.runtime)
+          const ds = await f.addGeoJson({ type: 'FeatureCollection', features: res.features }, job.runtime, undefined, keepAlive)
           if (!keepAlive() || !ds) return
           job.onClearError()
         } catch (e) {
@@ -276,7 +276,7 @@ async function renderFeatureLayer(
           return
         } catch (e) {
           console.error('[layer] Primitive 渲染失败，回退 GeoJSON', op.url, e)
-          const ds = await f.addGeoJson({ type: 'FeatureCollection', features: [] }, job.runtime)
+          const ds = await f.addGeoJson({ type: 'FeatureCollection', features: [] }, job.runtime, undefined, keepAlive)
           if (!keepAlive() || !ds) return
           job.onClearError()
           return
@@ -289,7 +289,8 @@ async function renderFeatureLayer(
       const ds = await f.addGeoJson(
         { type: 'FeatureCollection', features: res.features },
         job.runtime,
-        style ? { markerColor: style.markerColor, markerSize: style.markerSize, stroke: style.stroke, strokeWidth: style.strokeWidth, fill: style.fill } : undefined
+        style ? { markerColor: style.markerColor, markerSize: style.markerSize, stroke: style.stroke, strokeWidth: style.strokeWidth, fill: style.fill } : undefined,
+        keepAlive
       )
       if (!keepAlive() || !ds) return
       applyFeatureStyler(ds as never, styleFn)
@@ -313,7 +314,8 @@ async function renderFeatureLayer(
       const ds = await f.addGeoJson(
         { type: 'FeatureCollection', features: res.features },
         job.runtime,
-        style ? { markerColor: style.markerColor, markerSize: style.markerSize, stroke: style.stroke, strokeWidth: style.strokeWidth, fill: style.fill } : undefined
+        style ? { markerColor: style.markerColor, markerSize: style.markerSize, stroke: style.stroke, strokeWidth: style.strokeWidth, fill: style.fill } : undefined,
+        keepAlive
       )
       if (!keepAlive() || !ds) return null
       applyFeatureStyler(ds as never, styleFn)
@@ -356,14 +358,14 @@ async function renderKmlLayer(
       maxFeatures: SAFETY.MAX_RENDER_FEATURES,
     })
     if (res.capped) job.onNote('KML 数据量大，已按顶点/要素预算降级显示')
-    const ds = await f.addGeoJson({ type: 'FeatureCollection', features: res.features }, job.runtime)
+    const ds = await f.addGeoJson({ type: 'FeatureCollection', features: res.features }, job.runtime, undefined, keepAlive)
     if (!keepAlive() || !ds) return
     applyFeatureStyler(ds as never, kmlStyleFn)
     job.onClearError()
   } catch (e) {
     console.warn('[layer] KML 转 GeoJSON 失败，回退原生', kmlUrl, e)
     try {
-      const ds = await f.addKmlNative(kmlUrl, job.runtime)
+      const ds = await f.addKmlNative(kmlUrl, job.runtime, keepAlive)
       if (!keepAlive() || !ds) return
       job.onClearError()
     } catch (e2) {
