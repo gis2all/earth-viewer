@@ -40,7 +40,14 @@ const cesiumMock = vi.hoisted(() => {
   }
 
   function makeViewer() {
-    const canvas = { addEventListener: vi.fn(), removeEventListener: vi.fn() }
+    const canvas = {
+      width: 800,
+      height: 600,
+      clientWidth: 800,
+      clientHeight: 600,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }
     const globe = {
       baseColor: undefined,
       maximumScreenSpaceError: 0,
@@ -211,9 +218,13 @@ vi.mock('./arcgisVectorTileImageryProvider', () => {
     readyPromise: Promise<void>
     destroy = vi.fn()
     constructor(public opts: Record<string, unknown>) {
+      // failNext 一次性消费：只让下一次构造的实例失败，之后恢复成功，
+      // 用于验证“旧实例失败但已被重建取代”的静默路径。
+      const shouldFail = opts.styleUrl === 'https://fail' || maplibreMock.failNext
+      maplibreMock.failNext = false
       this.readyPromise = new Promise<void>((resolve, reject) => {
         queueMicrotask(() => {
-          if (opts.styleUrl === 'https://fail' || maplibreMock.failNext) reject(new Error('style fail'))
+          if (shouldFail) reject(new Error('style fail'))
           else resolve()
         })
       })
@@ -792,6 +803,122 @@ describe('CesiumFacade（W3.4）', () => {
       expect(await facade.add3dTiles('u', freshRuntime())).toBeNull()
       expect(() => facade.addBaseLayers(freshRuntime())).not.toThrow()
       expect(() => facade.addVectorTile({} as never, undefined, freshRuntime(), () => true, vi.fn(), vi.fn())).not.toThrow()
+      expect(() => facade.addDataSource({} as never, freshRuntime())).not.toThrow()
+      expect(() => facade.removeRuntime(freshRuntime())).not.toThrow()
+    })
+
+    it('addBaseLayers 无 GPU 管理器时跳过矢量标注', () => {
+      const { facade } = makeFacade()
+      ;(facade as { _gpu: unknown })._gpu = null
+      facade.addBaseLayers(freshRuntime())
+      expect(maplibreMock.instances.length).toBe(0)
+    })
+
+    it('addVectorTile 无 GPU 管理器时直接返回，不创建 provider', () => {
+      const { facade } = makeFacade()
+      ;(facade as { _gpu: unknown })._gpu = null
+      facade.addVectorTile({ styleUrl: 'https://style' } as never, undefined, freshRuntime(), () => true, vi.fn(), vi.fn())
+      expect(maplibreMock.instances.length).toBe(0)
+    })
+
+    it('标注重建后旧实例 ready 视为过期：销毁旧 provider，只挂载新实例', async () => {
+      const { facade, v } = makeFacade()
+      const runtime = freshRuntime()
+      facade.addBaseLayers(runtime)
+      const first = maplibreMock.instances[0]
+      ;(facade as { _vectorRebuilds: Map<string, () => void> })._vectorRebuilds.get('labels')!()
+      await flush()
+      expect(first.destroy).toHaveBeenCalled()
+      expect(v.imageryLayers.list.length).toBe(2) // 底图 + 新标注
+      expect(runtime.imagery.length).toBe(2)
+    })
+
+    it('标注样式失败但已被重建取代：静默销毁，不报错不刷屏', async () => {
+      const { facade, v } = makeFacade()
+      const runtime = freshRuntime()
+      const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      maplibreMock.failNext = true
+      facade.addBaseLayers(runtime)
+      const first = maplibreMock.instances[0]
+      ;(facade as { _vectorRebuilds: Map<string, () => void> })._vectorRebuilds.get('labels')!()
+      await flush()
+      expect(first.destroy).toHaveBeenCalled()
+      expect(console.error).not.toHaveBeenCalled()
+      expect(v.imageryLayers.list.length).toBe(2) // 新标注正常挂载
+      spy.mockRestore()
+    })
+
+    it('业务矢量瓦片重建后旧实例失败：静默销毁，不回调 onError', async () => {
+      const { facade, v } = makeFacade()
+      const runtime = freshRuntime()
+      const onError = vi.fn()
+      const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      maplibreMock.failNext = true
+      facade.addVectorTile({ styleUrl: 'https://style' } as never, undefined, runtime, () => true, onError, vi.fn())
+      const first = maplibreMock.instances[0]
+      const rebuilds = (facade as { _vectorRebuilds: Map<string, () => void> })._vectorRebuilds
+      const key = [...rebuilds.keys()].find((k) => k.startsWith('vt:'))!
+      rebuilds.get(key)!()
+      await flush()
+      expect(first.destroy).toHaveBeenCalled()
+      expect(onError).not.toHaveBeenCalled()
+      expect(console.error).not.toHaveBeenCalled()
+      expect(v.imageryLayers.list.length).toBe(1) // 新实例挂载成功
+      spy.mockRestore()
+    })
+  })
+
+  describe('GPU 档位 / 相机跟踪', () => {
+    it('GPU 上下文丢失多次后降档：调整 resolutionScale 并重建矢量 provider', async () => {
+      const { facade, v } = makeFacade()
+      const runtime = freshRuntime()
+      facade.addBaseLayers(runtime)
+      await flush()
+      expect(v.resolutionScale).toBe(1)
+      const before = maplibreMock.instances.length
+      const gpu = (facade as { _gpu: { reportContextLost(): unknown; tierName(): string } })._gpu
+      gpu.reportContextLost()
+      gpu.reportContextLost()
+      gpu.reportContextLost()
+      await flush()
+      expect(gpu.tierName()).toBe('critical')
+      expect(v.resolutionScale).toBe(0.5)
+      expect(maplibreMock.instances.length).toBeGreaterThan(before)
+    })
+
+    it('_applyTier 重入或被销毁 viewer 时直接跳过', () => {
+      const { facade } = makeFacade()
+      ;(facade as { _applyingTier: boolean })._applyingTier = true
+      expect(() =>
+        (facade as { _applyTier(t: unknown): void })._applyTier({ resolutionScale: 0.5 })
+      ).not.toThrow()
+
+      const { facade: f2, v: v2 } = makeFacade()
+      v2.isDestroyed.mockReturnValue(true)
+      expect(() =>
+        (f2 as { _applyTier(t: unknown): void })._applyTier({ resolutionScale: 0.5 })
+      ).not.toThrow()
+      // 销毁的 viewer 跳过应用档位：保持创建时 high 档的 1，而不是传入的 0.5
+      expect(v2.resolutionScale).toBe(1)
+    })
+
+    it('相机跟踪懒注册：moveStart/moveEnd 驱动 _cameraMoving 与补渲染，不重复注册', () => {
+      const { facade, v } = makeFacade()
+      const cam = v.scene.camera
+      cam.moveStart = { addEventListener: vi.fn(), removeEventListener: vi.fn() }
+      facade.addBaseLayers(freshRuntime())
+      const startCb = cam.moveStart.addEventListener.mock.calls[0][0]
+      const endCb = cam.moveEnd.addEventListener.mock.calls[0][0]
+      expect((facade as { _cameraTracked: boolean })._cameraTracked).toBe(true)
+      startCb()
+      expect((facade as { _cameraMoving: boolean })._cameraMoving).toBe(true)
+      const rendersBefore = v.scene.requestRender.mock.calls.length
+      endCb()
+      expect((facade as { _cameraMoving: boolean })._cameraMoving).toBe(false)
+      expect(v.scene.requestRender.mock.calls.length).toBe(rendersBefore + 1)
+
+      facade.addVectorTile({ styleUrl: 'https://x' } as never, undefined, freshRuntime(), () => true, vi.fn(), vi.fn())
+      expect(cam.moveStart.addEventListener).toHaveBeenCalledTimes(1)
     })
   })
 
@@ -838,11 +965,78 @@ describe('CesiumFacade（W3.4）', () => {
       expect(providerDestroy).toHaveBeenCalledTimes(1)
       expect(() => facade.removeRuntime(runtime)).not.toThrow()
     })
+
+    it('_removeVectorImagery 只移除匹配 provider 的挂载图层', () => {
+      const { facade, v } = makeFacade()
+      const provider = { marker: 'p' }
+      const layer = { marker: 'il' }
+      const runtime = { imagery: [{ id: '1', layer, provider }] } as unknown as LayerRuntime
+      ;(facade as { _removeVectorImagery(r: LayerRuntime, p: unknown): void })._removeVectorImagery(runtime, provider)
+      expect(v.imageryLayers.remove).toHaveBeenCalledWith(layer, true)
+      expect(runtime.imagery.length).toBe(0)
+
+      const p2 = { marker: 'p2' }
+      const rt2 = { imagery: [{ id: '2', provider: p2 }] } as unknown as LayerRuntime
+      ;(facade as { _removeVectorImagery(r: LayerRuntime, p: unknown): void })._removeVectorImagery(rt2, p2)
+      expect(v.imageryLayers.remove).toHaveBeenCalledTimes(1)
+      expect(rt2.imagery.length).toBe(0)
+
+      const rt3 = { imagery: [{ id: '3', provider: { marker: 'other' } }] } as unknown as LayerRuntime
+      ;(facade as { _removeVectorImagery(r: LayerRuntime, p: unknown): void })._removeVectorImagery(rt3, { marker: 'none' })
+      expect(rt3.imagery.length).toBe(1)
+    })
+
+    it('addScene / add3dTiles 加载返回空时返回 null 不挂载', async () => {
+      const { facade, v } = makeFacade()
+      const runtime = freshRuntime()
+      vi.mocked(loadI3S).mockResolvedValueOnce(null as never)
+      vi.mocked(load3DTiles).mockResolvedValueOnce(null as never)
+      expect(await facade.addScene('https://i3s', runtime)).toBeNull()
+      expect(await facade.add3dTiles('https://t', runtime)).toBeNull()
+      expect(v.scene.primitives.add).not.toHaveBeenCalled()
+      expect(runtime.primitives.length).toBe(0)
+    })
+
+    it('destroy 幂等并清理已注册的矢量 provider', async () => {
+      const { facade } = makeFacade()
+      const runtime = freshRuntime()
+      facade.addBaseLayers(runtime)
+      facade.addVectorTile({ styleUrl: 'https://style' } as never, undefined, runtime, () => true, vi.fn(), vi.fn())
+      await flush()
+      const providers = [...maplibreMock.instances]
+      expect(providers.length).toBeGreaterThanOrEqual(2)
+      facade.destroy()
+      for (const p of providers) expect(p.destroy).toHaveBeenCalled()
+      expect(facade.viewer).toBeNull()
+      expect(() => facade.destroy()).not.toThrow()
+    })
   })
 
   describe('工具函数', () => {
     it('isWebglAvailable 在 jsdom 下返回 true', () => {
       expect(isWebglAvailable()).toBe(true)
+    })
+
+    it('非 jsdom 且 canvas 无 getContext → false', () => {
+      vi.spyOn(navigator as unknown as { userAgent: string }, 'userAgent', 'get').mockReturnValue('Mozilla/5.0')
+      const origCreate = document.createElement.bind(document)
+      vi.spyOn(document, 'createElement').mockImplementation(((tag: string) =>
+        tag === 'canvas' ? ({} as HTMLCanvasElement) : origCreate(tag)) as typeof document.createElement)
+      expect(isWebglAvailable()).toBe(false)
+    })
+
+    it('非 jsdom 且 webgl2 可用 → true', () => {
+      vi.spyOn(navigator as unknown as { userAgent: string }, 'userAgent', 'get').mockReturnValue('Mozilla/5.0')
+      vi.spyOn(document, 'createElement').mockImplementation((() =>
+        ({ getContext: vi.fn(() => ({ gl: 'webgl2' })) }) as unknown as HTMLCanvasElement) as typeof document.createElement)
+      expect(isWebglAvailable()).toBe(true)
+    })
+
+    it('非 jsdom 且 getContext 抛错 → false', () => {
+      vi.spyOn(navigator as unknown as { userAgent: string }, 'userAgent', 'get').mockReturnValue('Mozilla/5.0')
+      vi.spyOn(document, 'createElement').mockImplementation((() =>
+        ({ getContext: () => { throw new Error('no webgl') } }) as unknown as HTMLCanvasElement) as typeof document.createElement)
+      expect(isWebglAvailable()).toBe(false)
     })
   })
 })
