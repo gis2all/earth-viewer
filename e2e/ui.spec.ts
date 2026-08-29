@@ -124,3 +124,92 @@ test('取消进行中的搜索', async ({ page }) => {
   await page.locator('.search-cancel').evaluate((el) => (el as HTMLElement).click())
   await expect(page.locator('.search-cancel')).toHaveCount(0)
 })
+
+test('detail 链接：跳转 ArcGIS item 详情页', async ({ page }) => {
+  const card = page.locator('.gallery-card', { hasText: 'Test Imagery' })
+  const detail = card.locator('.gc-detail')
+  await expect(detail).toHaveAttribute('href', 'https://www.arcgis.com/home/item.html?id=wm1')
+  await expect(detail).toHaveAttribute('target', '_blank')
+  await expect(detail).toHaveAttribute('rel', 'noreferrer')
+  await expect(detail).toHaveAttribute('aria-label', '查看 Test Imagery 详情')
+})
+
+test('沉浸模式：隐藏面板，按钮与 Esc 均可退出', async ({ page }) => {
+  await page.click('button[title="进入沉浸模式"]')
+  await expect(page.locator('.app')).toHaveClass(/immersive/)
+  await expect(page.locator('.app-header')).toBeHidden()
+  await expect(page.locator('.panel').first()).toBeHidden()
+  await expect(page.locator('button[title="退出沉浸模式"]')).toBeVisible()
+  // 按钮退出
+  await page.click('button[title="退出沉浸模式"]')
+  await expect(page.locator('.app')).not.toHaveClass(/immersive/)
+  // 再次进入，Esc 退出
+  await page.click('button[title="进入沉浸模式"]')
+  await expect(page.locator('.app')).toHaveClass(/immersive/)
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.app')).not.toHaveClass(/immersive/)
+})
+
+test('顶栏 GitHub 链接指向仓库', async ({ page }) => {
+  const gh = page.locator('a[title="GitHub"]')
+  await expect(gh).toHaveAttribute('href', 'https://github.com/gis2all/earth-viewer')
+  await expect(gh).toHaveAttribute('target', '_blank')
+  await expect(gh).toHaveAttribute('rel', 'noreferrer')
+})
+
+test('封面加载：spinner 显示到图片就绪后隐藏，无缩略图用默认封面', async ({ page }) => {
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64'
+  )
+  // 延迟默认封面响应，确保能观察到加载态
+  await page.route('**/covers/default.png', async (route) => {
+    await new Promise((r) => setTimeout(r, 1000))
+    await route.fulfill({ contentType: 'image/png', body: png })
+  })
+  await page.reload()
+  await page.waitForSelector('.gallery-card', { timeout: 30000 })
+  const card = page.locator('.gallery-card').first()
+  await expect(card.locator('.gc-thumb')).toHaveAttribute('src', /covers\/default\.png/)
+  await expect(card.locator('.thumb-spinner')).toBeVisible()
+  await expect(card.locator('.thumb-spinner')).toHaveAttribute('hidden', '', { timeout: 15000 })
+})
+
+test('添加后 gc-add 变为 is-added 并使用主题紫色', async ({ page }) => {
+  const add = page.locator('.gallery-card', { hasText: 'Test Imagery' }).locator('.gc-add')
+  await add.click()
+  await page.waitForSelector('.added-card', { timeout: 30000 })
+  await expect(add).toHaveClass(/is-added/)
+  await expect(add).toBeDisabled()
+  await expect(add).toHaveAttribute('aria-label', '已添加 Test Imagery')
+  // 深色主题下 --added=#a59bf2
+  await expect(add).toHaveCSS('color', 'rgb(165, 155, 242)')
+})
+
+test('浅色主题：detail 与已添加颜色随主题切换', async ({ page }) => {
+  const card = page.locator('.gallery-card', { hasText: 'Test Imagery' })
+  const detail = card.locator('.gc-detail')
+  // 深色 --accent=#6e79d6
+  await expect(detail).toHaveCSS('color', 'rgb(110, 121, 214)')
+  await page.click('button[title="切换主题"]')
+  // 浅色 --accent=#4e59c8
+  await expect(detail).toHaveCSS('color', 'rgb(78, 89, 200)')
+  const add = card.locator('.gc-add')
+  await add.click()
+  await page.waitForSelector('.added-card', { timeout: 30000 })
+  // 浅色 --added=#6557c7
+  await expect(add).toHaveCSS('color', 'rgb(101, 87, 199)')
+  await page.click('button[title="切换主题"]')
+})
+
+test('面板宽度随视口按 clamp 比例缩放', async ({ page }) => {
+  await page.setViewportSize({ width: 2000, height: 900 })
+  await page.reload()
+  await page.waitForSelector('.gallery-card', { timeout: 30000 })
+  // 左面板 clamp(320px,20vw,423px)：2000*20%=400
+  const leftW = await page.locator('.panel').first().evaluate((el) => el.getBoundingClientRect().width)
+  // 右面板 clamp(240px,14vw,304px)：2000*14%=280
+  const rightW = await page.locator('.panel-right').evaluate((el) => el.getBoundingClientRect().width)
+  expect(leftW).toBeCloseTo(400, 0)
+  expect(rightW).toBeCloseTo(280, 0)
+})
