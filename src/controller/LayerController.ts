@@ -146,10 +146,12 @@ export class LayerController {
       hasFlew: () => entry.flew,
       onNote: (msg) => this.deps.setNote(msg),
       onError: (msg) => {
+        if (!this.entries.has(entry.item.id)) return
         this.errors.set(entry.item.id, msg)
         this.deps.setError(entry.item.id, msg)
       },
       onClearError: () => {
+        if (!this.entries.has(entry.item.id)) return
         this.errors.delete(entry.item.id)
         this.deps.clearError(entry.item.id)
       },
@@ -181,6 +183,10 @@ export class LayerController {
     this.scheduler.cancel(id)
     entry.abort.abort()
     if (!isTerminal(entry.state)) this.transition(entry, 'cancelled')
+    // 清理错误状态：异步任务可能在 abort 后仍调用 onError（已由 entries.has 守卫拦截），
+    // 这里兜底删除残留，避免 errors map 泄漏与 store 中孤儿错误
+    this.errors.delete(id)
+    this.deps.clearError(id)
     entry.viewport?.unsubscribeMoveEnd()
     entry.viewport?.controller.dispose()
     this.deps.removeRuntime(entry.runtime)

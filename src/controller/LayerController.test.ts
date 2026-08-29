@@ -147,6 +147,33 @@ describe('LayerController：差分同步与竞态', () => {
     expect(ctrl.has('a')).toBe(false)
   })
 
+  it('移除后异步 onError/onClearError 不再写 store，remove 兜底清理残留错误', async () => {
+    const { ctrl, render, setError, clearError } = setup()
+    const d = deferred()
+    render.mockReturnValue(d.promise)
+
+    ctrl.setItems([makeItem('a')])
+    await flush()
+    const job = render.mock.calls[0][0] as LayerRenderJob
+
+    // 存活期间正常写入错误
+    job.onError('服务 500')
+    expect(setError).toHaveBeenCalledWith('a', '服务 500')
+
+    ctrl.setItems([])
+    // remove 兜底清理：既有错误从 store 移除
+    expect(clearError).toHaveBeenCalledWith('a')
+
+    // 移除后异步回调必须被守卫拦截，不再产生孤儿状态
+    job.onError('移除后迟到的错误')
+    job.onClearError()
+    expect(setError).toHaveBeenCalledTimes(1)
+    expect(clearError).toHaveBeenCalledTimes(1)
+
+    d.resolve()
+    await flush()
+  })
+
   it('队列中尚未开始的条目被移除后不再渲染', async () => {
     const { ctrl, render } = setup()
     const d1 = deferred()
