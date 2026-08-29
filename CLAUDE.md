@@ -166,7 +166,7 @@ earth-viz-hub/
   e2e/                  # Playwright：app / ui / integration（integration 走真实 ArcGIS）
   public/
     logo.svg / screenshot.jpg
-    covers/default.png / imagery.png / night.png / terrain.png   # 封面（default 为兜底封面，其余按需引用）
+    covers/default.png              # 唯一封面资源（default 兜底封面）
     favicon-dark.svg / favicon-light.svg / favicon-16.png / favicon-32.png
     _headers            # ★CSP/安全头/缓存唯一来源（Pages 生效，见 §13）
     _redirects          # SPA 回退 /* /index.html 200
