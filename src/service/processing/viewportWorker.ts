@@ -1,4 +1,4 @@
-import { processViewportData, type ViewportProcessInput, type ViewportProcessResult } from './viewportProcess'
+import { processViewportData, type ViewportProcessInput, type ViewportProcessResult } from './viewportPipeline'
 
 /**
  * 在 Web Worker 中运行视口数据处理管线；jsdom/无 Worker 环境回退到同步（便于测试）。

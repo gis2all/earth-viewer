@@ -2,7 +2,7 @@ import type { FeatureQueryOptions } from './featureQuery'
 import type { ViewEnvelope } from '../../domain/geometry/geometry'
 import { buildFeatureQueryUrl, parseFeatureCollection, resolveFeatureQueryBase } from './featureQuery'
 import { runViewportProcess } from '../../service/processing/viewportWorker'
-import type { ViewportProcessResult } from '../../service/processing/viewportProcess'
+import type { ViewportProcessResult } from '../../service/processing/viewportPipeline'
 import { fetchJson } from '../../service/http'
 
 export interface ViewportQueryOptions extends FeatureQueryOptions {

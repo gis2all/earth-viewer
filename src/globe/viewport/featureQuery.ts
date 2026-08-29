@@ -5,7 +5,7 @@ import {
   parseFeatureCollection,
   countVertices,
   countFeatureCollectionVertices,
-} from '../../service/processing/featureParse'
+} from '../../service/processing/viewportPipeline'
 
 export { parseFeatureCollection, countVertices, countFeatureCollectionVertices }
 
