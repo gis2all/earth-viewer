@@ -16,8 +16,6 @@ export const SEARCH_ITEM_TYPES = [
   'CSV',
 ] as const
 
-export type SearchItemType = (typeof SEARCH_ITEM_TYPES)[number]
-
 // Web Map / Web Scene are containers: they hold multiple layers and need /items/<id>/data
 export function isWebMapContainer(type: string): boolean {
   return type === 'Web Map' || type === 'Web Scene'
