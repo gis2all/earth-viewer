@@ -4,7 +4,9 @@ import {
   unregisterViewer,
   resetView,
   orientView,
+  flyToHome,
   setUserHomeResolver,
+  setInitialHeightForTest,
 } from './cameraActions'
 
 vi.mock('cesium', () => ({
@@ -90,5 +92,58 @@ describe('cameraActions', () => {
     await resetView()
     orientView()
     expect(v.camera.flyTo).not.toHaveBeenCalled()
+  })
+
+  it('flyToHome 显式传 viewer 但未注入 resolver 时直接返回', async () => {
+    setUserHomeResolver(null)
+    const v = makeViewer()
+    await flyToHome(v as never)
+    expect(v.camera.flyTo).not.toHaveBeenCalled()
+  })
+
+  it('flyToHome 的 resolver 失败（reject）时直接返回', async () => {
+    setUserHomeResolver(() => Promise.reject(new Error('定位失败')))
+    const v = makeViewer()
+    registerViewer(v as never)
+    await expect(flyToHome()).resolves.toBeUndefined()
+    expect(v.camera.flyTo).not.toHaveBeenCalled()
+  })
+
+  it('flyToHome 未注册 viewer 但显式传参时直接返回', async () => {
+    const v = makeViewer()
+    await flyToHome(v as never)
+    expect(v.camera.flyTo).not.toHaveBeenCalled()
+  })
+
+  it('flyToHome 目标 viewer 已销毁时直接返回', async () => {
+    const v = makeViewer()
+    registerViewer(v as never)
+    ;(v as { isDestroyed: () => boolean }).isDestroyed = () => true
+    await flyToHome()
+    expect(v.camera.flyTo).not.toHaveBeenCalled()
+  })
+
+  it('setInitialHeightForTest 修改后的高度被 resetView 使用', async () => {
+    setInitialHeightForTest(999)
+    const v = makeViewer()
+    registerViewer(v as never)
+    await resetView()
+    const opts = v.camera.flyTo.mock.calls[0][0]
+    expect(opts.destination).toEqual({ tag: 'fromDegrees', args: [121, 31, 999] })
+  })
+
+  it('registerViewer 的 positionCartographic getter 抛错时被吞掉', async () => {
+    const v = makeViewer()
+    Object.defineProperty(v.camera, 'positionCartographic', {
+      get() {
+        throw new Error('camera 已销毁')
+      },
+    })
+    expect(() => registerViewer(v as never)).not.toThrow()
+    // 注册仍生效：resetView 会飞到用户位置
+    setInitialHeightForTest(777)
+    const fly = v.camera.flyTo
+    await resetView()
+    expect(fly.mock.calls[0][0].destination).toEqual({ tag: 'fromDegrees', args: [121, 31, 777] })
   })
 })

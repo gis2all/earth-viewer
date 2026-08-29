@@ -7,7 +7,7 @@ vi.mock('../../infra/primitive', () => ({
   hasPrimitiveRendering: vi.fn(() => true),
 }))
 import { queryViewportData } from './viewportQuery'
-import { buildLayerPrimitive } from '../../infra/primitive'
+import { buildLayerPrimitive, hasPrimitiveRendering } from '../../infra/primitive'
 
 describe('createViewportController', () => {
   beforeEach(() => {
@@ -34,6 +34,44 @@ describe('createViewportController', () => {
     expect(queryViewportData).toHaveBeenCalledTimes(1)
     expect(prims.add).toHaveBeenCalledTimes(1)
     ctl.dispose()
+  })
+
+  it('hasPrimitiveRendering=false 时 update 直接返回，不查询', async () => {
+    vi.mocked(hasPrimitiveRendering).mockReturnValueOnce(false)
+    const prims = { add: vi.fn() }
+    const ctl = createViewportController({}, prims, { serviceUrl: 'https://x/FeatureServer' })
+    await ctl.update({ west: 1, south: 2, east: 3, north: 4 })
+    expect(queryViewportData).not.toHaveBeenCalled()
+    expect(prims.add).not.toHaveBeenCalled()
+  })
+
+  it('capped=true 时通知 onNote', async () => {
+    const onNote = vi.fn()
+    vi.mocked(queryViewportData).mockResolvedValueOnce({ features: [] as never, capped: true, vertices: 0 })
+    const prims = { add: vi.fn() }
+    const ctl = createViewportController({}, prims, { serviceUrl: 'https://x/FeatureServer', onNote })
+    await ctl.update({ west: 1, south: 2, east: 3, north: 4 })
+    expect(onNote).toHaveBeenCalledWith('数据量大，已按视口/顶点预算降级显示')
+  })
+
+  it('query 抛错时静默跳过，不加入 primitives', async () => {
+    vi.mocked(queryViewportData).mockRejectedValueOnce(new Error('服务不可达'))
+    const prims = { add: vi.fn() }
+    const ctl = createViewportController({}, prims, { serviceUrl: 'https://x/FeatureServer' })
+    await expect(ctl.update({ west: 1, south: 2, east: 3, north: 4 })).resolves.toBeUndefined()
+    expect(prims.add).not.toHaveBeenCalled()
+  })
+
+  it('切换视口时释放上一个 primitive 集合', async () => {
+    vi.mocked(queryViewportData).mockResolvedValue({ features: [] as never, capped: false, vertices: 0 })
+    const prims = { add: vi.fn() }
+    const ctl = createViewportController({}, prims, { serviceUrl: 'https://x/FeatureServer' })
+    await ctl.update({ west: 1, south: 2, east: 3, north: 4 })
+    const firstDispose = vi.mocked(buildLayerPrimitive).mock.results[0].value.dispose
+    await ctl.update({ west: 50, south: 50, east: 60, north: 60 }) // 不同量化 key
+    expect(queryViewportData).toHaveBeenCalledTimes(2)
+    expect(firstDispose).toHaveBeenCalledTimes(1)
+    expect(prims.add).toHaveBeenCalledTimes(2)
   })
 })
 
@@ -82,5 +120,41 @@ describe('createViewportDriver', () => {
       expect.anything()
     )
     handle.unsubscribeMoveEnd()
+  })
+
+  it('moveEnd 防抖 250ms 后按新视口再次更新（合并连续触发）', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(queryViewportData).mockResolvedValue({ features: [] as never, capped: false, vertices: 0 })
+      let moveCb: (() => void) | undefined
+      const onMoveEnd = vi.fn((cb: () => void) => {
+        moveCb = cb
+        return () => {}
+      })
+      const requestFrame = vi.fn()
+      const viewEnvelope = vi.fn(() => ({ west: 1, south: 2, east: 3, north: 4 }))
+      const surface = {
+        scene: {},
+        prims: { add: vi.fn() },
+        onMoveEnd,
+        viewEnvelope,
+        requestFrame,
+      }
+      const handle = createViewportDriver(surface, { serviceUrl: 'https://x/FeatureServer' })
+      await vi.advanceTimersByTimeAsync(0) // 初始更新完成
+      expect(queryViewportData).toHaveBeenCalledTimes(1)
+
+      viewEnvelope.mockReturnValue({ west: 50, south: 50, east: 60, north: 60 })
+      moveCb?.()
+      moveCb?.()
+      await vi.advanceTimersByTimeAsync(100)
+      expect(queryViewportData).toHaveBeenCalledTimes(1) // 未到 250ms
+      await vi.advanceTimersByTimeAsync(160) // 连续触发只合并为一次
+      expect(queryViewportData).toHaveBeenCalledTimes(2)
+      expect(requestFrame).toHaveBeenCalledTimes(2)
+      handle.unsubscribeMoveEnd()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
