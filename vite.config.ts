@@ -34,4 +34,6 @@ export default defineConfig({
   plugins: [arcgisOnlineProxy(), react(), cesium()],
   // maplibre-gl 的 module worker（?worker&url）需以 ESM 输出，否则 new Worker(url, { type: 'module' }) 失败
   worker: { format: 'es' },
+  // 端口固定 5173：被占用直接启动失败，绝不自动漂移到 5174/5175（Playwright E2E 依赖此端口）
+  server: { port: 5173, strictPort: true },
 })
