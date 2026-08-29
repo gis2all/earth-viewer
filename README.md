@@ -65,24 +65,38 @@ GitHub Actions 在 `push`（main）与 `pull_request` 时执行：`npm audit --o
 
 ## 架构
 
-```text
-LayerPanel（画廊）
-  -> ArcGIS Online 搜索（/sharing/rest/search）
-  -> 预取 webmap JSON -> assessWebmap() 能力评估（过滤不可渲染项）
-  -> 点卡片 addLayer 写入 zustand store（localStorage 持久化）
-GlobeViewer（Cesium）
-  -> 监听 added -> renderableLayersFromWebmap() 得到应渲染层
-  -> 投影探测（detectCrs）-> 构建 ImageryProvider / GeoJSON DataSource / KML
-  -> 增量叠加到地球（layerMapRef 管理生命周期，取消 / 竞态防护）
+```mermaid
+flowchart TD
+    App[app 表现层<br/>React 组件 / store 订阅]
+    Ctrl[controller 控制器<br/>DI 依赖注入]
+    Svc[service 数据与调度<br/>repository / loader / scheduler / http]
+    Dom[domain 纯 TS 零依赖<br/>类型 / 契约 / 配置 / 状态机]
+    Globe[globe 渲染适配<br/>facade + viewport]
+    Infra[infra Cesium 深度封装<br/>CesiumFacade / GpuMemoryManager]
+
+    App --> Ctrl
+    App --> Svc
+    App --> Dom
+    Ctrl --> Svc
+    Ctrl --> Dom
+    Ctrl --> Globe
+    Svc --> Dom
+    Globe --> Infra
+    Globe --> Dom
+    Infra --> Dom
 ```
 
-评估与渲染共用同一份能力判断（`assess.ts`），不在两处各写一套，保证「画廊能加的，球上一定能渲染」。
+五层单向依赖（外层依赖内层，反向禁止）；Cesium / MapLibre 引用只允许出现在 `infra/` 与 `globe/facade/`（`npm run check:arch` 强制），保证「画廊能加的，球上一定能渲染」。
 
 ## 目录结构
 
 ```text
 src/app/              UI：顶栏（主题、GitHub、沉浸模式）、左右面板（AppShell / LayerPanel / EffectsPanel）
-src/globe/            Cesium 核心：GlobeViewer、cameraApi、geo(用户定位)、webmap、assess 与各数据源适配
+src/controller/       三个控制器（Layer / Camera / Effects），构造器依赖注入，不直接接触 Cesium 或 store
+src/service/          ArcGIS 数据入口：repository / loader / scheduler / http
+src/domain/           纯 TS 零依赖：类型 / 配置 / 状态机 / 预算策略（被所有层引用）
+src/infra/            Cesium 深度封装：CesiumFacade / GpuMemoryManager（唯一深接触点）
+src/globe/            渲染适配：GlobeViewer、facade/ 适配器、viewport/ 渲染管线
 src/state/            zustand 全局状态（theme / collapsed / added / effects / userHome）
 src/styles/           全部样式（直角、深浅主题 CSS 变量）
 e2e/                  Playwright 冒烟、UI 与真实 ArcGIS 集成测试
