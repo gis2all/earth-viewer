@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { CameraController, type CameraControllerDeps, type CameraSurface } from './CameraController'
+import { CameraController, type CameraControllerDeps, type CameraSurface } from './cameraController'
 
 /** 捕获表面注册的回调，便于测试内手动触发；cleanup 为注册函数返回的注销函数。 */
 function capture<T extends (...args: never[]) => void>() {

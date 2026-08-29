@@ -6,13 +6,13 @@
  * - 串行渲染队列：同一时刻只渲染一个 webmap，避免重图层抢主线程。
  * 不 import Cesium / store：渲染由 deps.render 委托，错误/提示由 deps 桥接。
  */
-import { createEmptyRuntime, type LayerRuntime } from '../domain/runtime'
+import { createEmptyRuntime, type LayerRuntime } from '../domain/layerRuntime'
 import {
   assertTransition,
   isTerminal,
   type LayerState,
-} from '../domain/stateMachine'
-import type { LayerRenderJob, ViewportHandleLike } from '../domain/render'
+} from '../domain/layerStateMachine'
+import type { LayerRenderJob, ViewportHandleLike } from '../domain/renderContract'
 import { LayerScheduler } from '../service/scheduler'
 
 /** 控制器视角的图层条目（与 store.AddedLayer 结构兼容）。 */
@@ -30,7 +30,7 @@ export type LayerControllerEvent =
   | { type: 'removed'; id: string }
 
 export interface LayerControllerDeps {
-  /** 串行渲染一个 webmap 的全部内层（由 globe/renderWebmap + CesiumFacade 实现）。 */
+  /** 串行渲染一个 webmap 的全部内层（由 globe/globeRenderer + CesiumFacade 实现）。 */
   render(job: LayerRenderJob): Promise<void>
   /** 渲染器外部兜底错误（如非法 webmap 结构）写入 store。 */
   setError(id: string, message: string): void

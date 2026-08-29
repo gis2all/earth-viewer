@@ -3,8 +3,8 @@ import {
   LayerController,
   type LayerControllerDeps,
   type LayerItemLike,
-} from './LayerController'
-import type { LayerRenderJob, ViewportHandleLike } from '../domain/render'
+} from './layerController'
+import type { LayerRenderJob, ViewportHandleLike } from '../domain/renderContract'
 
 function makeItem(id: string, overrides: Partial<LayerItemLike> = {}): LayerItemLike {
   return { id, title: `图层-${id}`, kind: 'webmap', webmap: { id }, ...overrides }

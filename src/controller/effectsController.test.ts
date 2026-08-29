@@ -4,7 +4,7 @@ import {
   type EffectsControllerDeps,
   type EffectsSnapshot,
   type EffectsSurface,
-} from './EffectsController'
+} from './effectsController'
 
 function snapshot(overrides: Partial<EffectsSnapshot> = {}): EffectsSnapshot {
   return {
