@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import '../mocks/cesium'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
 import App from '../../App'
-import { useAppStore } from '../../state/store'
+import { useAppStore } from '../../app/store'
 import { getCesiumMock, resetCesiumMocks } from '../mocks/cesium'
 
 const cesiumMock = getCesiumMock()

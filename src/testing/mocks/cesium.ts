@@ -176,7 +176,7 @@ const maplibreMock = vi.hoisted(() => {
   return { instances }
 })
 
-vi.mock('../../globe/facade/maplibreImagery', () => {
+vi.mock('../../infra/arcgisVectorTileImageryProvider', () => {
   class MockVectorProvider {
     ready = false
     readyPromise: Promise<boolean>
@@ -189,8 +189,8 @@ vi.mock('../../globe/facade/maplibreImagery', () => {
     }
   }
   return {
-    ArcGisVectorTileImageryProvider: MockVectorProvider,
-    normalizeArcGisStyle: vi.fn((st: unknown) => st),
+    ArcGISVectorTileImageryProvider: MockVectorProvider,
+    normalizeArcGISStyle: vi.fn((st: unknown) => st),
     tileCenterLngLat: vi.fn((x: number, y: number) => ({ lng: x, lat: y })),
   }
 })
