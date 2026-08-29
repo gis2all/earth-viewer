@@ -1,10 +1,19 @@
 import * as Cesium from 'cesium'
-import { fetchUserHome, type UserHome } from '../geo'
-import { useAppStore } from '../../state/store'
+import type { UserHome } from '../domain/types'
 
 let viewer: Cesium.Viewer | null = null
 // 程序默认启动时的相机高度（用于"回到用户位置"的缩放）
 let initialHeight = 20000000
+
+/** 用户位置解析器（组合根注入；infra 不直接依赖 service/store）。 */
+export type UserHomeResolver = () => Promise<UserHome>
+
+let resolveUserHome: UserHomeResolver | null = null
+
+/** 测试/组合根用：注入用户位置解析器（传 null 可清除）。 */
+export function setUserHomeResolver(resolver: UserHomeResolver | null): void {
+  resolveUserHome = resolver
+}
 
 function requestViewerRender(v: Cesium.Viewer) {
   if (!v.isDestroyed?.()) v.scene?.requestRender?.()
@@ -24,20 +33,12 @@ export function unregisterViewer() {
   viewer = null
 }
 
-/** 取当前用户大概位置（优先内存缓存，否则请求 /api/geo）。 */
-async function resolveUserHome(): Promise<UserHome> {
-  const fromStore = useAppStore.getState().userHome
-  if (fromStore) return fromStore
-  const h = await fetchUserHome()
-  useAppStore.getState().setUserHome(h)
-  return h
-}
-
 /** 飞到"程序初始位置"：以用户大概位置为中心，保持默认启动缩放高度。 */
 export async function flyToHome(v?: Cesium.Viewer) {
   const target = v ?? viewer
-  if (!target) return
-  const home = await resolveUserHome()
+  if (!target || !resolveUserHome) return
+  const home = await resolveUserHome().catch(() => null)
+  if (!home) return
   if (!viewer || target.isDestroyed?.()) return
   target.camera.flyTo({
     destination: Cesium.Cartesian3.fromDegrees(home.lon, home.lat, initialHeight),

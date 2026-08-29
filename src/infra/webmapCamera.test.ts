@@ -9,12 +9,12 @@ vi.mock('cesium', () => ({
   },
 }))
 
-vi.mock('./facade/vector', () => ({
+vi.mock('./vector', () => ({
   reprojectCoordinates: vi.fn(),
 }))
 
-import { viewpointCameraFromWebmap } from './facade/viewpoint'
-import { reprojectCoordinates } from './facade/vector'
+import { viewpointCameraFromWebmap } from './webmapCamera'
+import { reprojectCoordinates } from './vector'
 
 afterEach(() => {
   vi.restoreAllMocks()

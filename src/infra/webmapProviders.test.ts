@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
   fetchFeatureStyle,
   providerForWebLayer,
-} from './facade/webmap'
+} from './webmapProviders'
 
 // Cesium 在 node 环境不可用，mock 掉（webmap 只用到 Color / WMS provider / UrlTemplate）
 vi.mock('cesium', () => ({

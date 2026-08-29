@@ -1,20 +1,14 @@
 import * as Cesium from 'cesium'
-import { SAFETY } from '../loadSafety'
+import { SAFETY } from '../domain/loadSafety'
+import type { WebLayer } from '../domain/types'
+import { withFetchTimeout } from '../service/http'
 import {
   detectMapService,
   fetchFeatureGeoJSON,
   fetchFeatureRenderer,
   fetchWebmap,
   type MapServiceInfo,
-} from '../../service/repository'
-
-// 网络请求超时（毫秒）：慢速服务不阻塞交互
-const FETCH_TIMEOUT = 15000
-
-/** 组合传入的取消信号与超时信号 */
-export function withFetchTimeout(signal?: AbortSignal): AbortSignal {
-  return signal ? AbortSignal.any([signal, AbortSignal.timeout(FETCH_TIMEOUT)]) : AbortSignal.timeout(FETCH_TIMEOUT)
-}
+} from '../service/repository'
 
 // 底图影像：World Imagery (WGS84, EPSG:4326) 瓦片，覆盖到 ±90°（与官方 Imagery Hybrid (WGS84) 一致）
 export const WORLD_IMAGERY_WGS84_TILES =
@@ -23,33 +17,6 @@ export const WORLD_IMAGERY_WGS84_TILES =
 // MapLibre 当前不支持 GCS 瓦片的 equirectangular 投影，故用 Mercator 版；极区 ±85° 以上无标注，影像仍由 WGS84 底图覆盖
 export const WORLD_VECTOR_LABELS_STYLE_URL =
   'https://www.arcgis.com/sharing/rest/content/items/30d6b8271e1849cd9c3042060001f425/resources/styles/root.json'
-
-export interface WebLayer {
-  url?: string
-  type?: string
-  layerType?: string
-  title?: string
-  urlTemplate?: string
-  opacity?: number
-  visibility?: boolean
-  /** WMS 图层的子图层列表（[{ name, title }]），WMS 图层名可能在此而非 layerName */
-  layers?: unknown
-  /** WMS 图层名（部分 webmap 直接给 layerName） */
-  layerName?: string
-  /** WFS/OGC 图层或集合名称 */
-  name?: string
-  typeName?: string
-  collectionId?: string
-  /** VectorTile 图层引用的默认样式（styleUrl），用于客户端解码/着色 */
-  styleUrl?: string
-  /** 内嵌要素集 / 分组层（group）内部携带子图层或图层定义 */
-  layerDefinition?: Record<string, unknown>
-  /** WMTS 的 tileMatrixSet 等配置 */
-  tileMatrixSet?: string
-  tileMatrixSetID?: string
-  style?: string
-  format?: string
-}
 
 function layerKind(l: WebLayer): string {
   return l.type || l.layerType || ''

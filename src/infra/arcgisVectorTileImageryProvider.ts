@@ -3,9 +3,9 @@ import * as maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 // maplibre 的 worker 通过 new URL(..., import.meta.url) 动态加载，vite 无法静态解析 → 显式 ?worker&url 打包（内联依赖）并 setWorkerUrl
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
-import { withFetchTimeout } from './webmap'
-import { SAFETY } from '../loadSafety'
-import { GPU_TIERS, type GpuTierConfig } from './gpuBudget'
+import { withFetchTimeout } from '../service/http'
+import { SAFETY } from '../domain/loadSafety'
+import { GPU_TIERS, type GpuTierConfig } from './gpuTiers'
 
 // 批量渲染块尺寸：一帧 MapLibre 渲染 3x3 瓦片，读回次数降为 1/9（避免与 Cesium 抢 GPU 导致每片 1s+ 的读回停顿）
 const BLOCK = 3
@@ -46,7 +46,7 @@ export interface StyleSource {
  *   （MapLibre 的 url 字段期望是 TileJSON 端点，VectorTileServer 不是；已有 tiles 的保留并解析相对模板）
  * - 移除 vector source 的 tileSize：该字段只适用于 raster source，写入会导致 MapLibre 样式校验失败
  */
-export function normalizeArcGisStyle(style: Record<string, unknown>, baseUrl: string): Record<string, unknown> {
+export function normalizeArcGISStyle(style: Record<string, unknown>, baseUrl: string): Record<string, unknown> {
   const out: Record<string, unknown> = { ...style }
   if (typeof out.sprite === 'string') out.sprite = resolveStyleUrl(out.sprite, baseUrl)
   if (typeof out.glyphs === 'string') out.glyphs = resolveStyleUrl(out.glyphs, baseUrl)
@@ -502,7 +502,7 @@ function waitForMapIdle(map: MapLike, timeoutMs = 20000): Promise<void> {
  * requestImage 走并行 MapLibre 实例池（默认 3 个，每实例严格串行），默认返回原生 512px canvas。
  * 只实现 ImageryProvider 协议字段，交给 Cesium.ImageryLayer 消费（鸭子类型，不继承基类）。
  */
-export class ArcGisVectorTileImageryProvider {
+export class ArcGISVectorTileImageryProvider {
   readonly tilingScheme = new Cesium.WebMercatorTilingScheme()
   readonly rectangle: Cesium.Rectangle
   readonly tileWidth: number
@@ -628,7 +628,7 @@ export class ArcGisVectorTileImageryProvider {
     const response = await fetch(styleUrl, { signal: withFetchTimeout(this._signal) })
     if (!response.ok) throw new Error('矢量瓦片样式加载失败：HTTP ' + response.status)
     const raw = (await response.json()) as Record<string, unknown>
-    const style = applyStyleOverrides(applyLabelLanguage(normalizeArcGisStyle(raw, styleUrl), this._language), this._styleOverrides)
+    const style = applyStyleOverrides(applyLabelLanguage(normalizeArcGISStyle(raw, styleUrl), this._language), this._styleOverrides)
     const finalStyle = this._labelsOnly ? keepTextLayersOnly(style, this._labelScope) : style
     this._mapViewportSize = mapLibreRenderPlan(this.minimumLevel, this.tileWidth, this._blockSize).viewportSize
     for (let i = 0; i < this._poolSize; i += 1) {

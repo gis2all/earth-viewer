@@ -4,28 +4,24 @@
  * - 对外只暴露业务语义方法；GlobeViewer / LayerController / CameraController 不直接引用 Cesium 类型。
  */
 import * as Cesium from 'cesium'
-import type { LayerRuntime } from '../domain/runtime'
-import { ArcGisVectorTileImageryProvider } from '../globe/facade/maplibreImagery'
-import { GpuMemoryManager } from './GpuMemoryManager'
+import type { LayerRuntime } from '../domain/layerRuntime'
+import { ArcGISVectorTileImageryProvider } from './arcgisVectorTileImageryProvider'
+import { GpuMemoryManager } from './gpuMemoryManager'
 import {
   estimateSceneCanvasBytes,
   estimateVectorProviderBytes,
   type GpuTierConfig,
-} from '../globe/facade/gpuBudget'
+} from './gpuTiers'
 import {
   providerForWebLayer,
   WORLD_IMAGERY_WGS84_TILES,
   WORLD_VECTOR_LABELS_STYLE_URL,
-  type WebLayer,
-} from '../globe/facade/webmap'
-import { viewEnvelopeFromCamera } from '../globe/viewport/envelope'
-import {
-  createViewportController,
-  type ViewportController,
-} from '../globe/viewport/viewportController'
-import { loadI3S, load3DTiles } from '../globe/facade/scene'
-import { registerViewer, unregisterViewer, flyToHome } from '../globe/facade/cameraApi'
-import type { ViewEnvelope } from '../globe/viewport/featureQuery'
+} from './webmapProviders'
+import type { WebLayer } from '../domain/types'
+import { viewEnvelopeFromCamera } from '../domain/geometry/envelope'
+import { loadI3S, load3DTiles } from './scene'
+import { registerViewer, unregisterViewer, flyToHome } from './cameraActions'
+import type { ViewEnvelope } from '../domain/geometry/envelope'
 
 // 地形：Terrain3D (GCSv2, EPSG:4326)，覆盖 ±90°（3857 版只到 ±85.05°，会导致极区无 globe tile）
 const TERRAIN_URL =
@@ -48,10 +44,16 @@ export interface FacadeLifecycleCallbacks {
   onInitError?: (msg: string) => void
 }
 
-export interface FacadeViewportHandle {
-  controller: ViewportController
-  /** 移除相机 moveEnd 监听；幂等。 */
-  unsubscribeMoveEnd(): void
+/**
+ * 视口驱动表面（与 globe/viewport 的 ViewportSurface 结构一致，双方互不 import）。
+ * globe 的 viewport 编排通过它驱动 Primitive，facade 只负责提供场景原语。
+ */
+export interface FacadeViewportSurface {
+  scene: unknown
+  prims: { add(x: unknown): void }
+  onMoveEnd(cb: () => void): () => void
+  viewEnvelope(): ViewEnvelope | null
+  requestFrame(): void
 }
 
 /** 检测 WebGL 是否可用；在 jsdom 测试环境下返回 true，避免误判为不可用。 */
@@ -87,10 +89,10 @@ export class CesiumFacade {
   private _cameraMoving = false
   /** 矢量瓦片 provider 重建表：档位变化时逐个销毁重建（key → 重建 thunk） */
   private readonly _vectorRebuilds = new Map<string, () => void>()
-  private readonly _vectorProviders = new Map<string, ArcGisVectorTileImageryProvider>()
+  private readonly _vectorProviders = new Map<string, ArcGISVectorTileImageryProvider>()
   private readonly _vectorTokens = new Map<string, number>()
   private _vectorSeq = 0
-  private _labelsProvider: ArcGisVectorTileImageryProvider | null = null
+  private _labelsProvider: ArcGISVectorTileImageryProvider | null = null
   private _labelsToken = 0
   /** 档位重建中：阻止嵌套 _applyTier（重建时 register/unregister 触发核算） */
   private _applyingTier = false
@@ -446,7 +448,7 @@ export class CesiumFacade {
     return viewEnvelopeFromCamera(v.scene.camera as never)
   }
 
-  /** 飞回"程序初始位置"（cameraApi 内异步取用户位置）。 */
+  /** 飞回"程序初始位置"（cameraActions 内异步取用户位置）。 */
   flyToHome() {
     void flyToHome(this.viewer ?? undefined)
   }
@@ -480,7 +482,7 @@ export class CesiumFacade {
     if (!v || v.isDestroyed() || !gpu) return
     this._ensureCameraTracking()
     const token = ++this._labelsToken
-    const provider = new ArcGisVectorTileImageryProvider({
+    const provider = new ArcGISVectorTileImageryProvider({
       styleUrl: WORLD_VECTOR_LABELS_STYLE_URL,
       language: 'en',
       labelsOnly: true,
@@ -590,7 +592,7 @@ export class CesiumFacade {
     this._ensureCameraTracking()
     const token = (this._vectorTokens.get(key) ?? 0) + 1
     this._vectorTokens.set(key, token)
-    const provider = new ArcGisVectorTileImageryProvider({
+    const provider = new ArcGISVectorTileImageryProvider({
       styleUrl: op.styleUrl,
       url: op.url,
       title: op.title,
@@ -681,7 +683,7 @@ export class CesiumFacade {
   }
 
   /** 从 runtime.imagery 与 viewer.imageryLayers 中移除指定 provider 的影像图层（不销毁 provider）。 */
-  private _removeVectorImagery(runtime: LayerRuntime, provider: ArcGisVectorTileImageryProvider) {
+  private _removeVectorImagery(runtime: LayerRuntime, provider: ArcGISVectorTileImageryProvider) {
     const v = this.viewer
     const idx = runtime.imagery.findIndex(
       (l) => (l as unknown as { provider?: unknown }).provider === provider
@@ -689,7 +691,7 @@ export class CesiumFacade {
     if (idx < 0) return
     const entry = runtime.imagery[idx] as unknown as {
       layer?: Cesium.ImageryLayer
-      provider?: ArcGisVectorTileImageryProvider
+      provider?: ArcGISVectorTileImageryProvider
     }
     if (entry.layer && v && !v.isDestroyed()) {
       v.imageryLayers.remove(entry.layer, true)
@@ -801,37 +803,24 @@ export class CesiumFacade {
     return tileset
   }
 
-  /**
-   * 视口驱动 Primitive：创建视口控制器 + moveEnd 监听。
-   * 返回句柄由调用方持有（dispose / 移除监听由 facade 负责）。
-   */
-  createViewport(serviceUrl: string, maxFeatures: number, onNote?: (msg: string) => void): FacadeViewportHandle {
+  /** 视口驱动表面（globe 编排用）：场景/图元容器 + moveEnd 订阅 + 当前包络。不泄漏 Cesium 类型。 */
+  viewportSurface(): FacadeViewportSurface | null {
     const v = this.viewer
-    const noop: FacadeViewportHandle = {
-      controller: { update: async () => {}, dispose: () => {} },
-      unsubscribeMoveEnd: () => {},
-    }
-    if (!v || v.isDestroyed()) return noop
-    const ctl = createViewportController(v.scene, v.scene.primitives, {
-      serviceUrl,
-      maxFeatures,
-      onNote,
-    })
-    let disposed = false
-    const updateViewport = () =>
-      ctl.update(this.viewEnvelope() ?? { west: -180, south: -90, east: 180, north: 90 }).finally(() => this.requestFrame())
-    const handler = debounce(() => void updateViewport(), 250)
-    const moveEnd = (v.camera.moveEnd as unknown as { addEventListener?: (h: () => void) => void } | undefined)
-    moveEnd?.addEventListener?.(handler)
-    void updateViewport()
+    if (!v || v.isDestroyed()) return null
+    const camera = v.camera
     return {
-      controller: ctl,
-      unsubscribeMoveEnd: () => {
-        if (disposed) return
-        disposed = true
-        const me = (v.camera.moveEnd as unknown as { removeEventListener?: (h: () => void) => void } | undefined)
-        me?.removeEventListener?.(handler)
+      scene: v.scene,
+      prims: v.scene.primitives,
+      onMoveEnd: (cb) => {
+        const me = camera.moveEnd as unknown as { addEventListener?: (h: () => void) => void } | undefined
+        me?.addEventListener?.(cb)
+        return () => {
+          const me2 = camera.moveEnd as unknown as { removeEventListener?: (h: () => void) => void } | undefined
+          me2?.removeEventListener?.(cb)
+        }
       },
+      viewEnvelope: () => this.viewEnvelope(),
+      requestFrame: () => this.requestFrame(),
     }
   }
 
@@ -918,13 +907,4 @@ export class CesiumFacade {
       prim,
     } as never)
   }
-}
-
-/** 防抖：相机移动结束后等待 ms 再触发，避免快速缩放/拖动时视口查询风暴 */
-function debounce<T extends (...args: unknown[]) => void>(fn: T, ms: number): T {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  return ((...args: unknown[]) => {
-    if (timer !== undefined) clearTimeout(timer)
-    timer = setTimeout(() => fn(...args), ms)
-  }) as T
 }

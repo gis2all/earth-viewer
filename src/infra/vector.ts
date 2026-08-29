@@ -1,6 +1,7 @@
 import proj4 from 'proj4'
 import * as Cesium from 'cesium'
-import { withFetchTimeout } from './webmap'
+import { withFetchTimeout } from '../service/http'
+import type { FeatureStyleSpec } from '../domain/types'
 
 // 常见 ArcGIS Web Mercator wkid 与 EPSG:3857 等价（部分服务用旧 wkid 102100/102113）
 proj4.defs('EPSG:102100', proj4.defs('EPSG:3857'))
@@ -74,15 +75,7 @@ export async function detectServiceWkid(url: string): Promise<number | undefined
 
 // ---- Feature Service renderer -> per-feature style ----
 
-export interface FeatureStyleSpec {
-  markerColor?: [number, number, number, number]
-  markerSize?: number
-  stroke?: [number, number, number, number]
-  strokeWidth?: number
-  fill?: [number, number, number, number]
-}
-
-export interface ArcGisSymbol {
+export interface ArcGISSymbol {
   type?: string
   color?: number[]
   size?: number
@@ -95,7 +88,7 @@ function toColor(c?: number[]): [number, number, number, number] | undefined {
   return [Math.round(c[0]), Math.round(c[1]), Math.round(c[2]), c.length >= 4 ? Math.round(c[3]) : 255]
 }
 
-function symbolToStyle(sym?: ArcGisSymbol): FeatureStyleSpec {
+function symbolToStyle(sym?: ArcGISSymbol): FeatureStyleSpec {
   if (!sym) return {}
   if (sym.type === 'esriSMS') {
     return { markerColor: toColor(sym.color), markerSize: sym.size }
@@ -124,7 +117,7 @@ function nonEmpty(style: FeatureStyleSpec): FeatureStyleSpec | undefined {
 export function rendererToStyleFn(renderer?: Record<string, unknown>): (props?: Record<string, unknown>) => FeatureStyleSpec | undefined {
   if (!renderer) return () => undefined
   const type = String(renderer.type ?? '')
-  const sym = renderer.symbol as ArcGisSymbol | undefined
+  const sym = renderer.symbol as ArcGISSymbol | undefined
 
   if (type === 'simple') {
     const style = symbolToStyle(sym)
@@ -132,7 +125,7 @@ export function rendererToStyleFn(renderer?: Record<string, unknown>): (props?: 
   }
   if (type === 'uniqueValue') {
     const field = String(renderer.field1 ?? renderer.field ?? '')
-    const infos = (renderer.uniqueValueInfos as { value?: unknown; symbol?: ArcGisSymbol }[] | undefined) ?? []
+    const infos = (renderer.uniqueValueInfos as { value?: unknown; symbol?: ArcGISSymbol }[] | undefined) ?? []
     return (props) => {
       const val = props?.[field]
       const info = infos.find((i) => String(i.value) === String(val))
@@ -141,7 +134,7 @@ export function rendererToStyleFn(renderer?: Record<string, unknown>): (props?: 
   }
   if (type === 'classBreaks') {
     const field = String(renderer.field ?? '')
-    const infos = (renderer.classBreakInfos as { classMaxValue?: number; symbol?: ArcGisSymbol }[] | undefined) ?? []
+    const infos = (renderer.classBreakInfos as { classMaxValue?: number; symbol?: ArcGISSymbol }[] | undefined) ?? []
     return (props) => {
       const val = Number(props?.[field])
       if (Number.isNaN(val)) return undefined

@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from 'vitest'
-import { GpuMemoryManager, defaultGpuBudgetBytes } from './GpuMemoryManager'
+import { GpuMemoryManager, defaultGpuBudgetBytes } from './gpuMemoryManager'
 import {
   GPU_TIERS,
   estimateSceneCanvasBytes,
   estimateVectorProviderBytes,
   type GpuTierConfig,
-} from '../globe/facade/gpuBudget'
+} from './gpuTiers'
 
 /** 像素类资源：估算随档位缩放（贴合画布/缓存随档位变小的真实行为）。 */
 const TIER_FACTOR: Record<string, number> = { high: 1, medium: 0.5, low: 0.25, critical: 0.1 }
@@ -97,7 +97,7 @@ describe('GpuMemoryManager（B 档：完整动态预算管理器）', () => {
   })
 })
 
-describe('gpuBudget 估算函数', () => {
+describe('内存估算函数', () => {
   it('estimateVectorProviderBytes：高/中/低档像素内存依次递减', () => {
     const high = estimateVectorProviderBytes(GPU_TIERS.high)
     const medium = estimateVectorProviderBytes(GPU_TIERS.medium)

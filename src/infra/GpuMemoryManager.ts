@@ -13,7 +13,7 @@ import {
   GPU_TIERS,
   type GpuTierConfig,
   type GpuTierName,
-} from '../globe/facade/gpuBudget'
+} from './gpuTiers'
 
 export interface GpuResource {
   /** 该资源在指定档位下的估算字节数 */

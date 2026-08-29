@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   resolveStyleUrl,
-  normalizeArcGisStyle,
+  normalizeArcGISStyle,
   applyLabelLanguage,
   applyStyleOverrides,
   inferStyleUrl,
@@ -12,9 +12,9 @@ import {
   indexToLngLat,
   cropTile,
   mapLibreRenderPlan,
-  ArcGisVectorTileImageryProvider,
+  ArcGISVectorTileImageryProvider,
   type MapLike,
-} from './facade/maplibreImagery'
+} from './arcgisVectorTileImageryProvider'
 
 // 默认 createMap 会 new maplibregl.Map：mock 掉真实模块，jsdom 无 WebGL
 vi.mock('maplibre-gl', () => {
@@ -139,9 +139,9 @@ describe('resolveStyleUrl', () => {
   })
 })
 
-describe('normalizeArcGisStyle', () => {
+describe('normalizeArcGISStyle', () => {
   it('sprite/glyphs 相对路径转绝对；VectorTileServer url → tiles 模板', () => {
-    const style = normalizeArcGisStyle(
+    const style = normalizeArcGISStyle(
       {
         sprite: '../sprites/sprite',
         glyphs: 'fonts/{fontstack}/{range}.pbf',
@@ -159,7 +159,7 @@ describe('normalizeArcGisStyle', () => {
   })
 
   it('已有 tiles 的 vector source 保留并解析相对模板，移除 MapLibre 不支持的 tileSize', () => {
-    const style = normalizeArcGisStyle(
+    const style = normalizeArcGISStyle(
       {
         sources: { vt: { type: 'vector', tiles: ['tiles/{z}/{y}/{x}.pbf'], tileSize: 512 } },
       },
@@ -171,7 +171,7 @@ describe('normalizeArcGisStyle', () => {
   })
 
   it('无 sprite 资源时，纯 icon 图层彻底移除 icon-image（MapLibre 不接受 undefined/null）', () => {
-    const style = normalizeArcGisStyle(
+    const style = normalizeArcGISStyle(
       {
         layers: [
           { id: 'poi-icon', type: 'symbol', layout: { 'icon-image': '{_icon}' } },
@@ -187,7 +187,7 @@ describe('normalizeArcGisStyle', () => {
   })
 
   it('非 VectorTileServer 的 vector url 保持为 url 并解析绝对', () => {
-    const style = normalizeArcGisStyle(
+    const style = normalizeArcGISStyle(
       {
         sources: { tilejson: { type: 'vector', url: '../data/tiles.json' } },
       },
@@ -199,7 +199,7 @@ describe('normalizeArcGisStyle', () => {
   })
 
   it('相对 VectorTileServer url 解析后转换为 XYZ tiles 模板', () => {
-    const style = normalizeArcGisStyle(
+    const style = normalizeArcGISStyle(
       {
         sources: { esri: { type: 'vector', url: '../../' } },
       },
@@ -214,7 +214,7 @@ describe('normalizeArcGisStyle', () => {
   })
 
   it('非 vector 源 / 空值源原样保留', () => {
-    const style = normalizeArcGisStyle(
+    const style = normalizeArcGISStyle(
       {
         sources: { r: { type: 'raster', tiles: ['https://t/{z}/{y}/{x}.png'] }, bad: null },
       },
@@ -324,7 +324,7 @@ describe('blockKey / cropTile', () => {
     stubStyleFetch()
     const m = fakeMap()
     setTimeout(() => m._emit('load'), 0)
-    const provider = new ArcGisVectorTileImageryProvider({ styleUrl: 'https://x/root.json', createMap: () => m })
+    const provider = new ArcGISVectorTileImageryProvider({ styleUrl: 'https://x/root.json', createMap: () => m })
     await provider.readyPromise
     await provider.requestImage(0, 0, 2)
     const center = m.jumpTo.mock.calls[0][0].center as [number, number]
@@ -339,7 +339,7 @@ describe('blockKey / cropTile', () => {
     const m = fakeMap()
     let container: HTMLElement | undefined
     setTimeout(() => m._emit('load'), 0)
-    const provider = new ArcGisVectorTileImageryProvider({
+    const provider = new ArcGISVectorTileImageryProvider({
       styleUrl: 'https://x/root.json',
       createMap: (node) => {
         container = node
@@ -369,7 +369,7 @@ describe('blockKey / cropTile', () => {
     // 对 z2 的末行/末列，1536px 视口将请求中心 (3.5,3.5) 收拢为 (2.5,2.5)。
     m.getCenter = vi.fn(() => ({ lng: 45, lat: -40.97989806962013 }))
     setTimeout(() => m._emit('load'), 0)
-    const provider = new ArcGisVectorTileImageryProvider({ styleUrl: 'https://x/root.json', createMap: () => m })
+    const provider = new ArcGISVectorTileImageryProvider({ styleUrl: 'https://x/root.json', createMap: () => m })
     try {
       await provider.readyPromise
       await provider.requestImage(3, 3, 2)
@@ -385,7 +385,7 @@ describe('blockKey / cropTile', () => {
     stubStyleFetch()
     const m = fakeMap()
     setTimeout(() => m._emit('load'), 0)
-    const provider = new ArcGisVectorTileImageryProvider({ styleUrl: 'https://x/root.json', createMap: () => m })
+    const provider = new ArcGISVectorTileImageryProvider({ styleUrl: 'https://x/root.json', createMap: () => m })
     await provider.readyPromise
     const first = await provider.requestImage(4, 4, 4)
     expect(first).toBeDefined()
@@ -398,14 +398,14 @@ describe('blockKey / cropTile', () => {
   })
 })
 
-describe('ArcGisVectorTileImageryProvider', () => {
+describe('ArcGISVectorTileImageryProvider', () => {
   beforeEach(() => {
     stubStyleFetch()
   })
 
   it('协议字段齐全，ready 后 requestImage 串行渲染并返回 canvas', async () => {
     const createMap = createLoadableMap()
-    const provider = new ArcGisVectorTileImageryProvider({
+    const provider = new ArcGISVectorTileImageryProvider({
       styleUrl: 'https://x/root.json',
       title: 'My Vector',
       createMap,
@@ -434,7 +434,7 @@ describe('ArcGisVectorTileImageryProvider', () => {
     const m = fakeMap()
     let container: HTMLElement | undefined
     let renderPixelRatio: number | undefined
-    const provider = new ArcGisVectorTileImageryProvider({
+    const provider = new ArcGISVectorTileImageryProvider({
       styleUrl: 'https://x/root.json',
       createMap: (node, _style, pixelRatio) => {
         container = node
@@ -453,7 +453,7 @@ describe('ArcGisVectorTileImageryProvider', () => {
   })
 
   it('requestImage 超级别返回 undefined；销毁后返回 undefined', async () => {
-    const provider = new ArcGisVectorTileImageryProvider({ styleUrl: 'https://x/root.json', createMap: createLoadableMap() })
+    const provider = new ArcGISVectorTileImageryProvider({ styleUrl: 'https://x/root.json', createMap: createLoadableMap() })
     await provider.readyPromise
     expect(provider.requestImage(0, 0, 99)).toBeUndefined()
     provider.destroy()
@@ -463,7 +463,7 @@ describe('ArcGisVectorTileImageryProvider', () => {
 
   it('未 ready 时 requestImage 返回 undefined', async () => {
     const m = fakeMap() // 永不 emit load
-    const provider = new ArcGisVectorTileImageryProvider({ styleUrl: 'https://x/root.json', createMap: () => m })
+    const provider = new ArcGISVectorTileImageryProvider({ styleUrl: 'https://x/root.json', createMap: () => m })
     expect(provider.requestImage(0, 0, 1)).toBeUndefined()
     provider.destroy()
     // 等 _init 的销毁清理微任务执行完（fetch 已 resolve）
@@ -477,7 +477,7 @@ describe('ArcGisVectorTileImageryProvider', () => {
   it('destroy 移除 map 与容器', async () => {
     const m = fakeMap()
     setTimeout(() => m._emit('load'), 0)
-    const provider = new ArcGisVectorTileImageryProvider({ styleUrl: 'https://x/root.json', createMap: () => m })
+    const provider = new ArcGISVectorTileImageryProvider({ styleUrl: 'https://x/root.json', createMap: () => m })
     await provider.readyPromise
     const container = document.body.querySelector('div[style*="-10000px"]')
     expect(container).not.toBeNull()
@@ -488,12 +488,12 @@ describe('ArcGisVectorTileImageryProvider', () => {
 
   it('样式 fetch 失败 → readyPromise 拒绝', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404, json: async () => ({}) })))
-    const provider = new ArcGisVectorTileImageryProvider({ styleUrl: 'https://x/root.json', createMap: createLoadableMap() })
+    const provider = new ArcGISVectorTileImageryProvider({ styleUrl: 'https://x/root.json', createMap: createLoadableMap() })
     await expect(provider.readyPromise).rejects.toThrow(/HTTP 404/)
   })
 
   it('缺样式地址 → readyPromise 拒绝', async () => {
-    const provider = new ArcGisVectorTileImageryProvider({ url: '', createMap: createLoadableMap() })
+    const provider = new ArcGISVectorTileImageryProvider({ url: '', createMap: createLoadableMap() })
     await expect(provider.readyPromise).rejects.toThrow(/缺少矢量瓦片样式地址/)
   })
 
@@ -508,7 +508,7 @@ describe('ArcGisVectorTileImageryProvider', () => {
       return m
     })
     setTimeout(() => m._emit('load'), 0)
-    const provider = new ArcGisVectorTileImageryProvider({ styleUrl: 'https://x/root.json', createMap: () => m })
+    const provider = new ArcGISVectorTileImageryProvider({ styleUrl: 'https://x/root.json', createMap: () => m })
     await provider.readyPromise
     // z1 的 (0,0) 与 z2 的 (3,0) 分属不同 3x3 块：第一块失败，第二块正常
     await expect(provider.requestImage(0, 0, 1)).rejects.toThrow(/jump boom/)
@@ -531,7 +531,7 @@ describe('ArcGisVectorTileImageryProvider', () => {
       return m
     }) as never
     setTimeout(() => m._emit('load'), 0)
-    const provider = new ArcGisVectorTileImageryProvider({ styleUrl: 'https://x/root.json', mapPoolSize: 1, createMap: () => m })
+    const provider = new ArcGISVectorTileImageryProvider({ styleUrl: 'https://x/root.json', mapPoolSize: 1, createMap: () => m })
     try {
       await provider.readyPromise
       // 初始化阶段注册 webglcontextlost 监听会调用一次 getCanvas，这里只验证渲染流程：
@@ -568,7 +568,7 @@ describe('ArcGisVectorTileImageryProvider', () => {
     let created = 0
     setTimeout(() => m1._emit('load'), 0)
     setTimeout(() => m2._emit('load'), 0)
-    const provider = new ArcGisVectorTileImageryProvider({
+    const provider = new ArcGISVectorTileImageryProvider({
       styleUrl: 'https://x/root.json',
       mapPoolSize: 2,
       createMap: () => (created++ === 0 ? m1 : m2),
@@ -614,7 +614,7 @@ describe('ArcGisVectorTileImageryProvider', () => {
     const canvas = document.createElement('canvas')
     m.getCanvas = vi.fn(() => canvas) as never
     setTimeout(() => m._emit('load'), 0)
-    const provider = new ArcGisVectorTileImageryProvider({
+    const provider = new ArcGISVectorTileImageryProvider({
       styleUrl: 'https://x/root.json',
       mapPoolSize: 1,
       createMap: () => m,
@@ -646,7 +646,7 @@ describe('ArcGisVectorTileImageryProvider', () => {
     m.getCanvas = vi.fn(() => canvas) as never
     setTimeout(() => m._emit('load'), 0)
     let canRender = false
-    const provider = new ArcGisVectorTileImageryProvider({
+    const provider = new ArcGISVectorTileImageryProvider({
       styleUrl: 'https://x/root.json',
       mapPoolSize: 1,
       createMap: () => m,
@@ -668,7 +668,7 @@ describe('ArcGisVectorTileImageryProvider', () => {
   })
 
   it('默认 createMap 走真实 MapLibre 构造路径（离屏渲染）', async () => {
-    const provider = new ArcGisVectorTileImageryProvider({ styleUrl: 'https://x/root.json' })
+    const provider = new ArcGISVectorTileImageryProvider({ styleUrl: 'https://x/root.json' })
     await provider.readyPromise
     expect(provider.ready).toBe(true)
     const canvas = await provider.requestImage(0, 0, 0)
@@ -680,7 +680,7 @@ describe('ArcGisVectorTileImageryProvider', () => {
   it('销毁时未决瓦片请求被拒绝', async () => {
     const m = fakeMap()
     setTimeout(() => m._emit('load'), 0)
-    const provider = new ArcGisVectorTileImageryProvider({ styleUrl: 'https://x/root.json', createMap: () => m })
+    const provider = new ArcGISVectorTileImageryProvider({ styleUrl: 'https://x/root.json', createMap: () => m })
     await provider.readyPromise
     // 让渲染挂起：jumpTo 不触发 render → 请求 pending
     m.triggerRepaint = vi.fn(() => m) as never
@@ -691,7 +691,7 @@ describe('ArcGisVectorTileImageryProvider', () => {
 
   it('MapLibre 样式加载报错 → readyPromise 拒绝', async () => {
     const m = fakeMap()
-    const provider = new ArcGisVectorTileImageryProvider({
+    const provider = new ArcGISVectorTileImageryProvider({
       styleUrl: 'https://x/root.json',
       createMap: () => {
         setTimeout(() => m._emit('error', new Error('style boom')), 0)
@@ -717,7 +717,7 @@ describe('ArcGisVectorTileImageryProvider', () => {
       })
       return m
     }) as never
-    const provider = new ArcGisVectorTileImageryProvider({ styleUrl: 'https://x/root.json', mapPoolSize: 1, createMap: () => m })
+    const provider = new ArcGISVectorTileImageryProvider({ styleUrl: 'https://x/root.json', mapPoolSize: 1, createMap: () => m })
     await provider.readyPromise
     await expect(provider.requestImage(0, 0, 0)).rejects.toThrow(/render boom/)
     const ok = await provider.requestImage(1, 0, 1)
@@ -792,7 +792,7 @@ describe('applyStyleOverrides', () => {
     const m = fakeMap()
     const seenStyles: unknown[] = []
     setTimeout(() => m._emit('load'), 0)
-    const provider = new ArcGisVectorTileImageryProvider({
+    const provider = new ArcGISVectorTileImageryProvider({
       styleUrl: 'https://x/root.json',
       labelsOnly: true,
       labelScope: 'country-city',
@@ -822,7 +822,7 @@ describe('world-edge block center', () => {
     // 模拟并发时取到的旧中心：z3 东边缘块（瓦片 x=6..7）预期中心经钳制后 lng=112.5（cx=6.5），但 getCenter 返回 22.5
     m.getCenter = vi.fn(() => ({ lng: 22.5, lat: 0 }))
     setTimeout(() => m._emit('load'), 0)
-    const provider = new ArcGisVectorTileImageryProvider({
+    const provider = new ArcGISVectorTileImageryProvider({
       styleUrl: 'https://x/root.json',
       mapPoolSize: 1,
       createMap: () => m,
@@ -865,7 +865,7 @@ describe('labelsOnly', () => {
     const m = fakeMap()
     const seenStyles: unknown[] = []
     setTimeout(() => m._emit('load'), 0)
-    const provider = new ArcGisVectorTileImageryProvider({
+    const provider = new ArcGISVectorTileImageryProvider({
       styleUrl: 'https://x/root.json',
       labelsOnly: true,
       createMap: (_node, style) => {
@@ -906,7 +906,7 @@ describe('labelsOnly', () => {
     const m = fakeMap()
     const seenStyles: unknown[] = []
     setTimeout(() => m._emit('load'), 0)
-    const provider = new ArcGisVectorTileImageryProvider({
+    const provider = new ArcGISVectorTileImageryProvider({
       styleUrl: 'https://x/root.json',
       labelsOnly: true,
       labelScope: 'country-city',

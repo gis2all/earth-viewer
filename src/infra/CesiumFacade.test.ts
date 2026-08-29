@@ -4,11 +4,11 @@ import {
   CesiumFacade,
   __resetTerrainCacheForTest,
   isWebglAvailable,
-} from './CesiumFacade'
-import type { LayerRuntime } from '../domain/runtime'
-import { flyToHome } from '../globe/facade/cameraApi'
-import { loadI3S, load3DTiles } from '../globe/facade/scene'
-import { providerForWebLayer } from '../globe/facade/webmap'
+} from './cesiumFacade'
+import type { LayerRuntime } from '../domain/layerRuntime'
+import { flyToHome } from './cameraActions'
+import { loadI3S, load3DTiles } from './scene'
+import { providerForWebLayer } from './webmapProviders'
 
 // ---- Cesium mock（fake Viewer，记录创建参数/图层/地形） ----
 const cesiumMock = vi.hoisted(() => {
@@ -206,7 +206,7 @@ const maplibreMock = vi.hoisted(() => {
   }
 })
 
-vi.mock('../globe/facade/maplibreImagery', () => {
+vi.mock('./arcgisVectorTileImageryProvider', () => {
   class MockVectorProvider {
     readyPromise: Promise<void>
     destroy = vi.fn()
@@ -221,40 +221,27 @@ vi.mock('../globe/facade/maplibreImagery', () => {
     }
   }
   return {
-    ArcGisVectorTileImageryProvider: MockVectorProvider,
-    normalizeArcGisStyle: vi.fn((st: unknown) => st),
+    ArcGISVectorTileImageryProvider: MockVectorProvider,
+    normalizeArcGISStyle: vi.fn((st: unknown) => st),
     tileCenterLngLat: vi.fn((x: number, y: number) => ({ lng: x, lat: y })),
   }
 })
 
-vi.mock('../globe/facade/webmap', () => ({
+vi.mock('./webmapProviders', () => ({
   providerForWebLayer: vi.fn(async (op: { fail?: boolean }) => (op.fail ? null : { provider: 'web' })),
   WORLD_IMAGERY_WGS84_TILES: 'https://imagery.example/{z}/{y}/{x}',
   WORLD_VECTOR_LABELS_STYLE_URL: 'https://labels.example/style.json',
 }))
 
-vi.mock('../globe/facade/scene', () => ({
+vi.mock('./scene', () => ({
   loadI3S: vi.fn(async (url: string) => ({ prim: 'i3s-' + url })),
   load3DTiles: vi.fn(async (url: string) => ({ tileset: '3d-' + url })),
 }))
 
-vi.mock('../globe/facade/cameraApi', () => ({
+vi.mock('./cameraActions', () => ({
   registerViewer: vi.fn(),
   unregisterViewer: vi.fn(),
   flyToHome: vi.fn(),
-}))
-
-const viewportMock = vi.hoisted(() => {
-  const controllers: Array<{ update: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn> }> = []
-  return { controllers }
-})
-
-vi.mock('../globe/viewport/viewportController', () => ({
-  createViewportController: vi.fn(() => {
-    const ctl = { update: vi.fn(async () => {}), dispose: vi.fn() }
-    viewportMock.controllers.push(ctl)
-    return ctl
-  }),
 }))
 
 function viewer() {
@@ -290,7 +277,6 @@ describe('CesiumFacade（W3.4）', () => {
     cesiumMock.terrainProviders.length = 0
     cesiumMock.inputHandlers.length = 0
     cesiumMock.failNextCreate = false
-    viewportMock.controllers.length = 0
     maplibreMock.instances.length = 0
     maplibreMock.failNext = false
     __resetTerrainCacheForTest()
@@ -350,7 +336,7 @@ describe('CesiumFacade（W3.4）', () => {
       expect(facade.viewer).toBeNull()
     })
 
-    it('destroy 注销 cameraApi 并销毁 Viewer', () => {
+    it('destroy 注销 cameraActions 并销毁 Viewer', () => {
       const { facade, v } = makeFacade()
       facade.destroy()
       expect(v.destroy).toHaveBeenCalledTimes(1)
@@ -424,7 +410,7 @@ describe('CesiumFacade（W3.4）', () => {
       expect(v.camera.computeViewRectangle).toHaveBeenCalled()
     })
 
-    it('flyToHome 委托 cameraApi', () => {
+    it('flyToHome 委托 cameraActions', () => {
       const { facade, v } = makeFacade()
       facade.flyToHome()
       expect(vi.mocked(flyToHome)).toHaveBeenCalledWith(v)
@@ -810,26 +796,26 @@ describe('CesiumFacade（W3.4）', () => {
   })
 
   describe('视口 / 资源释放', () => {
-    it('createViewport 创建控制器、立即更新一次并监听 moveEnd；unsubscribe 幂等移除', async () => {
+    it('viewportSurface 暴露场景表面；onMoveEnd 可订阅并返回取消函数', () => {
       const { facade, v } = makeFacade()
-      const note = vi.fn()
-      const handle = facade.createViewport('https://svc', 200, note)
-      expect(viewportMock.controllers.length).toBe(1)
-      expect(viewportMock.controllers[0].update).toHaveBeenCalledTimes(1)
-      expect(v.camera.moveEnd.addEventListener).toHaveBeenCalledTimes(1)
-      handle.unsubscribeMoveEnd()
-      handle.unsubscribeMoveEnd()
-      expect(v.camera.moveEnd.removeEventListener).toHaveBeenCalledTimes(1)
-      expect(note).not.toHaveBeenCalled()
+      const surface = facade.viewportSurface()
+      expect(surface).not.toBeNull()
+      expect(surface!.scene).toBe(v.scene)
+      expect(surface!.prims).toBe(v.scene.primitives)
+      const cb = vi.fn()
+      const off = surface!.onMoveEnd(cb)
+      expect(v.camera.moveEnd.addEventListener).toHaveBeenCalledWith(cb)
+      off()
+      expect(v.camera.moveEnd.removeEventListener).toHaveBeenCalledWith(cb)
+      // mock camera computeViewRectangle 返回弧度 {west:0,south:0,east:1,north:1} → 度
+      expect(surface!.viewEnvelope()).toEqual({ west: 0, south: 0, east: 180 / Math.PI, north: 180 / Math.PI })
+      expect(() => surface!.requestFrame()).not.toThrow()
     })
 
-    it('createViewport viewer 销毁时返回 noop 句柄', () => {
+    it('viewportSurface viewer 销毁时返回 null', () => {
       const { facade, v } = makeFacade()
       v.isDestroyed.mockReturnValue(true)
-      const handle = facade.createViewport('https://svc', 100)
-      expect(viewportMock.controllers.length).toBe(0)
-      expect(() => handle.controller.update({ west: 0, south: 0, east: 1, north: 1 })).not.toThrow()
-      expect(() => handle.unsubscribeMoveEnd()).not.toThrow()
+      expect(facade.viewportSurface()).toBeNull()
     })
 
     it('removeRuntime 释放全部 Cesium 资源且幂等', () => {

@@ -1,16 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { registerViewer, unregisterViewer, resetView, orientView } from './facade/cameraApi'
-import { useAppStore } from '../state/store'
+import {
+  registerViewer,
+  unregisterViewer,
+  resetView,
+  orientView,
+  setUserHomeResolver,
+} from './cameraActions'
 
 vi.mock('cesium', () => ({
   Cartesian3: { fromDegrees: (...a: number[]) => ({ tag: 'fromDegrees', args: a }) },
   Math: { toRadians: (d: number) => (d * Math.PI) / 180 },
-}))
-
-// mock 定位模块：返回固定用户位置
-vi.mock('./geo', () => ({
-  fetchUserHome: vi.fn(() => Promise.resolve({ lat: 31, lon: 121 })),
-  UserHome: {},
 }))
 
 function makeViewer() {
@@ -29,10 +28,10 @@ function makeViewer() {
   }
 }
 
-describe('cameraApi', () => {
+describe('cameraActions', () => {
   beforeEach(() => {
     unregisterViewer()
-    useAppStore.setState({ userHome: null })
+    setUserHomeResolver(() => Promise.resolve({ lat: 31, lon: 121 }))
     vi.clearAllMocks()
   })
 
@@ -41,7 +40,15 @@ describe('cameraApi', () => {
     expect(() => orientView()).not.toThrow()
   })
 
-  it('resetView 飞到用户位置（/api/geo），保持默认初始高度、垂直俯视', async () => {
+  it('未注入 resolver 时 resetView 直接返回', async () => {
+    setUserHomeResolver(null)
+    const v = makeViewer()
+    registerViewer(v as never)
+    await resetView()
+    expect(v.camera.flyTo).not.toHaveBeenCalled()
+  })
+
+  it('resetView 飞到注入的 resolver 返回的用户位置，保持默认初始高度、垂直俯视', async () => {
     const v = makeViewer()
     registerViewer(v as never)
     await resetView()
