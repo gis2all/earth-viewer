@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { resolveServiceItem } from './serviceItem'
+import { resolveServiceItem } from './arcgisItem'
 
 afterEach(() => vi.unstubAllGlobals())
 

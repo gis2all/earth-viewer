@@ -1,5 +1,6 @@
-import { withFetchTimeout, type WebLayer } from './facade/webmap'
-import { layerTypeForItemType } from './itemTypes'
+import { withFetchTimeout } from './http'
+import type { WebLayer } from '../domain/types'
+import { layerTypeForItemType } from '../domain/itemTypes'
 
 export interface ServiceItemInput {
   id: string

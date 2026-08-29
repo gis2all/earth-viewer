@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { fetchUserHome, getUserHome, resetUserHomeCache } from './geo'
+import { fetchUserHome, getUserHome, resetUserHomeCache } from './userLocation'
 
 describe('geo (用户大概定位)', () => {
   beforeEach(() => {

@@ -1,6 +1,6 @@
-import { parseFeatureCollection } from './featureQuery'
+import { parseFeatureCollection } from './featureParse'
 import { applyVertexBudget } from './budget'
-import { consumeFeatureBudget } from '../loadSafety'
+import { consumeFeatureBudget } from '../../domain/loadSafety'
 
 export interface ViewportProcessInput {
   geojson: unknown

@@ -9,8 +9,8 @@
  * 所有请求走 service/http.ts 中间件（超时 / 429 退避 / abort / 错误归一化）。
  * UI 层（LayerPanel）与渲染层（GlobeViewer）不得再直接 fetch ArcGIS。
  */
-import { SEARCH_ITEM_TYPES, isWebMapContainer } from '../globe/itemTypes'
-import { DEFAULT_BUDGET_POLICY } from '../domain/policy'
+import { SEARCH_ITEM_TYPES, isWebMapContainer } from '../domain/itemTypes'
+import { DEFAULT_BUDGET_POLICY } from '../domain/budgetPolicy'
 import { fetchJson, HttpError } from './http'
 
 // ---------- 搜索结果 ----------

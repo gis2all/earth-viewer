@@ -16,8 +16,8 @@ vi.mock('./repository', async (importOriginal) => {
   }
 })
 
-vi.mock('../globe/loadSafety', async (importOriginal) => {
-  const mod = await importOriginal<typeof import('../globe/loadSafety')>()
+vi.mock('../domain/loadSafety', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../domain/loadSafety')>()
   return {
     ...mod,
     assertUrlWithinLimit: vi.fn(async () => undefined),
@@ -25,25 +25,25 @@ vi.mock('../globe/loadSafety', async (importOriginal) => {
   }
 })
 
-vi.mock('../globe/viewport/worker', () => ({
+vi.mock('./processing/viewportWorker', () => ({
   runViewportProcess: vi.fn(async (input: { geojson: unknown; maxVertices?: number; maxFeatures?: number }) => {
     const raw = input.geojson as { features?: unknown[] }
     return { features: raw.features ?? [], capped: false, vertices: 0 }
   }),
 }))
 
-vi.mock('../globe/kml', () => ({
+vi.mock('./formats/kml', () => ({
   parseKmlToGeoJSON: vi.fn((text: string) => ({
     type: 'FeatureCollection',
     features: text.includes('<Placemark>') ? [{ type: 'Feature', properties: {}, geometry: null }] : [],
   })),
 }))
 
-vi.mock('../globe/csv', () => ({
+vi.mock('./formats/csv', () => ({
   fetchCsvGeoJSON: vi.fn(async () => ({ type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [0, 0] } }] })),
 }))
 
-vi.mock('../globe/ogc', () => ({
+vi.mock('./formats/ogc', () => ({
   fetchOgcFeatureGeoJSON: vi.fn(async () => ({ type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: null }] })),
 }))
 
@@ -51,10 +51,10 @@ const fetchStub = vi.fn()
 vi.stubGlobal('fetch', fetchStub)
 
 import { fetchWebmap, fetchFeatureGeoJSON, preflightItem } from './repository'
-import { runViewportProcess } from '../globe/viewport/worker'
-import { parseKmlToGeoJSON } from '../globe/kml'
-import { fetchCsvGeoJSON } from '../globe/csv'
-import { fetchOgcFeatureGeoJSON } from '../globe/ogc'
+import { runViewportProcess } from './processing/viewportWorker'
+import { parseKmlToGeoJSON } from './formats/kml'
+import { fetchCsvGeoJSON } from './formats/csv'
+import { fetchOgcFeatureGeoJSON } from './formats/ogc'
 
 const abortSignal = (): AbortSignal => new AbortController().signal
 

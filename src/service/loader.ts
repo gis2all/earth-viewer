@@ -4,17 +4,17 @@
  * - 按 LayerKind 分发到 globe 层协议适配器（ogc/csv/kml），统一走 repository 取数；
  * - 输出纯数据 LoadResult，渲染层据此构造 ImageryLayer / DataSource / Primitive。
  */
-import { LayerLoadError, type LayerInput } from '../domain/adapter'
-import { LAYER_REGISTRY, layerKindOf } from '../domain/registry'
-import { DEFAULT_BUDGET_POLICY, type BudgetPolicy } from '../domain/policy'
+import { LayerLoadError, type LayerInput } from '../domain/layerAdapter'
+import { LAYER_REGISTRY, layerKindOf } from '../domain/layerRegistry'
+import { DEFAULT_BUDGET_POLICY, type BudgetPolicy } from '../domain/budgetPolicy'
 import type { LayerKind } from '../domain/types'
-import { isWebMapContainer } from '../globe/itemTypes'
-import { parseKmlToGeoJSON } from '../globe/kml'
-import { assertUrlWithinLimit, consumeFeatureBudget } from '../globe/loadSafety'
-import { runViewportProcess } from '../globe/viewport/worker'
-import { applyVertexBudget } from '../globe/viewport/budget'
-import { fetchCsvGeoJSON } from '../globe/csv'
-import { fetchOgcFeatureGeoJSON } from '../globe/ogc'
+import { isWebMapContainer } from '../domain/itemTypes'
+import { parseKmlToGeoJSON } from './formats/kml'
+import { assertUrlWithinLimit, consumeFeatureBudget } from '../domain/loadSafety'
+import { runViewportProcess } from './processing/viewportWorker'
+import { applyVertexBudget } from './processing/budget'
+import { fetchCsvGeoJSON } from './formats/csv'
+import { fetchOgcFeatureGeoJSON } from './formats/ogc'
 import { fetchFeatureGeoJSON, fetchWebmap, preflightItem } from './repository'
 
 /** 预算消费结果：镜像 GlobeViewer 内联 consumeBudget 的语义（抽稀 → 截断 → 剩余预算）。 */
@@ -121,7 +121,7 @@ export async function loadLayerData(
   return { kind: kind as 'feature' | 'wfs' | 'csv' | 'geojson' | 'kml', input, data: consumed.data, capped: processed.capped || consumed.capped, preflight: true }
 }
 
-/** 识别输入图层类型：容器显式匹配；其余委托 domain/registry。 */
+/** 识别输入图层类型：容器显式匹配；其余委托 domain/layerRegistry。 */
 export function kindOf(input: LayerInput): LayerKind | null {
   if (isWebMapContainer(input.type ?? input.layerType ?? '')) return input.type?.toLowerCase().includes('scene') ? 'webscene' : 'webmap'
   const matches = LAYER_REGISTRY.matchAll(input)

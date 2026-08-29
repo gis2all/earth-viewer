@@ -39,6 +39,13 @@ const DEFAULT_MAX_RETRIES = 2
 const DEFAULT_RETRY_BASE_MS = 300
 const RETRYABLE_STATUS = new Set([429])
 
+/** 组合传入的取消信号与超时信号（供原始 fetch 场景复用，JSON 请求请直接用 fetchJson）。 */
+export function withFetchTimeout(signal?: AbortSignal): AbortSignal {
+  return signal
+    ? AbortSignal.any([signal, AbortSignal.timeout(DEFAULT_TIMEOUT_MS)])
+    : AbortSignal.timeout(DEFAULT_TIMEOUT_MS)
+}
+
 /** 429 抖动记录：最近被限流的 URL → 时间戳（供 Loader/Scheduler 决定是否延后重试）。 */
 const rateLimitHistory = new Map<string, number>()
 

@@ -6,7 +6,7 @@
  * 保真度：保留 name/description 与 LineStyle/PolyStyle/IconStyle 基础颜色与图标；复杂样式/网络样式从简。
  * 注意：仅作预算管线输入，若解析失败/无要素，调用方应回退原生 Cesium.KmlDataSource.load。
  */
-import type { FeatureStyleSpec } from './facade/vector'
+import type { FeatureStyleSpec } from '../../domain/types'
 
 export interface KmlStyleSpec {
   iconHref?: string

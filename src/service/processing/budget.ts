@@ -1,5 +1,5 @@
-import { countVertices, countFeatureCollectionVertices } from './featureQuery'
-import { simplifyFeatureCollection } from './simplify'
+import { countVertices, countFeatureCollectionVertices } from './featureParse'
+import { simplifyFeatureCollection } from '../../domain/geometry/simplify'
 
 export interface BudgetResult<T> {
   data: T

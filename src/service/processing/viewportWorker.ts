@@ -1,4 +1,4 @@
-import { processViewportData, type ViewportProcessInput, type ViewportProcessResult } from './process'
+import { processViewportData, type ViewportProcessInput, type ViewportProcessResult } from './viewportProcess'
 
 /**
  * 在 Web Worker 中运行视口数据处理管线；jsdom/无 Worker 环境回退到同步（便于测试）。
@@ -8,7 +8,7 @@ export function runViewportProcess(input: ViewportProcessInput): Promise<Viewpor
   if (typeof Worker === 'undefined') return Promise.resolve(processViewportData(input))
   return new Promise((resolve) => {
     try {
-      const w = new Worker(new URL('./dataWorker.ts', import.meta.url), { type: 'module' })
+      const w = new Worker(new URL('./viewportWorker.entry.ts', import.meta.url), { type: 'module' })
       const id = Math.random().toString(36).slice(2)
       w.onmessage = (e: MessageEvent<{ id: string; result: ViewportProcessResult }>) => {
         if (e.data?.id === id) {

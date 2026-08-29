@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { runViewportProcess } from './worker'
+import { runViewportProcess } from './viewportWorker'
 
 describe('runViewportProcess', () => {
   it('无 Worker 环境回退同步处理', async () => {

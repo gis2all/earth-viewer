@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { processViewportData } from './process'
+import { processViewportData } from './viewportProcess'
 
 describe('processViewportData', () => {
   it('正常数据解析并保留', () => {

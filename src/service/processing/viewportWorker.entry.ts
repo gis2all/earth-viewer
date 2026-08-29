@@ -1,5 +1,5 @@
-import { processViewportData } from './process'
-import type { ViewportProcessInput, ViewportProcessResult } from './process'
+import { processViewportData } from './viewportProcess'
+import type { ViewportProcessInput, ViewportProcessResult } from './viewportProcess'
 
 interface WorkerMessage {
   id: string
