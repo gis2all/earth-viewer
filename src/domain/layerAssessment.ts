@@ -170,6 +170,24 @@ export function skippedBusinessLayers(wm: Record<string, unknown>): number {
   return Math.max(0, businessRenderableCount(wm) - MAX_BUSINESS_LAYERS)
 }
 
+/** 判断 webmap 是否自带可替代固定底图的底图（baseMapLayers 中存在 full/partial 且非纯 overlay）。 */
+export function hasOwnBasemap(wm: Record<string, unknown>): boolean {
+  const bmLayers = ((wm.baseMap as { baseMapLayers?: WebLayer[] } | undefined)?.baseMapLayers) ?? []
+  const stack = [...bmLayers]
+  while (stack.length) {
+    const l = stack.pop() as WebLayer
+    if (isGroupLayer(l)) {
+      stack.push(...groupChildren(l))
+      continue
+    }
+    const role = baseMapRole(l)
+    if (role === 'overlay') continue
+    const a = classifyLayer(l, role)
+    if (a.support === 'full' || a.support === 'partial') return true
+  }
+  return false
+}
+
 /** 整体评估一个 webmap 在 Cesium 下的渲染能力（统一入口） */
 export function assessWebmap(wm: Record<string, unknown>): WebmapAssessment {
   const assessments = collectLayers(wm).map(({ l, role }) => classifyLayer(l, role))

@@ -93,6 +93,10 @@ export class CesiumFacade {
   private _vectorSeq = 0
   private _labelsProvider: ArcGISVectorTileImageryProvider | null = null
   private _labelsToken = 0
+  /** 固定底图对应的 runtime（addBaseLayers 时记录，供 setBaseVisible 切换图层 show）。 */
+  private _baseRuntime: LayerRuntime | null = null
+  /** 固定底图（World Imagery + World Labels）当前是否可见；缺省 true。 */
+  private _baseVisible = true
   /** 档位重建中：阻止嵌套 _applyTier（重建时 register/unregister 触发核算） */
   private _applyingTier = false
   /** 相机运动监听是否已注册（有矢量 provider 时才需要） */
@@ -461,6 +465,7 @@ export class CesiumFacade {
     if (!v || v.isDestroyed()) return
     const layers = v.imageryLayers
     if (layers.length > 0) return
+    this._baseRuntime = runtime
     const base = new Cesium.ImageryLayer(
       new Cesium.UrlTemplateImageryProvider({
         url: WORLD_IMAGERY_WGS84_TILES,
@@ -468,10 +473,26 @@ export class CesiumFacade {
         maximumLevel: 22,
       })
     )
+    base.show = this._baseVisible
     layers.add(base, 0)
     this.pushImagery(runtime, base)
     this._attachLabels(runtime)
     this.requestFrame()
+  }
+
+  /**
+   * 切换固定底图（World Imagery + World Labels）的可见性。
+   * 当某个 webmap 自带可替代底图时调用方传入 false，避免其透明像素把固定底图透出。
+   * 用 ImageryLayer.show 隐藏，不移除图层也不销毁 provider，可随时恢复。
+   */
+  setBaseVisible(visible: boolean) {
+    this._baseVisible = visible
+    const rt = this._baseRuntime
+    if (!rt) return
+    for (const entry of rt.imagery) {
+      const layer = (entry as unknown as { layer?: Cesium.ImageryLayer }).layer
+      if (layer) layer.show = visible
+    }
   }
 
   /** 创建/重建底图标注 provider（档位变化时由 _vectorRebuilds 触发）。 */
@@ -521,6 +542,7 @@ export class CesiumFacade {
         // 重建时若旧实例已挂载则先移除（首次挂载 findIndex 为 -1，不销毁新 provider）
         this._removeVectorImagery(runtime, provider)
         const il = new Cesium.ImageryLayer(provider as unknown as Cesium.ImageryProvider)
+        il.show = this._baseVisible
         v.imageryLayers.add(il)
         this.pushImagery(runtime, il, provider)
         this.requestFrame()
@@ -554,7 +576,7 @@ export class CesiumFacade {
       return false
     }
     const il = new Cesium.ImageryLayer(img)
-    if (typeof op.opacity === 'number') il.alpha = op.opacity
+    // 数据层一律不透明：不再应用来源 opacity，避免半透明把固定底图与标注透出导致视觉错乱。
     v.imageryLayers.add(il)
     this.pushImagery(runtime, il)
     this.requestFrame()
@@ -625,7 +647,7 @@ export class CesiumFacade {
         // 重建时若旧实例已挂载则先移除（首次挂载 findIndex 为 -1，不销毁新 provider）
         this._removeVectorImagery(runtime, provider)
         const il = new Cesium.ImageryLayer(provider as unknown as Cesium.ImageryProvider)
-        if (typeof op.opacity === 'number') il.alpha = op.opacity
+        // 数据层一律不透明：不再应用来源 opacity，避免半透明把固定底图与标注透出导致视觉错乱。
         v.imageryLayers.add(il)
         this.pushImagery(runtime, il, provider)
         this.requestFrame()
@@ -878,6 +900,7 @@ export class CesiumFacade {
     this._vectorRebuilds.clear()
     this._vectorProviders.clear()
     this._vectorTokens.clear()
+    this._baseRuntime = null
     this.inputHandler?.destroy()
     this.inputHandler = null
     this.inputRefs = 0

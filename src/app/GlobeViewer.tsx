@@ -16,6 +16,7 @@ import { LayerController } from '../controller/layerController'
 import { renderWebmap } from '../globe/globeRenderer'
 import { createEmptyRuntime } from '../domain/layerRuntime'
 import { fetchUserHome } from '../service/userLocation'
+import { hasOwnBasemap } from '../domain/layerAssessment'
 
 const WEBGL_UNAVAILABLE_MSG =
   '当前浏览器无法创建 WebGL，地球无法渲染。请使用开启硬件加速的 Chrome/Edge 访问（Codex内置浏览器 / 无GPU环境不支持）'
@@ -126,6 +127,17 @@ export function GlobeViewer() {
   // 图层管理：store.added 变化 → 控制器差分同步（渲染/释放由 LayerController + renderWebmap 负责）
   useEffect(() => {
     layerCtrlRef.current?.setItems(added.filter((a) => a.kind === 'webmap' && a.webmap))
+  }, [added])
+
+  // 固定底图可见性：任一 webmap 自带可替代底图时隐藏，避免其透明像素把 WGS84 影像与标注透出；
+  // 全部移除后恢复固定底图。
+  useEffect(() => {
+    const f = facadeRef.current
+    if (!f) return
+    const anyOwnBasemap = added.some(
+      (a) => a.kind === 'webmap' && a.webmap && hasOwnBasemap(a.webmap)
+    )
+    f.setBaseVisible(!anyOwnBasemap)
   }, [added])
 
   return (

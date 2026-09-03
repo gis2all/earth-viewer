@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { assessWebmap, classifyLayer, renderableLayersFromWebmap, skippedBusinessLayers } from './layerAssessment'
+import { assessWebmap, classifyLayer, hasOwnBasemap, renderableLayersFromWebmap, skippedBusinessLayers } from './layerAssessment'
 import type { WebLayer } from './types'
 
 const layer = (l: Partial<WebLayer>): WebLayer => ({ title: 't', ...l })
@@ -216,5 +216,62 @@ describe('renderableLayersFromWebmap', () => {
     expect(skippedBusinessLayers({ baseMap: { baseMapLayers: [] }, operationalLayers: mk(8) } as unknown as Record<string, unknown>)).toBe(3)
     expect(skippedBusinessLayers({ baseMap: { baseMapLayers: [] }, operationalLayers: mk(2) } as unknown as Record<string, unknown>)).toBe(0)
     expect(skippedBusinessLayers({ baseMap: { baseMapLayers: [] }, operationalLayers: [] } as unknown as Record<string, unknown>)).toBe(0)
+  })
+})
+
+describe('hasOwnBasemap', () => {
+  it('baseMapLayers 为空的 webmap 视为无自带底图', () => {
+    expect(hasOwnBasemap({ baseMap: { baseMapLayers: [] } } as unknown as Record<string, unknown>)).toBe(false)
+    expect(hasOwnBasemap({} as unknown as Record<string, unknown>)).toBe(false)
+  })
+
+  it('自带可渲染底图（MapServer / VectorTile）→ true', () => {
+    const wm = {
+      baseMap: {
+        baseMapLayers: [
+          layer({ title: 'Modern Antique', url: '', layerType: 'VectorTileLayer', styleUrl: 'https://x/style' }),
+        ],
+      },
+      operationalLayers: [],
+    }
+    expect(hasOwnBasemap(wm as unknown as Record<string, unknown>)).toBe(true)
+    const wm2 = {
+      baseMap: {
+        baseMapLayers: [
+          layer({ title: 'Topo', url: 'https://x/World_Topo_Map/MapServer', layerType: 'ArcGISTiledMapServiceLayer' }),
+        ],
+      },
+      operationalLayers: [],
+    }
+    expect(hasOwnBasemap(wm2 as unknown as Record<string, unknown>)).toBe(true)
+  })
+
+  it('仅 overlay 底图（Hillshade/Boundaries）→ false', () => {
+    const wm = {
+      baseMap: {
+        baseMapLayers: [
+          layer({ title: 'Hillshade', url: 'https://x/Elevation/World_Hillshade/MapServer', layerType: 'ArcGISTiledMapServiceLayer' }),
+        ],
+      },
+      operationalLayers: [],
+    }
+    expect(hasOwnBasemap(wm as unknown as Record<string, unknown>)).toBe(false)
+  })
+
+  it('分组底图展平后仍能识别', () => {
+    const wm = {
+      baseMap: {
+        baseMapLayers: [
+          layer({
+            title: 'Group', layerType: 'ArcGISGroupLayer',
+            layers: [
+              layer({ title: 'F1', url: 'https://x/MapServer', layerType: 'ArcGISTiledMapServiceLayer' }),
+            ],
+          }),
+        ],
+      },
+      operationalLayers: [],
+    }
+    expect(hasOwnBasemap(wm as unknown as Record<string, unknown>)).toBe(true)
   })
 })

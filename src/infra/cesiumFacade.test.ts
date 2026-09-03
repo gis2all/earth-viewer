@@ -166,7 +166,7 @@ vi.mock('cesium', () => {
       return { scheme: 'geo' }
     }),
     ImageryLayer: vi.fn(function (provider: unknown) {
-      const inst = { provider, alpha: 1 }
+      const inst = { provider, alpha: 1, show: true }
       CM.imageryLayerInstances.push(inst)
       return inst
     }),
@@ -616,6 +616,33 @@ describe('CesiumFacade（W3.4）', () => {
       expect(v.imageryLayers.list.length).toBe(2)
     })
 
+    it('setBaseVisible(false) 隐藏固定底图与已挂载标注，true 恢复', async () => {
+      const { facade, v } = makeFacade()
+      const runtime = freshRuntime()
+      facade.addBaseLayers(runtime)
+      await flush()
+      expect(v.imageryLayers.list.length).toBe(2)
+      expect(v.imageryLayers.list[0].show).toBe(true)
+      expect(v.imageryLayers.list[1].show).toBe(true)
+      facade.setBaseVisible(false)
+      expect(v.imageryLayers.list[0].show).toBe(false)
+      expect(v.imageryLayers.list[1].show).toBe(false)
+      facade.setBaseVisible(true)
+      expect(v.imageryLayers.list[0].show).toBe(true)
+      expect(v.imageryLayers.list[1].show).toBe(true)
+    })
+
+    it('setBaseVisible(false) 后新挂载的标注层也保持隐藏', async () => {
+      const { facade, v } = makeFacade()
+      const runtime = freshRuntime()
+      facade.addBaseLayers(runtime)
+      facade.setBaseVisible(false)
+      expect(v.imageryLayers.list[0].show).toBe(false)
+      await flush()
+      expect(v.imageryLayers.list.length).toBe(2)
+      expect(v.imageryLayers.list[1].show).toBe(false)
+    })
+
     it('addBaseLayers 标注样式失败时销毁 provider', async () => {
       const { facade } = makeFacade()
       const runtime = freshRuntime()
@@ -628,14 +655,14 @@ describe('CesiumFacade（W3.4）', () => {
       spy.mockRestore()
     })
 
-    it('addWebLayerImagery 挂载 ImageryLayer 并应用透明度', async () => {
+    it('addWebLayerImagery 挂载 ImageryLayer 且一律不透明（忽略来源 opacity）', async () => {
       const { facade, v } = makeFacade()
       const runtime = freshRuntime()
       const ok = await facade.addWebLayerImagery({ opacity: 0.7 } as never, runtime)
       expect(ok).toBe(true)
       expect(v.imageryLayers.list.length).toBe(1)
-      expect(v.imageryLayers.list[0].alpha).toBe(0.7)
-      expect(runtime.imagery[0].alpha).toBe(0.7)
+      expect(v.imageryLayers.list[0].alpha).toBe(1)
+      expect(runtime.imagery[0].alpha).toBe(1)
     })
 
     it('addWebLayerImagery 探测完成后 keepAlive=false → 不挂载且销毁 provider', async () => {
@@ -666,7 +693,7 @@ describe('CesiumFacade（W3.4）', () => {
       expect(onError).not.toHaveBeenCalled()
       expect(onDone).toHaveBeenCalledTimes(1)
       expect(v.imageryLayers.list.length).toBe(1)
-      expect(v.imageryLayers.list[0].alpha).toBe(0.5)
+      expect(v.imageryLayers.list[0].alpha).toBe(1)
       expect((runtime.imagery[0] as unknown as { provider?: unknown }).provider).toBe(maplibreMock.instances[0])
     })
 
