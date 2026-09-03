@@ -71,9 +71,9 @@ GitHub Actions 在 `push`（main）与 `pull_request` 时执行：`npm audit --o
 flowchart TD
     App[app 表现层<br/>React 组件 / store 订阅]
     Ctrl[controller 控制器<br/>DI 依赖注入]
-    Svc[service 数据与调度<br/>repository / loader / scheduler / http / formats / processing]
+    Svc[service 数据与调度<br/>repository / scheduler / http / formats / processing]
     Dom[domain 纯 TS 零依赖<br/>类型 / 契约 / 配置 / 状态机 / 几何]
-    Globe[globe 渲染适配<br/>globeRenderer + viewport]
+    Globe[globe 渲染适配<br/>globeRenderer + webLayerRenderer + viewport]
     Infra[infra Cesium / MapLibre 深度封装<br/>cesiumFacade / gpuMemoryManager]
 
     App --> Ctrl
@@ -99,10 +99,10 @@ flowchart TD
 ```text
 src/app/              UI + 组合根：AppShell / LayerPanel / EffectsPanel / GlobeViewer / store
 src/controller/       三个控制器（Layer / Camera / Effects），构造器依赖注入，不直接接触 Cesium 或 store
-src/service/          ArcGIS 数据入口 + 视口加工：repository / loader / scheduler / http / formats / processing
+src/service/          ArcGIS 数据入口 + 视口加工：repository / scheduler / http / formats / processing
 src/domain/           纯 TS 零依赖：类型 / 契约 / 配置 / 状态机 / 预算 / 几何（被所有层引用）
 src/infra/            Cesium / MapLibre 深度封装：cesiumFacade / gpuMemoryManager / 各 provider 适配（唯一深接触点）
-src/globe/            渲染编排：globeRenderer、viewport 视口查询与 Primitive
+src/globe/            渲染编排：globeRenderer / webLayerRenderer / viewport 视口查询与 Primitive
 src/styles/           全部样式（直角、深浅主题 CSS 变量）
 e2e/                  Playwright 冒烟、UI 与真实 ArcGIS 集成测试
 functions/            Cloudflare Pages Functions：/sharing/* 代理 + /api/geo 用户定位
