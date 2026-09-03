@@ -1,5 +1,6 @@
 import * as Cesium from 'cesium'
 import { SAFETY } from '../domain/loadSafety'
+import { classifyWebLayerKind } from '../domain/webLayerKind'
 import type { WebLayer } from '../domain/types'
 import { withFetchTimeout } from '../service/http'
 import {
@@ -17,10 +18,6 @@ export const WORLD_IMAGERY_WGS84_TILES =
 // MapLibre 当前不支持 GCS 瓦片的 equirectangular 投影，故用 Mercator 版；极区 ±85° 以上无标注，影像仍由 WGS84 底图覆盖
 export const WORLD_VECTOR_LABELS_STYLE_URL =
   'https://www.arcgis.com/sharing/rest/content/items/30d6b8271e1849cd9c3042060001f425/resources/styles/root.json'
-
-function layerKind(l: WebLayer): string {
-  return l.type || l.layerType || ''
-}
 
 /** 通过本地代理拉取 Web Map JSON（实现见 service/repository.ts）。 */
 export { fetchWebmap }
@@ -92,46 +89,45 @@ export function providerForWmts(layer: WebLayer): Cesium.ImageryProvider | null 
 }
 
 export async function providerForWebLayer(layer: WebLayer, signal?: AbortSignal): Promise<Cesium.ImageryProvider | null> {
-  const t = layerKind(layer)
+  const kind = classifyWebLayerKind(layer)
   const url = layer.url || ''
-  // 按 URL 判断 MapServer/ImageServer（兼容 layerType 为 ArcGISTiledMapServiceLayer 等）
-  if (url && /\/MapServer\/?$|\/ImageServer\/?$/i.test(url)) {
-    const crs = await detectMapService(url, signal)
-    if (crs && !crs.tiled) return providerForDynamicMapServer(url)
-    return providerForTiledMap(url, signal)
-  }
-  if (/MapServer|ImageServer/i.test(t) && url) {
-    const crs = await detectMapService(url, signal)
-    if (crs && !crs.tiled) return providerForDynamicMapServer(url)
-    return providerForTiledMap(url, signal)
-  }
-  // WMS：用 WebMapServiceImageryProvider，需图层名（webmap 里可能是 layerName 或 layers 数组）
-  if (/WMSLayer|WMS/i.test(t) && url) {
-    let name = layer.layerName
-    if (!name && Array.isArray(layer.layers) && layer.layers.length > 0) {
-      name = (layer.layers[0] as { name?: string }).name
+  switch (kind) {
+    case 'map':
+    case 'image': {
+      if (!url) return null
+      const crs = await detectMapService(url, signal)
+      if (crs && !crs.tiled) return providerForDynamicMapServer(url)
+      return providerForTiledMap(url, signal)
     }
-    if (!name && typeof layer.layers === 'string') name = layer.layers
-    if (!name) return null
-    return new Cesium.WebMapServiceImageryProvider({ url, layers: name, maximumLevel: SAFETY.IMAGERY_MAX_LEVEL })
+    case 'wms': {
+      // WMS：用 WebMapServiceImageryProvider，需图层名（webmap 里可能是 layerName 或 layers 数组）
+      if (!url) return null
+      let name = layer.layerName
+      if (!name && Array.isArray(layer.layers) && layer.layers.length > 0) {
+        name = (layer.layers[0] as { name?: string }).name
+      }
+      if (!name && typeof layer.layers === 'string') name = layer.layers
+      if (!name) return null
+      return new Cesium.WebMapServiceImageryProvider({ url, layers: name, maximumLevel: SAFETY.IMAGERY_MAX_LEVEL })
+    }
+    case 'wmts':
+      // WMTS：OGC 瓦片，需图层名
+      if (!url) return null
+      return providerForWmts(layer)
+    case 'webtiled':
+      // WebTiledLayer：XYZ 模板
+      if (!layer.urlTemplate) return null
+      return new Cesium.UrlTemplateImageryProvider({ url: layer.urlTemplate, maximumLevel: SAFETY.IMAGERY_MAX_LEVEL })
+    case 'osm':
+      return new Cesium.UrlTemplateImageryProvider({
+        url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+      })
+    case 'urlTemplate':
+      if (!layer.urlTemplate) return null
+      return new Cesium.UrlTemplateImageryProvider({ url: layer.urlTemplate, maximumLevel: SAFETY.IMAGERY_MAX_LEVEL })
+    default:
+      return null
   }
-  // WMTS：OGC 瓦片，需图层名
-  if (/WMTSLayer|WMTS/i.test(t) && url) {
-    return providerForWmts(layer)
-  }
-  // WebTiledLayer：XYZ 模板
-  if (/WebTiledLayer/i.test(t) && layer.urlTemplate) {
-    return new Cesium.UrlTemplateImageryProvider({ url: layer.urlTemplate, maximumLevel: SAFETY.IMAGERY_MAX_LEVEL })
-  }
-  if (t === 'OpenStreetMap') {
-    return new Cesium.UrlTemplateImageryProvider({
-      url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-    })
-  }
-  if (layer.urlTemplate) {
-    return new Cesium.UrlTemplateImageryProvider({ url: layer.urlTemplate, maximumLevel: SAFETY.IMAGERY_MAX_LEVEL })
-  }
-  return null
 }
 
 export interface FeatureStyle {

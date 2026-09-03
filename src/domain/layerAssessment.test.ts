@@ -20,6 +20,7 @@ describe('classifyLayer 能力表', () => {
     const none = classifyLayer(layer({ url: '', layerType: 'VectorTileLayer' }), 'basemap')
     expect(none.support).toBe('none')
     expect(none.reason).toBeTruthy()
+    expect(classifyLayer(layer({ url: '', layerType: 'VectorTileLayer', styleUrl: 'https://x/style' }), 'basemap').support).toBe('full')
     expect(classifyLayer(layer({ url: 'https://x/VectorTileServer', layerType: 'VectorTileLayer', styleUrl: 'https://x/style' }), 'basemap').support).toBe('full')
   })
   it('3D Scene / I3S → partial（客户端 I3S 渲染）', () => {

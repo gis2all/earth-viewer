@@ -5,7 +5,7 @@
  * imagery(试错可继续) → vector → featureCollection → scene → 3dTiles →
  * wfs → csv → feature → geojson → kml。
  * 除 imagery/vector/featureCollection 外，matches 同时要求 op.url，避免无服务地址的图层继续下抛。
- * 这里只保留一个静态有序分发表，不引入全局注册表。
+ * 这里只保留一个静态有序分发表，不引入全局注册表，也不做 LayerAdapter。
  */
 import type { FeatureStyleSpec, WebLayer } from '../domain/types'
 import { DEFAULT_APP_CONFIG } from '../domain/config'
@@ -28,7 +28,7 @@ import {
   isFeatureInput,
   isGeoJsonInput,
   isKmlInput,
-} from '../domain/layerRegistry'
+} from '../domain/webLayerKind'
 import { rendererToStyleFn, applyFeatureStyler, reprojectCoordinates } from '../infra/vector'
 import { parseKmlToGeoJSON, kmlStyleToFeatureStyle, type KmlStyleSpec } from '../service/formats/kml'
 import { fetchOgcFeatureGeoJSON } from '../service/formats/ogc'

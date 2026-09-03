@@ -1,6 +1,7 @@
 import type { WebLayer } from './types'
 import type { RiskLevel } from './types'
 import { DEFAULT_APP_CONFIG } from './config'
+import { classifyWebLayerKind } from './webLayerKind'
 
 // Unified load-safety limits: keep heavy layers from freezing the main thread.
 // W4.2：值统一来自 domain/config.ts（唯一来源）；保留大写下划线导出以兼容既有消费方。
@@ -28,10 +29,25 @@ export type LoadRisk = RiskLevel
 
 // Classify a layer's load risk; heavy layers are degraded / limited before rendering.
 export function riskOfLayer(op: WebLayer): LoadRisk {
-  const kind = op.layerType || op.type || ''
-  if (/featurelayer|featureserver|wfs|scenelayer|3dtiles|cesium3dtiles|integratedmesh|pointcloud|3dobject|buildingscene/i.test(kind)) return 'heavy'
-  if (/vectortilelayer|wmtslayer|wmslayer|mapservice|imageservice|mapserver|imageserver|kmllayer|geojsonlayer|csvlayer/i.test(kind)) return 'medium'
-  return 'light'
+  switch (classifyWebLayerKind(op)) {
+    case 'feature':
+    case 'wfs':
+    case 'scene':
+    case '3dTiles':
+      return 'heavy'
+    case 'map':
+    case 'image':
+    case 'vectorTile':
+    case 'featureCollection':
+    case 'wms':
+    case 'wmts':
+    case 'kml':
+    case 'geojson':
+    case 'csv':
+      return 'medium'
+    default:
+      return 'light'
+  }
 }
 
 // Human-readable reason when a layer is degraded (shown via toast / label).

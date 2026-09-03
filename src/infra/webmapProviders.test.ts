@@ -3,6 +3,10 @@ import {
   fetchFeatureStyle,
   providerForWebLayer,
 } from './webmapProviders'
+import { classifyWebLayerKind, layerKindOf } from '../domain/webLayerKind'
+import { riskOfLayer } from '../domain/loadSafety'
+import { classifyLayer } from '../domain/layerAssessment'
+import type { WebLayer } from '../domain/types'
 
 // Cesium 在 node 环境不可用，mock 掉（webmap 只用到 Color / WMS provider / UrlTemplate）
 vi.mock('cesium', () => ({
@@ -179,6 +183,63 @@ describe('fetchFeatureStyle（SimpleRenderer 符号映射）', () => {
     expect(await fetchFeatureStyle('https://x/FeatureServer/0')).toBeNull()
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({}) })))
     expect(await fetchFeatureStyle('https://x/FeatureServer/0')).toBeNull()
+  })
+})
+
+describe('图层分类跨模块一致性（W4.4 防再次漂移）', () => {
+  it('评估、风险、Provider 对同一 WebLayer 不再各自维护正则', () => {
+    const cases: Array<{
+      op: WebLayer
+      fine: string
+      coarse: ReturnType<typeof layerKindOf>
+      risk: ReturnType<typeof riskOfLayer>
+      support: ReturnType<typeof classifyLayer>['support']
+    }> = [
+      {
+        op: { layerType: 'ArcGISTiledMapServiceLayer', url: 'https://x/MapServer' },
+        fine: 'map',
+        coarse: 'map',
+        risk: 'medium',
+        support: 'full',
+      },
+      {
+        op: { layerType: 'ArcGISFeatureLayer', url: 'https://x/FeatureServer/0' },
+        fine: 'feature',
+        coarse: 'feature',
+        risk: 'heavy',
+        support: 'partial',
+      },
+      {
+        op: { layerType: 'OGCFeatureServer', url: 'https://x/FeatureServer' },
+        fine: 'wfs',
+        coarse: 'wfs',
+        risk: 'heavy',
+        support: 'partial',
+      },
+      {
+        op: { urlTemplate: 'https://x/{z}/{x}/{y}.png' },
+        fine: 'urlTemplate',
+        coarse: null,
+        risk: 'light',
+        support: 'full',
+      },
+    ]
+
+    for (const { op, fine, coarse, risk, support } of cases) {
+      expect(classifyWebLayerKind(op)).toBe(fine)
+      expect(layerKindOf(op)).toBe(coarse)
+      expect(riskOfLayer(op)).toBe(risk)
+      expect(classifyLayer(op, 'business').support).toBe(support)
+    }
+  })
+
+  it('layerType 优先于 type，FeatureLayer 不被同 URL/type 的 MapServer 分支抢走', async () => {
+    const conflict: WebLayer = { type: 'ArcGISTiledMapServiceLayer', layerType: 'ArcGISFeatureLayer', url: 'https://x/MapServer' }
+    expect(classifyWebLayerKind(conflict)).toBe('feature')
+    expect(layerKindOf(conflict)).toBe('feature')
+    expect(riskOfLayer(conflict)).toBe('heavy')
+    expect(classifyLayer(conflict, 'business').support).toBe('partial')
+    await expect(providerForWebLayer(conflict)).resolves.toBeNull()
   })
 })
 
