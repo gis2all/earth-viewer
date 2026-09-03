@@ -436,8 +436,10 @@ export function LayerPanel() {
                   {layerErrors[l.id] && (
                     <span className="added-err" title={layerErrors[l.id]}>加载失败</span>
                   )}
-                  <button className="remove-btn" onClick={() => removeLayer(l.id)} title="移除图层">
-                    ×
+                  <button className="remove-btn" onClick={() => removeLayer(l.id)} title="移除图层" aria-label="移除图层">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round">
+                      <path d="M4 12h16" />
+                    </svg>
                   </button>
                 </div>
               ))}

@@ -411,6 +411,15 @@ describe('LayerPanel 画廊补强', () => {
     await waitFor(() => expect(useAppStore.getState().added).toHaveLength(0))
   })
 
+  it('移除按钮用 SVG 减号而非文本 ×', async () => {
+    useAppStore.getState().addLayer({ id: 'x1', title: 'Added', kind: 'fallback' })
+    render(<LayerPanel />)
+    const btn = screen.getByTitle('移除图层')
+    expect(btn.querySelector('svg')).toBeInTheDocument()
+    expect(btn).toHaveAttribute('aria-label', '移除图层')
+    expect(btn.textContent).not.toContain('×')
+  })
+
   it('轻预筛下不再展示“部分支持”角标（添加时才提示）', async () => {
     const webmapPartial = {
       baseMap: { baseMapLayers: [{ title: 'Imagery', url: 'https://x/MapServer', layerType: 'ArcGISTiledMapServiceLayer' }] },
