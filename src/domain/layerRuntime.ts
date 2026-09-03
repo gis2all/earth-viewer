@@ -32,7 +32,7 @@ export interface LayerRuntime {
   dispose(): void
 }
 
-/** 构造空运行时（真实 adapter 无资源可挂载时使用）。 */
+/** 构造空运行时（尚无渲染资源可挂载时使用）。 */
 export function createEmptyRuntime(): LayerRuntime {
   return {
     imagery: [],
