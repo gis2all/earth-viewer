@@ -394,7 +394,7 @@ flowchart LR
 - 默认预算约 256MB；低内存设备按 `deviceMemory` 收紧（4GB → 256MB，2GB → 128MB）。
 - 流程：`register/update/unregister` 每次触发 `_recompute()`（对全部已注册资源按当前档位估算求和）；`reportContextLost()` 每丢失一次把允许的最高档位下调一档（1 次 → 最高 medium，2 次 → low，3 次及以上 → critical）；核算时从"当前档位与丢失上限中更严格者"起步逐级下降直到预算内。
 - ★档位**只降不升**：避免 provider 重建期间 register/unregister 反复触发升降档造成重建风暴；内存释放后 `unregister` 可升档到预算内档位。
-- 档位变化经 `subscribe` 通知 CesiumFacade：`_applyTier` → resolutionScale + 销毁重建全部 vector provider（`_vectorRebuilds` map + token 防竞态）；critical 档 moveStart/moveEnd 懒注册（`_canRenderOffscreen()` 相机静止时暂停离屏出图）；MapLibre context lost → `gpu.reportContextLost()`。
+- 档位变化经 `subscribe` 通知 CesiumFacade：`_applyTier` → resolutionScale + 销毁重建全部 vector provider（`_vectorRebuilds` map + token 防竞态）；critical 档 moveStart/moveEnd 懒注册（`_canRenderOffscreen()` 相机静止时暂停离屏出图，★只作用于业务矢量图层——**底图标注豁免**，否则浏览器静置/降档后 `_drain` 早退导致底图在而标注丢）；MapLibre context lost → `gpu.reportContextLost()`。
 - 降档不是显存硬上限，超重型叠加仍可能触发系统级 GPU 进程重启（§11）。
 
 ### 6.7 相机（★别回退）

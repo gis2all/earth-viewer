@@ -886,6 +886,24 @@ describe('CesiumFacade（W3.4）', () => {
       expect(maplibreMock.instances.length).toBeGreaterThan(before)
     })
 
+    it('critical 档相机静止时，底图标注不被离屏暂停门控（可继续出图）', () => {
+      const { facade } = makeFacade()
+      facade.addBaseLayers(freshRuntime())
+      const gpu = (facade as unknown as { _gpu: { reportContextLost(): unknown } })._gpu
+      gpu.reportContextLost()
+      gpu.reportContextLost()
+      gpu.reportContextLost()
+      // 已降 critical 且相机静止（_cameraMoving 默认 false）；标注不得被相机移动门控
+      const labels = (
+        facade as unknown as {
+          _labelsProvider: null | { opts: { canRenderNow?: () => boolean } }
+        }
+      )._labelsProvider
+      expect(labels).not.toBeNull()
+      const gate = labels!.opts.canRenderNow
+      expect(typeof gate !== 'function' || gate()).toBe(true)
+    })
+
     it('_applyTier 重入或被销毁 viewer 时直接跳过', () => {
       const { facade } = makeFacade()
       ;(facade as unknown as { _applyingTier: boolean })._applyingTier = true
