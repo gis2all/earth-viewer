@@ -116,7 +116,7 @@ flowchart TD
     Ctrl[controller 控制器<br/>DI 依赖注入]
     Svc[service 数据与调度<br/>repository / loader / scheduler / http / processing]
     Dom[domain 纯 TS 零依赖<br/>类型 / 契约 / 配置 / 状态机 / 几何]
-    Globe[globe 渲染适配<br/>globeRenderer + viewport]
+    Globe[globe 渲染适配<br/>globeRenderer + webLayerRenderer + viewport]
     Infra[infra Cesium/MapLibre 深度封装<br/>cesiumFacade / gpuMemoryManager]
 
     App --> Ctrl
@@ -137,7 +137,7 @@ flowchart TD
 
 - `domain/`：零外部依赖的纯类型与契约（LayerKind、状态机、预算策略、配置常量、Adapter 契约、几何工具）——被所有层引用，不引用任何层。
 - `infra/`：Cesium / MapLibre 深度封装的唯一入口（`CesiumFacade`、`ArcGISVectorTileImageryProvider`、`primitive`、`webmapProviders`、`cameraActions` 等）+ 统一 GPU 内存管理器（`GpuMemoryManager`）。
-- `globe/`：渲染编排层。`globeRenderer` 把数据/转换翻译成渲染指令；`globe/viewport/` 是视口驱动的查询与 Primitive 编排（数据加工管线下沉 `service/processing`，不直接接触引擎细节）。
+- `globe/`：渲染编排层。`globeRenderer` 做整图编排（相机、业务层上限、跨层预算、错误时机），`webLayerRenderer` 按 kind 在静态有序分发表中分发并渲染单个 WebLayer；`globe/viewport/` 是视口驱动的查询与 Primitive 编排（数据加工管线下沉 `service/processing`，不直接接触引擎细节）。
 - `service/`：ArcGIS 数据入口、加载调度与视口数据加工（repository / loader / scheduler / http / formats / processing）。
 - `controller/`：三个控制器，通过构造器注入依赖（deps 接口），不直接 import Cesium 或 store。
 - `app/`：表现层 + 组合根，订阅 store、创建 Facade 与控制器；不得被其它层反向导入。
@@ -199,7 +199,7 @@ earth-viz-hub/
       geometry/                       # geometry / lru（纯几何，各配单测）
       itemTypes.ts / layerAssessment.ts / loadSafety.ts    # 类型白名单 / 能力评估 / 预算兼容（纯 TS）
     infra/                            # cesiumFacade / gpuMemoryManager / cameraActions / arcgisVectorTileImageryProvider / scene / vector / webmapCamera / webmapProviders / primitive / gpuTiers（§6）
-    globe/                            # globeRenderer / viewport（视口编排）
+    globe/                            # globeRenderer / webLayerRenderer / viewport（视口编排）
       viewport/                       # viewportQuery / featureQuery / viewportController（含测试）
     testing/                          # setup.ts / mocks/cesium.ts / mockIsolation.test.ts / integration/layer-lifecycle.test.tsx
     styles/theme.css                  # 全部样式（直角、深浅主题变量）
@@ -207,7 +207,9 @@ earth-viz-hub/
 
 ### 4.3 数据流（一句话版）
 
-`LayerPanel` 按支持类型白名单并行搜索（`sortField=numViews`，走 `service/repository`）→ 点击添加按钮 `store.addLayer` → `GlobeViewer` 把 `added` 差量同步给 `LayerController`（唯一状态机）→ `service/loader` 管线（预检→取数→转换→预算）→ `globeRenderer` 转渲染指令 → `CesiumFacade` 上球；释放/错误/预算/取消由控制器与调度器负责。
+`LayerPanel` 按支持类型白名单并行搜索（`sortField=numViews`，走 `service/repository`）→ 点击添加按钮后：容器 item 经 `service/repository.fetchWebmap` 取整图，单服务 item 经 `service/arcgisItem.resolveServiceItem` 包装为 WebLayer → 统一 `store.addLayer`（`kind='webmap'` + webmap 结构）→ `GlobeViewer` 把 `added` 差量同步给 `LayerController`（唯一状态机；内部 `service/scheduler` 串行）→ `globe/globeRenderer.renderWebmap`（相机优先、业务层上限、预算控制）→ `webLayerRenderer` 逐层分发 → `CesiumFacade` 上球；释放/错误/预算/取消由控制器与调度器负责。
+
+注：`service/loader.loadLayerData` 暂未接入该主链路，作为独立纯数据管线保留并由自身单测覆盖。
 
 ### 4.4 添加图层全链路
 
@@ -215,24 +217,26 @@ earth-viz-hub/
 sequenceDiagram
     actor U as 用户
     participant P as LayerPanel
-    participant R as service/repository
+    participant R as 数据层（repository / arcgisItem）
     participant S as store (zustand)
     participant G as GlobeViewer
     participant L as LayerController
-    participant Ld as service/loader
+    participant Gr as globe/globeRenderer
     participant C as CesiumFacade
 
     P->>R: 可见项批量预检 preflightItem（3s 超时，24h 缓存）
     R-->>P: ok / bad
     U->>P: 点击卡片「添加数据」
-    P->>S: addLayer(item)
+    P->>R: 容器 fetchWebmap / 单服务 resolveServiceItem 包装 WebLayer
+    R-->>P: webmap 结构
+    P->>S: addLayer(item)（kind='webmap'，含 webmap）
     S-->>G: added 变化
     G->>L: setItems(added)（按 id 差量）
-    L->>Ld: scheduler 串行提交 job
-    Ld->>R: 取数据 / fetchWebmap / detectMapService / fetchFeatureGeoJSON
-    Ld->>Ld: applyLayerBudget（预算检查/降级）
-    Ld->>C: render 上球（keepAlive 回查）
-    C-->>L: 完成 / 异常
+    L->>L: scheduler 串行排队（并发 1）
+    L->>Gr: deps.render → renderWebmap(job)
+    Gr->>Gr: 相机/层数上限/预算；逐层经 webLayerRenderer 分发
+    Gr->>C: CesiumFacade 上球（imagery/primitive/dataSource）
+    Gr-->>L: 完成 / 抛错（控制器兜底 error）
     L-->>P: stateChange / ready / error 事件
     P-->>U: 卡片状态更新 / 错误 toast
 ```
@@ -263,17 +267,17 @@ sequenceDiagram
 
 | 文件 | 职责 | 关键导出/依赖 |
 |---|---|---|
-| `src/domain/types.ts` | ★纯类型：13 种 LayerKind（webmap/webscene/map/feature/image/scene/vector/wms/wmts/wfs/kml/geojson/csv）、RiskLevel（light/medium/heavy） | `LayerKind`、`LayerInput`、`RiskLevel` |
+| `src/domain/types.ts` | ★纯类型：13 种 LayerKind（webmap/webscene/map/feature/image/scene/vector/wms/wmts/wfs/kml/geojson/csv）、RiskLevel（light/medium/heavy） | `LAYER_KINDS`、`LayerKind`、`WebLayer`、`FeatureStyleSpec`、`RiskLevel`、`UserHome` |
 | `src/domain/config.ts` | ★全部领域/渲染/相机/UI 常量的唯一来源 + 运行时可覆盖（W4.2 收敛）：预算、camera、panel（见 §4.5） | `DEFAULT_APP_CONFIG`、`AppConfig`、`configureApp`/`appConfig`/`resetAppConfig` |
 | `src/domain/renderContract.ts` | 渲染任务契约 | `LayerRenderJob`（signal/keepAlive/markFlew/isReferenceVisible/onNote/onError/attachViewport） |
 | `src/domain/layerRuntime.ts` | 图层运行时资源表 | `LayerRuntime`（imagery/dataSources/primitives/vectorProviders）+ 幂等 `dispose` + `createEmptyRuntime` |
-| `src/domain/layerAdapter.ts` | 图层适配器契约 + 错误类型 | `LayerAdapter`、`LayerLoadError`（aborted/unsupported/network/budget） |
+| `src/domain/layerAdapter.ts` | 图层适配器契约 + 输入/加载上下文 + 错误类型 | `LayerAdapter`、`LayerInput`、`LayerLoadContext`、`LayerLoadError`（aborted/unsupported/network/budget） |
 | `src/domain/layerRegistry.ts` | 适配器注册表 + 纯分类 | `LAYER_REGISTRY`、`is*Input`；★真实 adapter 未注册（M2 backlog，loader 走回退，见 §15） |
 | `src/domain/layerStateMachine.ts` | 图层状态机（纯函数） | `LAYER_STATE_TRANSITIONS`、`canTransition`、`assertTransition`、`isTerminal`、`canStartLoad`（§8.2） |
 | `src/domain/budgetPolicy.ts` | 预算策略 | `BudgetPolicy`、`DEFAULT_BUDGET_POLICY` |
 | `src/domain/geometry/` | 纯几何算法与模型（零渲染依赖）：视口 envelope、点聚类、点/线/面模型转换、Douglas-Peucker 抽稀 + LRU | `geometry.ts`（`ViewEnvelope`/`viewEnvelopeFromCamera`/`clusterPoints`/`featuresToGeometryModel`/`simplifyFeatureCollection`）、`lru.ts`（`createLru`/`viewportCacheKey`） |
 | `src/service/repository.ts` | ★ArcGIS 请求与缓存唯一收口：搜索/元数据/数据/服务探测/预检/特性分页 | 函数清单见 §7.1 |
-| `src/service/loader.ts` | 预检→取数→转换→预算的加载管线 | `loadLayerData`、`kindOf`（委托 registry，回退纯分类）、`applyLayerBudget` |
+| `src/service/loader.ts` | 独立纯数据加载管线（预检→取数→转换→预算；当前主链路未接入，见 §4.3） | `loadLayerData`、`kindOf`（委托 registry，回退纯分类）、`applyLayerBudget` |
 | `src/service/scheduler.ts` | 视口优先级 + 串行渲染调度 | `LayerScheduler`（并发默认 1、`priority()` 实时插队、cancel 只移除排队、dispose） |
 | `src/service/http.ts` | 请求中间件（唯一 fetch 出口） | `fetchJson`（15s 超时、429 退避 300ms 起最大 2 重试+抖动）、`markRateLimited`/`wasRecentlyRateLimited`、`HttpError`/`TimeoutError` |
 | `src/controller/layerController.ts` | ★图层生命周期唯一状态机：runtime 表 + abort + viewport 句柄 + 串行队列（§8.2） | 事件 `stateChange/ready/error/removed`；不 import Cesium/store，渲染经 deps.render 委托 |
@@ -282,7 +286,8 @@ sequenceDiagram
 | `src/infra/cesiumFacade.ts` | ★Cesium 深度封装唯一入口（§6.2） | 方法清单见 §6.2；项目内其余地方不散见 `Cesium.` |
 | `src/infra/gpuMemoryManager.ts` | ★统一 GPU 内存预算管理器（§6.6） | `register/update/unregister/reportContextLost/subscribe/current`；默认预算 256MB，按 deviceMemory 收紧 |
 | `src/app/GlobeViewer.tsx` | 瘦组件：创建 CesiumFacade + 订阅三个 Controller + 转发渲染唤醒；相机优先/userHome 回退（`setUserHomeResolver` 注入）；★`window.__E2E__` 跳过 Cesium（§8.5） | 依赖 infra/controller/globe |
-| `src/globe/globeRenderer.ts` | webmap 数据/转换 → 渲染指令（供 LayerController.render 回调） | `renderWebmap` |
+| `src/globe/globeRenderer.ts` | renderWebmap 编排入口：相机、业务层上限、跨层预算、错误与清错时机；单层渲染交给下方模块 | `renderWebmap` |
+| `src/globe/webLayerRenderer.ts` | WebLayer 按类型渲染：静态有序分发表 + 每类渲染器（不引入注册表） | `renderWebLayer` |
 | `src/domain/layerAssessment.ts` | ★"能否渲染"唯一事实源：能力表、角色分类、整体评估、业务层上限（§6.4） | `classifyLayer`、`assessWebmap`、`renderableLayersFromWebmap`、`MAX_BUSINESS_LAYERS` |
 | `src/infra/webmapProviders.ts` | webmap 底图常量 + 各类 provider 构建（Cesium 适配层） | `WORLD_IMAGERY_WGS84_TILES`、`WORLD_VECTOR_LABELS_STYLE_URL`、`providerForDynamicMapServer`（/export 4326 兜底）、`providerForWmts`、`providerForWebLayer`、`fetchFeatureStyle`、`withFetchTimeout` |
 | `src/infra/arcgisVectorTileImageryProvider.ts` | ★VectorTile 官方样式渲染：MapLibre 离屏 512px 栅格化 → Cesium `ImageryProvider`（§6.5） | `ArcGISVectorTileImageryProvider`、`normalizeArcGISStyle`/`keepTextLayersOnly`（无 sprite 时移除 icon-image）、`cropTile`、`resolveStyleUrl`、`applyLabelLanguage`（'en'/'local'） |
@@ -533,9 +538,9 @@ stateDiagram-v2
 
 ## 10. 测试与质量门禁
 
-- **单测**：Vitest（jsdom），**617 个用例 / 44 个文件全过**（2026-08-29 `output/test-results.json` 实测）。`npm run test:coverage`
+- **单测**：Vitest（jsdom），**617 个用例 / 44 个文件全过**（2026-09-03 `output/test-results.json` 实测）。`npm run test:coverage`
 - **覆盖率门槛**（vitest.config.ts）：★statements ≥90 / lines ≥90 / functions ≥85 / branches ≥70；include **全 src**，exclude 入口壳（`main.tsx` / `App.tsx`）、测试文件与测试基建（`src/testing/**`）、`service/processing/viewportWorker.entry.ts`、`infra/primitive.ts`——真实口径，不玩数字。
-- **覆盖率实测**（2026-08-29）：statements **94.21** / branches **86.61** / functions **95.59** / lines **96.93**。
+- **覆盖率实测**（2026-09-03）：statements **94.24** / branches **86.7** / functions **95.72** / lines **96.93**。
 - **架构门禁**：`npm run check:arch`（scripts/check-arch.mjs，含 lint）——全依赖矩阵（§4.1）：Cesium/MapLibre 仅限 `src/infra/**`（测试豁免）、domain 零外部依赖、app 不被反向导入、未知层目录报错；CI 已跑此步。
 - **E2E**：Playwright **35 项**（app.spec 2 / ui.spec 14 / integration.spec 19；integration 走真实 ArcGIS，具体以 CI/output/e2e-results.json 为准）。★E2E 轻量模式：`app.spec.ts`、`ui.spec.ts` 注入 `window.__E2E__`，GlobeViewer 跳过 Cesium 创建（CI 无头软件渲染极慢）；「球真实渲染+图层上球」由线上/容器验证覆盖。
 - **徽章**：6 个（CI / License / Coverage / Deps / Tests / E2E）；`scripts/badge.mjs` 从 coverage-summary/audit/output/test-results/output/e2e-results 生成 → GitHub Actions 发布 → shields endpoint 渲染，每次 CI 实时生成。
@@ -614,7 +619,7 @@ stateDiagram-v2
 ### T1 新增一个图层类型（如 CSV）
 
 1. `src/domain/types.ts` → `LayerKind` 加类型；`src/domain/layerAssessment.ts` → `classifyLayer` 能力表加判定（full/partial/none + 原因）
-2. `src/infra/webmapProviders.ts` → `providerForWebLayer`（或 DataSource 分支）写 provider/加载逻辑；`src/globe/globeRenderer.ts` → 消费新类型
+2. `src/infra/webmapProviders.ts` → `providerForWebLayer`（或 DataSource 分支）写 provider/加载逻辑；`src/globe/webLayerRenderer.ts` → 在静态分发表中加一类渲染器（顺序见文件头）
 3. `src/service/loader.ts` → 确认 `kindOf` 能分类（registry 回退纯分类）
 4. 补 `src/domain/layerAssessment.test.ts` / `src/infra/webmapProviders.test.ts` 用例，跑 `npm run test:coverage` 确认门槛过
 5. 更新 §11 已知限制
@@ -714,7 +719,7 @@ npx wrangler pages deploy --project-name=earth-viewer
 
 - ★**未经用户明确准许，不得执行 `git add` / `git commit` / `git push`**；只有用户明确说「提交/推送」才执行。
 - `docs/` 已废弃（目录已删，`.gitignore` 仍保留以防误提交）；`coverage/`、`test-results.json`、`e2e-results.json`、`audit.json`、`*.log`、`*.tsbuildinfo`、`node_modules/`、`dist/`、`output/` 已忽略。
-- **命名规范**：`.ts` 模块文件一律 camelCase（如 `cesiumFacade.ts`、`gpuMemoryManager.ts`、`arcgisVectorTileImageryProvider.ts`、`webmapProviders.ts`、`globeRenderer.ts`、`viewportWorker.entry.ts`）；仅 React 组件/入口 `.tsx` 用 PascalCase（`AppShell.tsx`、`GlobeViewer.tsx`、`App.tsx`，`main.tsx` 按惯例小写）；导出类/接口名保持 PascalCase（如 `CesiumFacade`、`GpuMemoryManager`、`ArcGISVectorTileImageryProvider`），Esri 拼写统一 `ArcGIS`（含 `ArcGISSymbol`、`normalizeArcGISStyle`）；测试文件与源文件同名（`*.test.ts` / `*.test.tsx`）。
+- **命名规范**：`.ts` 模块文件一律 camelCase（如 `cesiumFacade.ts`、`gpuMemoryManager.ts`、`arcgisVectorTileImageryProvider.ts`、`webmapProviders.ts`、`globeRenderer.ts`、`webLayerRenderer.ts`、`viewportWorker.entry.ts`）；仅 React 组件/入口 `.tsx` 用 PascalCase（`AppShell.tsx`、`GlobeViewer.tsx`、`App.tsx`，`main.tsx` 按惯例小写）；导出类/接口名保持 PascalCase（如 `CesiumFacade`、`GpuMemoryManager`、`ArcGISVectorTileImageryProvider`），Esri 拼写统一 `ArcGIS`（含 `ArcGISSymbol`、`normalizeArcGISStyle`）；测试文件与源文件同名（`*.test.ts` / `*.test.tsx`）。
 - 开发日志、临时测试输出、预览页面等一律放 `output/`（**不要直接放项目根目录**）：日志与测试产物进 `output/logs/`（如 `output/logs/dev.log`），临时脚本进 `output/scripts/`（如 `output/scripts/apply-renames.py`）；vitest/playwright 的 JSON 报告输出到 `output/test-results.json` / `output/e2e-results.json`。
 - ★开发服务器端口固定为 5173（§3.1）：启动前执行 `Get-NetTCPConnection -LocalPort 5173 -State Listen`，确认占用进程后用 `taskkill /PID <listenerPid> /T /F` 停止对应进程树，再执行 `npm run dev -- --host 127.0.0.1 --port 5173 --strictPort`；禁止默默使用 5174/5175。
 - Windows 写文件用 apply_patch 或 Python/Node（utf-8、BOM-free、LF）；编码敏感文件（package.json、*.tsx/*.ts、*.md、*.html、*.yml 等）别用 PowerShell 重定向写。
