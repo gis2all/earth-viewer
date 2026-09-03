@@ -16,6 +16,7 @@ colors:
     accent: "#6e79d6"
     accent-strong: "#8690f0"
     scrollbar: "#1a1f29"
+    scrollbar-hover: "#3a4453"
   light:
     background: "#fafbfc"
     surface: "#ffffff"
@@ -29,6 +30,7 @@ colors:
     accent: "#4e59c8"
     accent-strong: "#3d47ad"
     scrollbar: "#e8ebef"
+    scrollbar-hover: "#c3c9d5"
   semantic:
     added-dark: "#a59bf2"
     added-light: "#6557c7"
@@ -80,7 +82,7 @@ This file describes the existing implementation. It is the visual source of trut
 
 Dark mode uses `dark.surface` (`#05070d`) for the globe and all panels. Light mode uses `light.surface` (`#ffffff`) for the same surfaces. Text, borders, hover surfaces, accent colors, and scrollbar colors must switch as a set; do not mix dark and light theme values.
 
-The scrollbar is intentionally visible enough to distinguish the scrollable panel without becoming a second visual surface. It is 7px wide, square, transparent-track, and uses the theme scrollbar token. The panel's top and bottom arrow controls reuse that same token. Hovering a scrollbar or arrow may use the muted text color, but must not turn purple.
+ The scrollbar is intentionally visible enough to distinguish the scrollable panel without becoming a second visual surface. It is 7px wide, square, transparent-track, and uses the theme scrollbar token. The panel's top and bottom arrow controls reuse that same token. Hovering a scrollbar or arrow uses the theme `scrollbar-hover` token (a same-hue blue-gray raise), never an inverted contrast or the accent color.
 
 ## Layout
 
