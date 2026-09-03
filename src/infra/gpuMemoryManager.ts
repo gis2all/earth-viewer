@@ -62,7 +62,10 @@ export class GpuMemoryManager {
   /** 注销资源并重新核算（内存释放后可能升档到预算内档位）。 */
   unregister(id: string): GpuTierConfig {
     this._resources.delete(id)
-    return this._recompute()
+    // 释放一个矢量 provider：腾出 WebGL 上下文与内存。让档位可回弹，
+    // 而不是永久停留在降档档位（否则移除图层后剩下的图层持续模糊）。
+    this._ctxLostCount = Math.max(0, this._ctxLostCount - 1)
+    return this._recompute('recover')
   }
 
   /**
@@ -73,6 +76,15 @@ export class GpuMemoryManager {
   reportContextLost(): GpuTierConfig {
     this._ctxLostCount += 1
     return this._recompute()
+  }
+
+  /**
+   * 上报一次 WebGL 上下文恢复：抵消失去计数，并重新核算。
+   * 与 reportContextLost 配对，避免“丢过一次就永久封顶”导致移除/恢复后仍停在降档档位。
+   */
+  reportContextRestored(): GpuTierConfig {
+    this._ctxLostCount = Math.max(0, this._ctxLostCount - 1)
+    return this._recompute('recover')
   }
 
   contextLostCount(): number {
@@ -103,21 +115,41 @@ export class GpuMemoryManager {
     }
   }
 
-  private _recompute(): GpuTierConfig {
+  private _sumBytes(tier: GpuTierConfig): number {
+    let total = 0
+    for (const r of this._resources.values()) total += r.estimateBytes(tier)
+    return total
+  }
+
+  private _recompute(mode: 'settle' | 'recover' = 'settle'): GpuTierConfig {
     const order = GPU_TIER_ORDER
     const curIndex = order.indexOf(this._tier)
     // 上下文丢失后允许的最高档位（0 丢失 = high 即 index 0；1 次 → medium…；index 越大越省内存）
     const lossCapIndex = Math.min(order.length - 1, this._ctxLostCount)
-    // 档位只降不升：从当前档位与上下文丢失上限中更严格者起步，逐级下降直到预算内，
-    // 避免 provider 重建期间 register/unregister 反复触发升降档造成重建风暴。
-    let nextIndex = Math.max(curIndex, lossCapIndex)
-    while (nextIndex < order.length - 1) {
-      const tier = GPU_TIERS[order[nextIndex]]
-      let total = 0
-      for (const r of this._resources.values()) total += r.estimateBytes(tier)
-      if (total <= this._budgetBytes) break
-      nextIndex += 1
+
+    let nextIndex: number
+    if (mode === 'recover') {
+      // 恢复：找“当前资源能负担的最不保守档位”（最小 index），并受上下文丢失上限约束，
+      // 且不超过已降档前的质量（recover 只升不降）。这使移除图层/上下文恢复后
+      // resolutionScale 能回到 1，消除“剩余图层持续模糊”。
+      let loose = order.length - 1
+      for (let i = 0; i < order.length; i += 1) {
+        if (this._sumBytes(GPU_TIERS[order[i]]) <= this._budgetBytes) {
+          loose = i
+          break
+        }
+      }
+      nextIndex = Math.min(curIndex, Math.max(loose, lossCapIndex))
+    } else {
+      // 沉降：从当前档位与上下文丢失上限中更严格者起步，只允许更保守（只降不升）。
+      // 这避免 provider 重建期间 register/unregister 反复触发升降档造成重建风暴。
+      nextIndex = Math.max(curIndex, lossCapIndex)
+      while (nextIndex < order.length - 1) {
+        if (this._sumBytes(GPU_TIERS[order[nextIndex]]) <= this._budgetBytes) break
+        nextIndex += 1
+      }
     }
+
     const prev = this.current()
     const nextName = order[nextIndex]
     if (nextName !== this._tier) {

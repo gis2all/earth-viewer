@@ -42,16 +42,55 @@ describe('GpuMemoryManager（B 档：完整动态预算管理器）', () => {
     expect(m.estimatedBytes()).toBeGreaterThan(0)
   })
 
-  it('档位只降不升：unregister 释放内存后不会立即升档（避免重建风暴）', () => {
+  it('资源释放后档位回弹：unregister 释放内存可按预算回升（避免移除图层后持续模糊）', () => {
     const m = new GpuMemoryManager(100 * 1024 * 1024)
     m.register('scene', tierResource(80 * 1024 * 1024))
     m.register('vt:test', tierResource(300 * 1024 * 1024))
     expect(m.tierName()).toBe('low')
+    // 移除重资源后，剩余预算足够回到 high（resolutionScale 恢复 1，不再模糊）
     m.unregister('vt:test')
-    expect(m.tierName()).toBe('low')
-    // 全部释放仍保持在降档后的档位
+    expect(m.tierName()).toBe('high')
     m.unregister('scene')
+    expect(m.tierName()).toBe('high')
+  })
+
+  it('register/update 只在沉降方向调整（不做回弹），避免 provider 重建风暴', () => {
+    const m = new GpuMemoryManager(100 * 1024 * 1024)
+    m.register('scene', tierResource(80 * 1024 * 1024))
+    m.register('vt:test', tierResource(300 * 1024 * 1024))
     expect(m.tierName()).toBe('low')
+    // unregister 已回弹到 high
+    m.unregister('vt:test')
+    expect(m.tierName()).toBe('high')
+    // 再注册重资源：register 只降不升，立即落回 low，不会因回弹造成重建震荡
+    m.register('vt:test2', tierResource(300 * 1024 * 1024))
+    expect(m.tierName()).toBe('low')
+  })
+
+  it('unregister 只回弹到预算内档位，不越过剩余的上下文丢失上限', () => {
+    const m = new GpuMemoryManager(1024 * 1024 * 1024)
+    m.register('scene', tierResource(1 * 1024 * 1024))
+    m.reportContextLost()
+    m.reportContextLost()
+    expect(m.tierName()).toBe('low')
+    // 内存足够回到 high；unregister 释放一个矢量上下文（抵消 1 次丢失），
+    // 但剩余 1 次丢失仍封顶在 medium，无法越过到 high。
+    m.unregister('scene')
+    expect(m.tierName()).toBe('medium')
+  })
+
+  it('上下文恢复抵消失去计数并可逐级回弹', () => {
+    const m = new GpuMemoryManager(1024 * 1024 * 1024)
+    m.register('scene', tierResource(1 * 1024 * 1024))
+    m.reportContextLost()
+    m.reportContextLost()
+    expect(m.tierName()).toBe('low')
+    m.reportContextRestored()
+    expect(m.contextLostCount()).toBe(1)
+    expect(m.tierName()).toBe('medium')
+    m.reportContextRestored()
+    expect(m.contextLostCount()).toBe(0)
+    expect(m.tierName()).toBe('high')
   })
 
   it('上下文丢失逐次封顶：1 次 → medium，2 次 → low，3 次及以上 → critical', () => {
@@ -105,9 +144,11 @@ describe('内存估算函数', () => {
     const critical = estimateVectorProviderBytes(GPU_TIERS.critical)
     expect(high).toBeGreaterThan(medium)
     expect(medium).toBeGreaterThan(low)
-    expect(low).toBeGreaterThan(critical)
-    // high: 3×1536²×8 + 12×9×512²×4
-    expect(high).toBe(3 * 1536 ** 2 * 8 + 12 * 9 * 512 ** 2 * 4)
+    // low 与 critical 的离屏画布/pool/block 完全一致，仅块缓存（CPU）与离屏暂停不同，
+    // 故估算相同；预算核算只关心 GPU 驻留，排序按非递增即可。
+    expect(critical).toBeLessThanOrEqual(low)
+    // high: 1×1536²×8（离屏画布，poolSize=1）+ 3²×512²×4（上屏纹理，不按 cacheBlocks 累加）
+    expect(high).toBe(1 * 1536 ** 2 * 8 + 3 ** 2 * 512 ** 2 * 4)
   })
 
   it('estimateSceneCanvasBytes：分辨率缩放后缓冲字节按比例缩减', () => {

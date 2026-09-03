@@ -403,6 +403,8 @@ export interface VectorTileImageryOptions {
   gpuTier?: GpuTierConfig
   /** 任一 MapLibre WebGL 上下文丢失时回调（上报给 GpuMemoryManager 触发降档重建） */
   onContextLost?: () => void
+  /** 任一 MapLibre WebGL 上下文恢复时回调（上报给 GpuMemoryManager 抵消失去计数） */
+  onContextRestored?: () => void
   /** 离屏渲染许可：false 时跳过渲染并返回空瓦片（critical 档相机静止时使用） */
   canRenderNow?: () => boolean
   /** 字体/颜色等样式覆盖（用于对齐 Map Viewer 的标注字体观感） */
@@ -554,6 +556,7 @@ export class ArcGISVectorTileImageryProvider {
   private readonly _blockSize: number
   private readonly _cacheLimit: number
   private readonly _onContextLost: (() => void) | undefined
+  private readonly _onContextRestored: (() => void) | undefined
   private readonly _canRenderNow: (() => boolean) | undefined
   /** 每个 Map 实例的 WebGL 上下文是否存活（丢失后置 false） */
   private _mapAlive: boolean[] = []
@@ -570,6 +573,7 @@ export class ArcGISVectorTileImageryProvider {
     this._blockSize = tier.blockSize
     this._cacheLimit = tier.cacheBlocks
     this._onContextLost = options.onContextLost
+    this._onContextRestored = options.onContextRestored
     this._canRenderNow = options.canRenderNow
     this._styleOverrides = options.styleOverrides
     this.tileWidth = this.tileHeight = options.tileSize ?? MAPLIBRE_VECTOR_TILE_SIZE
@@ -646,16 +650,21 @@ export class ArcGISVectorTileImageryProvider {
       const canvas = map.getCanvas?.()
       if (canvas) {
         canvas.addEventListener('webglcontextlost', (e) => {
+          // 销毁拆除上下文时也会触发 lost，此时不当作真实丢失上报，避免移除图层
+          // 把全局 GPU 档位误抬到降档档位（导致剩余图层持续模糊）。
+          if (this._destroyed) return
           e.preventDefault()
           this._mapAlive[i] = false
           this._onContextLost?.()
         })
         canvas.addEventListener('webglcontextrestored', () => {
+          if (this._destroyed) return
           this._mapAlive[i] = true
           // 清空块缓存：丢失期间可能缓存过空白瓦片，恢复后必须重渲染而非命中空白
           this._blockCache.clear()
           // 唤醒丢失期间积压的未决请求（相机未移动时 Cesium 不会重新 requestImage）
           this._drain()
+          this._onContextRestored?.()
         })
       } else {
         console.warn('[globe] MapLibre 未暴露 getCanvas，WebGL 上下文丢失检测不可用')

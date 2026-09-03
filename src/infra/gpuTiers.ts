@@ -3,8 +3,9 @@
  *
  * 全局统一由 GpuMemoryManager 决定当前档位，矢量瓦片 provider 按档位调整
  * 离屏画布尺寸 / 并发实例数 / 块缓存上限，CesiumFacade 按档位调整主场景
- * resolutionScale。档位只降不升（除非显式重建），优先保证程序不因 GPU
- * 内存耗尽而崩溃。
+ * resolutionScale。压力增加时（注册新 provider / 上下文丢失）只降不升，避免
+ * provider 重建风暴；但资源释放（unregister）或 WebGL 上下文恢复时会按预算回弹，
+ * 使移除图层后 `resolutionScale` 能回到 1，而不是永久停留在降档档位。
  */
 
 export type GpuTierName = 'high' | 'medium' | 'low' | 'critical'
@@ -30,7 +31,7 @@ export const GPU_TIERS: Record<GpuTierName, GpuTierConfig> = {
     name: 'high',
     canvasSize: 1536,
     blockSize: 3,
-    poolSize: 3,
+    poolSize: 1,
     cacheBlocks: 12,
     resolutionScale: 1,
     offscreenPaused: false,
@@ -39,7 +40,7 @@ export const GPU_TIERS: Record<GpuTierName, GpuTierConfig> = {
     name: 'medium',
     canvasSize: 1024,
     blockSize: 2,
-    poolSize: 2,
+    poolSize: 1,
     cacheBlocks: 8,
     resolutionScale: 1,
     offscreenPaused: false,
@@ -48,7 +49,7 @@ export const GPU_TIERS: Record<GpuTierName, GpuTierConfig> = {
     name: 'low',
     canvasSize: 512,
     blockSize: 1,
-    poolSize: 2,
+    poolSize: 1,
     cacheBlocks: 6,
     resolutionScale: 0.75,
     offscreenPaused: false,
@@ -66,11 +67,21 @@ export const GPU_TIERS: Record<GpuTierName, GpuTierConfig> = {
 
 export const GPU_TIER_ORDER: GpuTierName[] = ['high', 'medium', 'low', 'critical']
 
-/** 按档位估算单个矢量瓦片 provider 的像素内存（WebGL 画布 + 块缓存），单位字节。 */
+/**
+ * 按档位估算单个矢量瓦片 provider 的 GPU 内存，单位字节。
+ *
+ * 只计入真正驻留 GPU 的部分：
+ * - poolSize 个 MapLibre 离屏画布（color + depth/stencil，按双缓冲 ×2）；
+ * - 该 provider 当前上屏的 imagery 纹理（近似 1 个 NxN 块，而非整个 LRU 块缓存）。
+ *
+ * `cacheBlocks` 是 CPU 侧 2D canvas 缓存，不直接占 GPU，故不随缓存块数累加；
+ * 否则加载多个矢量层会把 CPU 缓存误算成 GPU 预算，导致整场过早降档
+ * 到 low/critical（resolutionScale < 1，整球变糊）。
+ */
 export function estimateVectorProviderBytes(tier: GpuTierConfig, tileSize = 512): number {
   const glBytes = tier.poolSize * tier.canvasSize ** 2 * 4 * 2
-  const cacheBytes = tier.cacheBlocks * tier.blockSize ** 2 * tileSize ** 2 * 4
-  return glBytes + cacheBytes
+  const residentTilesBytes = tier.blockSize ** 2 * tileSize ** 2 * 4
+  return glBytes + residentTilesBytes
 }
 
 /** 按档位估算主场景渲染缓冲（画布 RGBA ×2 双缓冲 × resolutionScale²），单位字节。 */

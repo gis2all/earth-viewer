@@ -497,6 +497,7 @@ export class CesiumFacade {
       title: 'World Labels',
       gpuTier: gpu.current(),
       onContextLost: () => this._gpu?.reportContextLost(),
+      onContextRestored: () => this._gpu?.reportContextRestored(),
       // 标注是常驻底图元素：不随 critical 档“相机静止暂停离屏”而消失。
       // 若也走 _canRenderOffscreen 门控，浏览器静置后离线上下文降档重建时
       // _cameraMoving=false，_drain 会早退，底图在而标注丢。
@@ -600,6 +601,7 @@ export class CesiumFacade {
       signal,
       gpuTier: gpu.current(),
       onContextLost: () => this._gpu?.reportContextLost(),
+      onContextRestored: () => this._gpu?.reportContextRestored(),
       canRenderNow: () => this._canRenderOffscreen(),
     })
     this._vectorProviders.set(key, provider)
