@@ -53,24 +53,19 @@ describe('AppShell', () => {
     fireEvent.click(screen.getByTitle('回正视角'))
   })
 
-  it('回正/复位图标使用留白矩形框并保持顶栏图标尺寸', () => {
+  it('回正/复位图标：回正为对角 L 对齐、复位为房子图标', () => {
     render(<AppShell />)
     const orientIcon = screen.getByTitle('回正视角').querySelector('svg')
     const resetIcon = screen.getByTitle('复位视角').querySelector('svg')
-    const orientFrame = orientIcon?.querySelector('rect')
-    const resetFrame = resetIcon?.querySelector('rect')
-    expect(orientIcon).toHaveAttribute('width', '15')
-    expect(orientIcon).toHaveAttribute('height', '15')
-    expect(orientFrame).toHaveAttribute('x', '1')
-    expect(orientFrame).toHaveAttribute('y', '1')
-    expect(orientFrame).toHaveAttribute('width', '14')
-    expect(orientFrame).toHaveAttribute('height', '14')
-    expect(resetIcon).toHaveAttribute('width', '15')
-    expect(resetIcon).toHaveAttribute('height', '15')
-    expect(resetFrame).toHaveAttribute('x', '1')
-    expect(resetFrame).toHaveAttribute('y', '1')
-    expect(resetFrame).toHaveAttribute('width', '14')
-    expect(resetFrame).toHaveAttribute('height', '14')
+    expect(orientIcon).toHaveAttribute('width', '17')
+    expect(orientIcon).toHaveAttribute('height', '17')
+    expect(orientIcon?.querySelector('rect')).toBeNull()
+    expect(orientIcon?.querySelectorAll('path')).toHaveLength(2)
+    expect(orientIcon?.querySelectorAll('circle')).toHaveLength(1)
+    expect(resetIcon).toHaveAttribute('width', '18')
+    expect(resetIcon).toHaveAttribute('height', '18')
+    expect(resetIcon?.querySelector('rect')).toBeNull()
+    expect(resetIcon?.querySelectorAll('path')).toHaveLength(3)
   })
 
   it('显示 GitHub 导航链接并在新标签页打开', () => {
@@ -81,7 +76,7 @@ describe('AppShell', () => {
     expect(githubLink).toHaveAttribute('rel', 'noreferrer')
   })
 
-  it('主题、沉浸模式与 GitHub 图标使用 14px 绘制尺寸', () => {
+  it('主题、沉浸模式与 GitHub 图标使用 16px 绘制尺寸', () => {
     render(<AppShell />)
     const controls = [
       screen.getByTitle('切换主题'),
@@ -90,8 +85,8 @@ describe('AppShell', () => {
     ]
 
     controls.forEach((control) => {
-      expect(control.querySelector('svg')).toHaveAttribute('width', '14')
-      expect(control.querySelector('svg')).toHaveAttribute('height', '14')
+      expect(control.querySelector('svg')).toHaveAttribute('width', '16')
+      expect(control.querySelector('svg')).toHaveAttribute('height', '16')
     })
   })
 

@@ -72,16 +72,17 @@ export function AppShell() {
           </svg>
         </button>
         <button className="icon-btn" onClick={orientView} title="回正视角">
-          <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="square" strokeLinejoin="miter">
-            <rect x="1" y="1" width="14" height="14" />
-            <path d="M8 10V6M6.7 7.3 8 6l1.3 1.3" />
+          <svg viewBox="0 0 16 16" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="square" strokeLinejoin="miter">
+            <path d="M3 6.7 V3 H6.7" />
+            <path d="M13 9.3 V13 H9.3" />
+            <circle cx="8" cy="8" r="0.7" fill="currentColor" stroke="none" />
           </svg>
         </button>
         <button className="icon-btn" onClick={resetView} title="复位视角">
-          <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="square" strokeLinejoin="miter">
-            <rect x="1" y="1" width="14" height="14" />
-            <path d="M5.6 8a2.4 2.4 0 1 0 4.2-1.6" />
-            <path d="m9.8 5.1.1 1.8-1.8-.1" />
+          <svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="square" strokeLinejoin="miter">
+            <path d="M2.8 8.1 L8 3 L13.2 8.1" />
+            <path d="M4.4 8.1 V13.7 H11.6 V8.1" />
+            <path d="M6.8 13.7 V10.5 H9.2 V13.7" />
           </svg>
         </button>
         <span className="hdr-divider" />
