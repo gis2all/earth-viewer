@@ -155,7 +155,7 @@ export function GlobeViewer() {
       )}
       {layerNote && (
         <div
-          style={{ position: 'absolute', top: 12, left: 12, maxWidth: '70%', padding: '8px 12px', background: 'var(--panel-3)', border: '1px solid var(--line-2)', color: 'var(--fg)', fontSize: 13, zIndex: 50, pointerEvents: 'none', boxShadow: '0 6px 20px rgba(0,0,0,.25)' }}
+          className="globe-note"
           role="status"
         >
           {layerNote}
