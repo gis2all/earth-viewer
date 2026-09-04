@@ -114,16 +114,29 @@ export function GlobeViewer({ onStatus }: { onStatus?: (s: BottomStatus) => void
     })
     effectsCtrlRef.current = effectsCtrl
 
-    // 底部状态栏实时信息：鼠标经纬度 + 相机高度（变更时上报 onStatus）
+    // 底部状态栏实时信息：鼠标经纬度优先，无鼠标数据时用相机中心；高度取相机高度
     if (onStatus) {
-      const reportCamera = () => {
-        // 相机中心（弧度）换算为度 + 高度；鼠标未动时展示相机中心，移动后由 onPointerMove 覆盖
-        const p = facade.cameraPosition()
-        onStatus({ lon: (p.longitude * 180) / Math.PI, lat: (p.latitude * 180) / Math.PI, height: p.height })
-      }
-      const offMove = facade.onPointerMove((lon, lat) => {
+      let hasPointer = false
+      let pointerLon = 0
+      let pointerLat = 0
+      const send = (lon: number, lat: number) => {
         const p = facade.cameraPosition()
         onStatus({ lon, lat, height: p.height })
+      }
+      const reportCamera = () => {
+        // 每帧只更新高度（经纬度保持鼠标位置；无鼠标数据时才用相机中心）
+        if (!hasPointer) {
+          const p = facade.cameraPosition()
+          onStatus({ lon: (p.longitude * 180) / Math.PI, lat: (p.latitude * 180) / Math.PI, height: p.height })
+        } else {
+          send(pointerLon, pointerLat)
+        }
+      }
+      const offMove = facade.onPointerMove((lon, lat) => {
+        hasPointer = true
+        pointerLon = lon
+        pointerLat = lat
+        send(lon, lat)
       })
       const offPost = facade.onPostUpdate(reportCamera)
       statusCleanupRef.current = () => { offMove(); offPost() }

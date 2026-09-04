@@ -328,18 +328,28 @@ export class CesiumFacade {
     return () => this.releaseInputHandler()
   }
 
-  /** 注册鼠标移动（拾取后回调经纬度，度）；返回注销函数。底部状态栏实时坐标用。 */
+  /** 注册鼠标移动（拾取后回调经纬度，度）；返回注销函数。底部状态栏实时坐标用。
+   * 用 canvas 的 pointermove DOM 事件而非 ScreenSpaceEventHandler，避免在此环境 MOUSE_MOVE 不触发。 */
   onPointerMove(cb: (lon: number, lat: number) => void): () => void {
     const v = this.viewer
-    const h = this.acquireInputHandler()
-    if (!h || !v) return () => {}
-    h.setInputAction((movement: { endPosition: Cesium.Cartesian2 }) => {
-      const picked = v.camera.pickEllipsoid(movement.endPosition, v.scene.globe.ellipsoid)
+    if (!v || v.isDestroyed()) return () => {}
+    const canvas = v.scene.canvas
+    const onMove = (e: PointerEvent | MouseEvent) => {
+      const rect = canvas.getBoundingClientRect()
+      const x = e.clientX - rect.left
+      const y = e.clientY - rect.top
+      const picked = v.camera.pickEllipsoid({ x, y } as unknown as Cesium.Cartesian2, v.scene.globe.ellipsoid)
       if (!picked) return
       const carto = v.scene.globe.ellipsoid.cartesianToCartographic(picked)
       cb(Cesium.Math.toDegrees(carto.longitude), Cesium.Math.toDegrees(carto.latitude))
-    }, Cesium.ScreenSpaceEventType.MOUSE_MOVE)
-    return () => this.releaseInputHandler()
+    }
+    // 同时监听 pointermove 与 mousemove：真机走 pointer，测试合成事件走 mouse，确保经纬度随鼠标更新
+    canvas.addEventListener('pointermove', onMove as EventListener)
+    canvas.addEventListener('mousemove', onMove as EventListener)
+    return () => {
+      canvas.removeEventListener('pointermove', onMove as EventListener)
+      canvas.removeEventListener('mousemove', onMove as EventListener)
+    }
   }
 
   /** 注册每帧回调（postUpdate）；返回注销函数。 */
