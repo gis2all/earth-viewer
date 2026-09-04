@@ -417,6 +417,22 @@ export class CesiumFacade {
     g.translucency.backFaceAlpha = enabled ? Math.min(1, alpha + 0.1) : 1
   }
 
+
+  /** 太阳辉光强度（scene.sun.glowFactor）。 */
+  setSunGlow(value: number) {
+    const v = this.viewer
+    if (!v || v.isDestroyed()) return
+    if (v.scene.sun) v.scene.sun.glowFactor = value
+  }
+
+
+  /** 大气圆环（天空大气壳）显示。 */
+  setAtmosphereRing(show: boolean) {
+    const v = this.viewer
+    if (!v || v.isDestroyed()) return
+    if (v.scene.skyAtmosphere) v.scene.skyAtmosphere.show = show
+  }
+
   private inputHandler: Cesium.ScreenSpaceEventHandler | null = null
   private inputRefs = 0
 
