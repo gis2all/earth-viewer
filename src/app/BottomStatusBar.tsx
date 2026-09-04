@@ -23,7 +23,7 @@ function formatHeight(h: number): string {
   return (h / 1000).toFixed(2) + ' km'
 }
 
-function BrandLogo({ theme }: { theme: 'dark' | 'light' }) {
+function BrandLogo() {
   return (
     <svg viewBox="0 0 28 28" width="14" height="14" aria-hidden="true">
       <defs>
@@ -31,17 +31,17 @@ function BrandLogo({ theme }: { theme: 'dark' | 'light' }) {
           <circle cx="14" cy="14" r="11" />
         </clipPath>
       </defs>
-      <circle cx="14" cy="14" r="11" fill={theme === 'dark' ? '#ffffff' : '#000000'} />
+      <circle cx="14" cy="14" r="11" fill="currentColor" />
       <g clipPath="url(#bs-brand-clip)">
-        <path d="M0 24 28 -2" stroke={theme === 'dark' ? '#000000' : '#ffffff'} strokeWidth="2.6" />
-        <path d="M4 28 32 0" stroke={theme === 'dark' ? '#000000' : '#ffffff'} strokeWidth="1" opacity="0.5" />
-        <circle cx="14" cy="14" r="4.4" fill={theme === 'dark' ? '#000000' : '#ffffff'} />
+        <path d="M0 24 28 -2" stroke="var(--bg)" strokeWidth="2.6" />
+        <path d="M4 28 32 0" stroke="var(--bg)" strokeWidth="1" opacity="0.5" />
+        <circle cx="14" cy="14" r="4.4" fill="var(--bg)" />
       </g>
     </svg>
   )
 }
 
-export function BottomStatusBar({ status, theme }: { status: BottomStatus | null; theme: 'dark' | 'light' }) {
+export function BottomStatusBar({ status, immersive }: { status: BottomStatus | null; immersive: boolean }) {
   // 直接从 store 订阅面板折叠状态（zustand 驱动重渲染），确保面板开合时宽度即时跟随
   const collapsed = useAppStore((s) => s.collapsed)
   const collapsedRight = useAppStore((s) => s.collapsedRight)
@@ -50,8 +50,9 @@ export function BottomStatusBar({ status, theme }: { status: BottomStatus | null
   const leftPanel = Math.max(320, Math.min(423, 0.2 * vw))
   const rightPanel = Math.max(240, Math.min(304, 0.14 * vw))
   const barStyle = {
-    left: collapsed ? 0 : leftPanel,
-    right: collapsedRight ? 0 : rightPanel,
+    // 沉浸模式下面板已隐藏（CSS display:none），横条应占满全宽；否则按面板开合收窄
+    left: immersive || collapsed ? 0 : leftPanel,
+    right: immersive || collapsedRight ? 0 : rightPanel,
   }
   const items: ReactNode[] = []
   if (status) {
@@ -71,7 +72,7 @@ export function BottomStatusBar({ status, theme }: { status: BottomStatus | null
         <span className="bc-sep" aria-hidden="true" />
         <span className="bc-powered">Powered by</span>
         <span className="bc-brand">
-          <BrandLogo theme={theme} />
+          <BrandLogo />
           <span className="bc-brand-name">gis2all</span>
         </span>
       </div>
