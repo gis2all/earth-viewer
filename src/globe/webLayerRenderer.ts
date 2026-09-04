@@ -149,7 +149,7 @@ const sceneRenderer: LayerRenderer = {
   matches: (op) => Boolean(op.url) && isSceneInput(op),
   async render(ctx, op) {
     const { job, facade: f } = ctx
-    // 点云场景（Point/PointCloud/Splat）：Cesium I3SDataProvider 不渲染，跳过并提示，避免静默空图层
+    // 点云场景（Point/PointCloud/Splat）：Cesium I3SDataProvider 不渲染，跳过以避免建空 primitive
     const kinds = await fetchSceneLayerKinds(op.url as string, ctx.signal)
     if (isPointCloudScene(kinds)) {
       job.onNote('该场景为点云图层，暂不支持渲染')

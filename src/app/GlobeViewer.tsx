@@ -32,6 +32,7 @@ export function GlobeViewer() {
   const effects = useAppStore((s) => s.effects)
   const [glError, setGlError] = useState('')
   const [layerNote, setLayerNote] = useState('')
+  const noteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // 创建 CesiumFacade + 三个控制器（仅一次）
   useEffect(() => {
@@ -79,7 +80,11 @@ export function GlobeViewer() {
       render: (job) => renderWebmap(job, facade),
       setError: (id, msg) => useAppStore.getState().setLayerError(id, msg),
       clearError: (id) => useAppStore.getState().clearLayerError(id),
-      setNote: (msg) => setLayerNote(msg),
+      setNote: (msg) => {
+        setLayerNote(msg)
+        if (noteTimerRef.current) clearTimeout(noteTimerRef.current)
+        noteTimerRef.current = window.setTimeout(() => setLayerNote(''), 5000)
+      },
       getReferenceVisible: () => useAppStore.getState().effects.showReferenceLayers ?? true,
       removeRuntime: (rt) => facade.removeRuntime(rt),
     })
@@ -106,6 +111,7 @@ export function GlobeViewer() {
     effectsCtrlRef.current = effectsCtrl
 
     return () => {
+      if (noteTimerRef.current) clearTimeout(noteTimerRef.current)
       setUserHomeResolver(null)
       effectsCtrl.dispose()
       cameraCtrl.dispose()
@@ -149,7 +155,7 @@ export function GlobeViewer() {
       )}
       {layerNote && (
         <div
-          style={{ position: 'absolute', left: 12, bottom: 12, maxWidth: '70%', padding: '8px 12px', borderRadius: 8, background: 'rgba(20,24,32,0.85)', color: '#fff', fontSize: 13, zIndex: 9, pointerEvents: 'none' }}
+          style={{ position: 'absolute', top: 12, left: 12, maxWidth: '70%', padding: '8px 12px', background: 'var(--panel-3)', border: '1px solid var(--line-2)', color: 'var(--fg)', fontSize: 13, zIndex: 50, pointerEvents: 'none', boxShadow: '0 6px 20px rgba(0,0,0,.25)' }}
           role="status"
         >
           {layerNote}
