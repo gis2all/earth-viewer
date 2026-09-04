@@ -5,6 +5,17 @@
 
 ---
 
+## 图谱优先：主动使用 code-review-graph
+
+本仓库已经建立 `.code-review-graph/graph.db`。凡涉及代码定位、调用链、架构说明、改动影响、评审或实现前理解代码的任务，必须先主动调用 `code-review-graph` MCP 工具，不要默认全文读取文件或全仓搜索。
+
+推荐流程：
+
+1. 先调用 `get_minimal_context_tool`，传 `task` 描述并保持 `detail_level="minimal"`，用它决定下一步工具。
+2. 理解整体架构用 `get_architecture_overview_tool`；评审改动用 `detect_changes_tool` + `get_review_context_tool`；追踪调用 / 依赖关系用 `query_graph_tool` 或 `semantic_search_nodes_tool`。
+3. 判断影响面用 `get_impact_radius_tool`、`get_affected_flows_tool` 或 `get_flow_tool`，不要靠猜文件名或通读相关目录。
+4. 如果图缺失或过期，先调用 `build_or_update_graph_tool`（或运行 `code-review-graph build/update`）再继续，不能跳过图谱直接硬搜。
+
 ## 0. 30 秒速览
 
 - **项目**：画廊式 3D 地球图层应用。Cesium 渲染地球 + 接入 ArcGIS Online 公开图层（搜索 → 卡片添加按钮校验 → 叠加），线上 https://earth.gis2all.top

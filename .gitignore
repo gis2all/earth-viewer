@@ -19,3 +19,4 @@ output/
 test-results.json
 e2e-results.json
 audit.json
+.code-review-graph/
