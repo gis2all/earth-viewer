@@ -4,7 +4,7 @@ import { LayerPanel } from './LayerPanel'
 import { EffectsPanel } from './EffectsPanel'
 import { BottomStatusBar, type BottomStatus } from './BottomStatusBar'
 import { useAppStore } from './store'
-import { resetView, orientView } from '../infra/cameraActions'
+import { resetView, orientView, orientNorth } from '../infra/cameraActions'
 
 function PanelChevronIcon({ direction }: { direction: 'left' | 'right' }) {
   return <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="square" strokeLinejoin="miter" aria-hidden="true"><path d={direction === 'right' ? 'm6 4 4 4-4 4' : 'm10 4-4 4 4 4'} /></svg>
@@ -58,7 +58,7 @@ export function AppShell() {
           <span className="brand-name">Earth Viewer</span>
         </div>
         <div className="spacer" />
-        <button className="icon-btn" onClick={orientView} title="指北针" aria-label="指北针">
+        <button className="icon-btn" onClick={orientNorth} title="指北针" aria-label="指北针">
           <svg
             viewBox="0 0 16 16"
             width="15"
