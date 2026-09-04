@@ -61,6 +61,48 @@ describe('providerForWebLayer', () => {
     expect(geo).toHaveBeenCalled()
   })
 
+  it('动态 ImageServer（无 tileInfo）→ 走 /exportImage 出图，而非固定 /export', async () => {
+    const { UrlTemplateImageryProvider } = await import('cesium')
+    const ut = UrlTemplateImageryProvider as unknown as ReturnType<typeof vi.fn>
+    ut.mockClear()
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ spatialReference: { wkid: 102100, latestWkid: 3857 } }) })))
+    await providerForWebLayer({ url: 'https://pimg/ImageServer', layerType: 'ArcGISImageServiceLayer' })
+    expect(ut).toHaveBeenCalledWith(expect.objectContaining({ url: expect.stringContaining('/exportImage?bbox={westDegrees}') }))
+  })
+
+  it('动态 MapServer 用 /export，ImageServer 用 /exportImage，端点不混用', async () => {
+    const { UrlTemplateImageryProvider } = await import('cesium')
+    const ut = UrlTemplateImageryProvider as unknown as ReturnType<typeof vi.fn>
+    ut.mockClear()
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ spatialReference: { wkid: 3857 } }) })))
+    await providerForWebLayer({ url: 'https://m/MapServer', layerType: 'ArcGISMapServiceLayer' })
+    const mapUrl = (ut.mock.calls[0][0] as { url: string }).url
+    ut.mockClear()
+    await providerForWebLayer({ url: 'https://i/ImageServer', layerType: 'ArcGISImageServiceLayer' })
+    const imgUrl = (ut.mock.calls[0][0] as { url: string }).url
+    expect(mapUrl).toContain('/export?bbox={westDegrees}')
+    expect(imgUrl).toContain('/exportImage?bbox={westDegrees}')
+  })
+
+  it('自定义投影瓦片（RD 28992）→ 不走 /tile，改用 /export 重投影出图', async () => {
+    const { UrlTemplateImageryProvider } = await import('cesium')
+    const ut = UrlTemplateImageryProvider as unknown as ReturnType<typeof vi.fn>
+    ut.mockClear()
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ spatialReference: { wkid: 28992 }, tileInfo: { lods: [{}, {}, {}] } }) })))
+    await providerForWebLayer({ url: 'https://prd/MapServer', layerType: 'ArcGISMapServiceLayer' })
+    expect(ut).toHaveBeenCalledWith(expect.objectContaining({ url: expect.stringContaining('/export?bbox={westDegrees}') }))
+    expect(ut).not.toHaveBeenCalledWith(expect.objectContaining({ url: expect.stringContaining('/tile/{z}/{y}/{x}') }))
+  })
+
+  it('Web Mercator 102100 瓦片 → 仍走 /tile，不因非 4326 被误判为自定义投影', async () => {
+    const { UrlTemplateImageryProvider } = await import('cesium')
+    const ut = UrlTemplateImageryProvider as unknown as ReturnType<typeof vi.fn>
+    ut.mockClear()
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ spatialReference: { wkid: 102100, latestWkid: 3857 }, tileInfo: { lods: [{}, {}, {}] } }) })))
+    await providerForWebLayer({ url: 'https://pmerc/MapServer', layerType: 'ArcGISMapServiceLayer' })
+    expect(ut).toHaveBeenCalledWith(expect.objectContaining({ url: 'https://pmerc/MapServer/tile/{z}/{y}/{x}' }))
+  })
+
   it('动态 MapServer 4326 → 用 GeographicTilingScheme', async () => {
     const { GeographicTilingScheme } = await import('cesium')
     const geo = GeographicTilingScheme as unknown as ReturnType<typeof vi.fn>

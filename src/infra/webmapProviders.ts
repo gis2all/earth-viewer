@@ -31,6 +31,11 @@ export type { MapServiceInfo }
 /** 服务坐标系探测（实现见 service/repository.ts，带 CRS_CACHE）。 */
 const detectCrs = detectMapService
 
+/** Cesium 瓦片方案能在地球上正确定位的坐标系：WGS84 地理（4326）与 Web Mercator（3857/102100）。 */
+function isGlobeNativeWkid(wkid: number): boolean {
+  return wkid === 4326 || wkid === 3857 || wkid === 102100
+}
+
 /** 瓦片服务 → Provider：4326 用 GeographicTilingScheme，其余（3857/未知）用默认 Web Mercator；动态服务（无 tileInfo）返回 null */
 async function providerForTiledMap(url: string, signal?: AbortSignal): Promise<Cesium.ImageryProvider | null> {
   const crs = await detectCrs(url, signal)
@@ -48,12 +53,15 @@ async function providerForTiledMap(url: string, signal?: AbortSignal): Promise<C
   return new Cesium.UrlTemplateImageryProvider(opts)
 }
 
-/** 把 Web Map 图层转成 Cesium 影像 Provider（MapServer/ImageServer/OSM/urlTemplate） */
-export function providerForDynamicMapServer(url: string): Cesium.ImageryProvider {
+/** 把动态 MapServer/ImageServer 转成 Cesium 影像 Provider（无缓存瓦片时用 /export 或 /exportImage 出图）。 */
+export function providerForDynamicMapServer(
+  url: string,
+  exportOp: 'export' | 'exportImage' = 'export'
+): Cesium.ImageryProvider {
   const base = url.replace(/\/?$/, '')
   const exportUrl =
     base +
-    '/export?bbox={westDegrees},{southDegrees},{eastDegrees},{northDegrees}' +
+    `/${exportOp}?bbox={westDegrees},{southDegrees},{eastDegrees},{northDegrees}` +
     '&bboxSR=4326&imageSR=4326&size={width},{height}&format=png&transparent=true&f=image'
   const opts: Cesium.UrlTemplateImageryProvider.ConstructorOptions = {
     url: exportUrl,
@@ -96,7 +104,15 @@ export async function providerForWebLayer(layer: WebLayer, signal?: AbortSignal)
     case 'image': {
       if (!url) return null
       const crs = await detectMapService(url, signal)
-      if (crs && !crs.tiled) return providerForDynamicMapServer(url)
+      const exportOp = kind === 'image' ? 'exportImage' : 'export'
+      // 动态服务（无缓存瓦片）：无法用 /tile/{z}/{y}/{x}，直接走服务端出图。
+      // 自定义投影瓦片（如荷兰 RD 28992）：Cesium 的 WebMercator/Geographic 方案无法在地球上
+      // 正确定位这类瓦片（会被当成 WebMercator 而抻大错位），同样转由服务端重投影到 4326 出图。
+      if (crs && (!crs.tiled || !isGlobeNativeWkid(crs.wkid))) {
+        // MapServer 只支持 /export；现代 ImageServer（如 NOAA 雷达）只在 /exportImage 出图，
+        // 固定 /export 会返回 400 Output format not supported，导致整层静默空白。
+        return providerForDynamicMapServer(url, exportOp)
+      }
       return providerForTiledMap(url, signal)
     }
     case 'wms': {
