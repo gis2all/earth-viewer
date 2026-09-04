@@ -120,7 +120,7 @@ export function AppShell() {
           <GlobeViewer onStatus={setStatus} />
         </main>
         <EffectsPanel />
-        <BottomStatusBar status={status} theme={theme} />
+        <BottomStatusBar status={status} immersive={immersive} />
         {/* Cesium credit 注入点：隐藏容器，屏上不显示，仅承担归属声明（GlobeViewer 传给 creditContainer） */}
         <div id="cesium-credit-container" style={{ display: 'none' }} />
       </div>
