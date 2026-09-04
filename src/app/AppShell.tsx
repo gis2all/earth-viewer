@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { GlobeViewer } from './GlobeViewer'
 import { LayerPanel } from './LayerPanel'
 import { EffectsPanel } from './EffectsPanel'
+import { BottomStatusBar, type BottomStatus } from './BottomStatusBar'
 import { useAppStore } from './store'
 import { resetView, orientView } from '../infra/cameraActions'
 
@@ -23,6 +24,7 @@ export function AppShell() {
   const collapsedRight = useAppStore((s) => s.collapsedRight)
   const toggleCollapsedRight = useAppStore((s) => s.toggleCollapsedRight)
   const [immersive, setImmersive] = useState(false)
+  const [status, setStatus] = useState<BottomStatus | null>(null)
 
   useEffect(() => {
     if (!immersive) return
@@ -115,9 +117,12 @@ export function AppShell() {
               </svg>
             </button>
           )}
-          <GlobeViewer />
+          <GlobeViewer onStatus={setStatus} />
         </main>
         <EffectsPanel />
+        <BottomStatusBar status={status} theme={theme} />
+        {/* Cesium credit 注入点：隐藏容器，屏上不显示，仅承担归属声明（GlobeViewer 传给 creditContainer） */}
+        <div id="cesium-credit-container" style={{ display: 'none' }} />
       </div>
     </div>
   )
