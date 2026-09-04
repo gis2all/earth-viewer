@@ -36,7 +36,7 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 
 .app{display:flex;flex-direction:column;height:100%}
 .app-header{height:52px;display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid var(--line);background:var(--header);position:relative;z-index:30}
-.brand{display:flex;align-items:center;gap:10px}
+.brand{display:flex;align-items:center;gap:10px;margin-left:-6px}
 .brand-mark{width:28px;height:28px;display:grid;place-items:center}
 .brand-name{font-size:15px;font-weight:600;letter-spacing:-.015em}
 .spacer{flex:1}

@@ -23,24 +23,6 @@ function formatHeight(h: number): string {
   return (h / 1000).toFixed(2) + ' km'
 }
 
-function BrandLogo() {
-  return (
-    <svg viewBox="0 0 28 28" width="14" height="14" aria-hidden="true">
-      <defs>
-        <clipPath id="bs-brand-clip">
-          <circle cx="14" cy="14" r="11" />
-        </clipPath>
-      </defs>
-      <circle cx="14" cy="14" r="11" fill="currentColor" />
-      <g clipPath="url(#bs-brand-clip)">
-        <path d="M0 24 28 -2" stroke="var(--bg)" strokeWidth="2.6" />
-        <path d="M4 28 32 0" stroke="var(--bg)" strokeWidth="1" opacity="0.5" />
-        <circle cx="14" cy="14" r="4.4" fill="var(--bg)" />
-      </g>
-    </svg>
-  )
-}
-
 export function BottomStatusBar({ status, immersive }: { status: BottomStatus | null; immersive: boolean }) {
   // 直接从 store 订阅面板折叠状态（zustand 驱动重渲染），确保面板开合时宽度即时跟随
   const collapsed = useAppStore((s) => s.collapsed)
@@ -70,11 +52,7 @@ export function BottomStatusBar({ status, immersive }: { status: BottomStatus | 
       <div className="bc-center">
         {items}
         <span className="bc-sep" aria-hidden="true" />
-        <span className="bc-powered">Powered by</span>
-        <span className="bc-brand">
-          <BrandLogo />
-          <span className="bc-brand-name">gis2all</span>
-        </span>
+        <span className="bc-powered">Powered by gis2all</span>
       </div>
     </div>
   )
