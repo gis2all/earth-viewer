@@ -165,3 +165,12 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .fx-sw.on{background:var(--accent)}
 .fx-sw.on::after{left:17px}
 .fx-sw:disabled{opacity:.4;cursor:not-allowed}
+
+.bottom-bar{position:absolute;left:0;right:0;bottom:0;height:26px;display:flex;align-items:center;justify-content:center;z-index:45;background:var(--panel);color:var(--muted);font-size:11px;padding:0 12px;box-sizing:border-box;overflow:hidden}
+.bottom-bar .bc-center{display:flex;align-items:center;justify-content:center;gap:10px;min-width:0;overflow:hidden;white-space:nowrap}
+.bottom-bar .bc-item{flex:0 0 auto;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
+.bottom-bar .bc-item[title]:hover{color:var(--fg)}
+.bottom-bar .bc-sep{flex:0 0 auto;color:var(--faint);opacity:.6}
+.bottom-bar .bc-powered{color:var(--faint);font-size:10px;letter-spacing:.02em}
+.bottom-bar .bc-brand{display:flex;align-items:center;gap:5px;color:var(--fg);font-weight:600}
+.bottom-bar .bc-brand-name{font-size:11px;letter-spacing:.01em}
