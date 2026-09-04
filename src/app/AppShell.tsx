@@ -25,6 +25,7 @@ export function AppShell() {
   const toggleCollapsedRight = useAppStore((s) => s.toggleCollapsedRight)
   const [immersive, setImmersive] = useState(false)
   const [status, setStatus] = useState<BottomStatus | null>(null)
+  const [heading, setHeading] = useState(0)
 
   useEffect(() => {
     if (!immersive) return
@@ -57,6 +58,19 @@ export function AppShell() {
           <span className="brand-name">Earth Viewer</span>
         </div>
         <div className="spacer" />
+        <button className="icon-btn" onClick={orientView} title="指北针" aria-label="指北针">
+          <svg
+            viewBox="0 0 16 16"
+            width="15"
+            height="15"
+            style={{
+              transform: `rotate(${-heading * 180 / Math.PI}deg)`,
+              color: (() => { const d = ((heading * 180 / Math.PI) % 360 + 360) % 360; return Math.abs(d) <= 2 || Math.abs(d - 360) <= 2 ? 'var(--accent)' : 'var(--muted)' })(),
+            }}
+          >
+            <path d="M8 4 L12 14 L8 12.2 L4 14 Z" stroke="currentColor" strokeWidth="1.35" strokeLinecap="square" strokeLinejoin="miter" fill="currentColor" />
+          </svg>
+        </button>
         <button className="icon-btn" onClick={orientView} title="回正视角">
           <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="square" strokeLinejoin="miter">
             <rect x="1" y="1" width="14" height="14" />
@@ -117,7 +131,7 @@ export function AppShell() {
               </svg>
             </button>
           )}
-          <GlobeViewer onStatus={setStatus} />
+          <GlobeViewer onStatus={setStatus} onHeading={setHeading} />
         </main>
         <EffectsPanel />
         <BottomStatusBar status={status} immersive={immersive} />

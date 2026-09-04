@@ -22,7 +22,7 @@ import { hasOwnBasemap } from '../domain/layerAssessment'
 const WEBGL_UNAVAILABLE_MSG =
   '当前浏览器无法创建 WebGL，地球无法渲染。请使用开启硬件加速的 Chrome/Edge 访问（Codex内置浏览器 / 无GPU环境不支持）'
 
-export function GlobeViewer({ onStatus }: { onStatus?: (s: BottomStatus) => void }) {
+export function GlobeViewer({ onStatus, onHeading }: { onStatus?: (s: BottomStatus) => void; onHeading?: (heading: number) => void }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const facadeRef = useRef<CesiumFacade | null>(null)
   const cameraCtrlRef = useRef<CameraController | null>(null)
@@ -126,6 +126,7 @@ export function GlobeViewer({ onStatus }: { onStatus?: (s: BottomStatus) => void
         onStatus({ lon, lat, height: p.height })
       }
       const reportCamera = () => {
+        if (onHeading) onHeading(facade.cameraOrientation().heading)
         // 每帧只更新高度（经纬度保持鼠标位置；无鼠标数据时才用相机中心）
         if (!hasPointer) {
           const p = facade.cameraPosition()
@@ -143,6 +144,12 @@ export function GlobeViewer({ onStatus }: { onStatus?: (s: BottomStatus) => void
       const offPost = facade.onPostUpdate(reportCamera)
       statusCleanupRef.current = () => { offMove(); offPost() }
       reportCamera()
+    } else if (onHeading) {
+      // 无 status 订阅但需要 heading（顶栏指南针）：单独每帧上报相机 heading
+      const hb = () => onHeading(facade.cameraOrientation().heading)
+      const offPost = facade.onPostUpdate(hb)
+      statusCleanupRef.current = () => offPost()
+      hb()
     }
 
     return () => {
@@ -160,7 +167,7 @@ export function GlobeViewer({ onStatus }: { onStatus?: (s: BottomStatus) => void
       layerCtrlRef.current = null
       facadeRef.current = null
     }
-  }, [onStatus])
+  }, [onStatus, onHeading])
 
   // 场景级效果/主题变化 → 同步场景副作用（控制器内部会唤醒相机 + 请求一帧）
   useEffect(() => {
