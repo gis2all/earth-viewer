@@ -479,22 +479,51 @@ describe('renderWebmap：分支渲染', () => {
 })
 
 describe('renderWebmap：相机', () => {
-  it('webmap 自带 viewpoint → flyTo 一次并标记 flew', async () => {
-    const f = makeFacade()
-    const job = makeJob({
-      baseMap: { baseMapLayers: [] },
-      operationalLayers: [],
+    it('webmap 自带 viewpoint → flyTo 一次并标记 flew', async () => {
+      const f = makeFacade()
+      const job = makeJob({
+        baseMap: { baseMapLayers: [] },
+        operationalLayers: [],
       initialState: {
         viewpoint: { camera: { position: { x: 10, y: 20, z: 1000, spatialReference: { wkid: 4326 } }, heading: 30, tilt: 45 } },
       },
     })
     await renderWebmap(job, f)
     expect(job.markFlew).toHaveBeenCalledTimes(1)
-    expect(f.flyTo).toHaveBeenCalledTimes(1)
-    expect(f.flyTo.mock.calls[0][0]).toMatchObject({ destination: { tag: 'fromDegrees', args: [10, 20, 1000] } })
-  })
+      expect(f.flyTo).toHaveBeenCalledTimes(1)
+      expect(f.flyTo.mock.calls[0][0]).toMatchObject({ destination: { tag: 'fromDegrees', args: [10, 20, 1000] } })
+    })
 
-  it('无 viewpoint → flyToHome；已 flew 不再重复', async () => {
+    it('viewpoint 相机高度超过 maxZoom → 回退 flyToHome（保持一致）', async () => {
+      const f = makeFacade()
+      const job = makeJob({
+        baseMap: { baseMapLayers: [] },
+        operationalLayers: [],
+        initialState: {
+          viewpoint: { camera: { position: { x: 104, y: 34.9, z: 25512548, spatialReference: { wkid: 4326 } }, heading: 0, tilt: 0.1 } },
+        },
+      })
+      await renderWebmap(job, f)
+      expect(job.markFlew).toHaveBeenCalledTimes(1)
+      expect(f.flyTo).not.toHaveBeenCalled()
+      expect(f.flyToHome).toHaveBeenCalledTimes(1)
+    })
+
+    it('viewpoint 相机高度等于 maxZoom → 仍按自带相机飞', async () => {
+      const f = makeFacade()
+      const job = makeJob({
+        baseMap: { baseMapLayers: [] },
+        operationalLayers: [],
+        initialState: {
+          viewpoint: { camera: { position: { x: 104, y: 10, z: 25000000, spatialReference: { wkid: 4326 } }, heading: 0, tilt: 0 } },
+        },
+      })
+      await renderWebmap(job, f)
+      expect(f.flyTo).toHaveBeenCalledTimes(1)
+      expect(f.flyToHome).not.toHaveBeenCalled()
+    })
+  
+    it('无 viewpoint → flyToHome；已 flew 不再重复', async () => {
     const f = makeFacade()
     const job = makeJob({ baseMap: { baseMapLayers: [] }, operationalLayers: [] })
     await renderWebmap(job, f)

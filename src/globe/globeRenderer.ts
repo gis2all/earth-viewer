@@ -18,6 +18,7 @@ import { classifyWebLayerKind } from '../domain/webLayerKind'
 import { reprojectCoordinates } from '../infra/vector'
 import { detectMapService, fetchSceneExtent, fetchServiceGeoExtent } from '../service/repository'
 import { renderWebLayer } from './webLayerRenderer'
+import { appConfig } from '../domain/config'
 
 /** 独立 Map/Image 服务的 WGS84 范围。
  * 1. 探测返回的 fullExtent 若已是 4326 直接用；
@@ -99,10 +100,16 @@ export async function renderWebmap(job: LayerRenderJob, f: CesiumFacade): Promis
     job.markFlew()
     const cam = viewpointCameraFromWebmap(wm)
     if (cam) {
-      try {
-        f.flyTo(cam)
-      } catch {
-        // ignore
+      const maxZoom = appConfig().camera.maxZoom
+      // Web Map/Scene 自带相机高度超出交互上限时飞不到可拖拽的球面，回退到复位高度保持一致
+      if (typeof cam.heightMeters === 'number' && cam.heightMeters > maxZoom) {
+        f.flyToHome()
+      } else {
+        try {
+          f.flyTo(cam)
+        } catch {
+          // ignore
+        }
       }
     } else {
       // 独立服务：飞到服务数据范围，否则程序初始位置（世界视图）下局部图层不可见
