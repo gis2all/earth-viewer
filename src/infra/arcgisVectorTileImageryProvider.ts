@@ -500,6 +500,49 @@ function waitForMapIdle(map: MapLike, timeoutMs = 20000): Promise<void> {
 }
 
 /**
+ * 渲染块等 idle 的有界版本：normal 情况由 idle 事件立刻放行；但当 jumpTo 命中
+ * 已缓存瓦片、地图不产生「忙碌→idle」过程时，idle 事件不再触发（maplibre idle
+ * 只在状态从非 idle 回到 idle 时发出），原 waitForMapIdle 会死等到 20s 超时，
+ * 导致 reset 后大量标注瓦片排队且 `_active` 卡住，标注一直不出现。
+ * 此版本用短超时兜底 resolve（不 reject），让离屏渲染能继续吞吐；后续 _renderBlock
+ * 自身还有双 rAF 兜底 + 截屏，超时放行不会截到半帧或不完整瓦片。
+ */
+function waitForMapIdleBounded(map: MapLike, timeoutMs = 2500): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const onRender = () => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve()
+    }
+    const onTimeout = () => {
+      if (settled) return
+      settled = true
+      cleanup()
+      // 超时不视为失败：map 可能已 idle（缓存命中未触发 idle 事件），直接放行继续下一块
+      resolve()
+    }
+    const onError = (err: unknown) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      // 真实渲染错误要暴露，交给 _renderBlock 的 catch 走空白瓦片降级
+      reject(err)
+    }
+    const cleanup = () => {
+      map.off('idle', onRender)
+      map.off('error', onError)
+      window.clearTimeout(timer)
+    }
+    const timer = window.setTimeout(onTimeout, timeoutMs)
+    map.once('idle', onRender)
+    map.once('error', onError)
+    map.triggerRepaint()
+  })
+}
+
+/**
  * 用 MapLibre 按 ArcGIS 官方样式渲染矢量瓦片的 Cesium ImageryProvider。
  * requestImage 走并行 MapLibre 实例池（默认 3 个，每实例严格串行），默认返回原生 512px canvas。
  * 只实现 ImageryProvider 协议字段，交给 Cesium.ImageryLayer 消费（鸭子类型，不继承基类）。
@@ -809,7 +852,7 @@ export class ArcGISVectorTileImageryProvider {
         : expectedCenter
     this.stats.lastTileFetchMs = performance.now() - tFetch
     const tRender = performance.now()
-    await waitForMapIdle(map)
+    await waitForMapIdleBounded(map)
     // 硬件 GPU 下 WebGL canvas 的读回可能滞后一帧（读到上一个块的内容），
     // 等两次 rAF 确保合成器已展示当前帧再截取，避免标注置位。
     await new Promise<void>((resolve) => {
