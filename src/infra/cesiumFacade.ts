@@ -30,6 +30,9 @@ const TERRAIN_URL =
 let cachedTerrain: Cesium.TerrainProvider | null = null
 let terrainLoading: Promise<Cesium.TerrainProvider> | null = null
 
+/** 标注 provider 初始化失败的最多重试次数（静置/上下文丢失重建可能瞬时失败）。 */
+const LABEL_INIT_MAX_RETRY = 3
+
 /** 测试用：重置地形 Provider 缓存（避免跨用例共享模块级状态）。 */
 export function __resetTerrainCacheForTest() {
   cachedTerrain = null
@@ -93,6 +96,8 @@ export class CesiumFacade {
   private _vectorSeq = 0
   private _labelsProvider: ArcGISVectorTileImageryProvider | null = null
   private _labelsToken = 0
+  private _labelsFailCount = 0
+  private _labelsRetryTimer: ReturnType<typeof setTimeout> | null = null
   /** 固定底图对应的 runtime（addBaseLayers 时记录，供 setBaseVisible 切换图层 show）。 */
   private _baseRuntime: LayerRuntime | null = null
   /** 固定底图（World Imagery + World Labels）当前是否可见；缺省 true。 */
@@ -493,6 +498,9 @@ export class CesiumFacade {
       const layer = (entry as unknown as { layer?: Cesium.ImageryLayer }).layer
       if (layer) layer.show = visible
     }
+    // requestRenderMode 下切换 show 不会自动触发重绘：不加 requestFrame，
+    // 移除自带底图数据后 Cesium 不会重新评估瓦片覆盖，标注层瓦片不会被重新请求而保持空白。
+    this.requestFrame()
   }
 
   /** 创建/重建底图标注 provider（档位变化时由 _vectorRebuilds 触发）。 */
@@ -518,7 +526,12 @@ export class CesiumFacade {
       title: 'World Labels',
       gpuTier: gpu.current(),
       onContextLost: () => this._gpu?.reportContextLost(),
-      onContextRestored: () => this._gpu?.reportContextRestored(),
+      onContextRestored: () => {
+        this._gpu?.reportContextRestored()
+        // 标注离屏上下文恢复后清空了块缓存；requestRenderMode + 相机静止时 Cesium 不会重发瓦片请求，
+        // 需显式请求一帧让标注重新展平（否则静置后标注消失且不回来）。
+        this.requestFrame()
+      },
       // 标注是常驻底图元素：不随 critical 档“相机静止暂停离屏”而消失。
       // 若也走 _canRenderOffscreen 门控，浏览器静置后离线上下文降档重建时
       // _cameraMoving=false，_drain 会早退，底图在而标注丢。
@@ -539,6 +552,7 @@ export class CesiumFacade {
           provider.destroy()
           return
         }
+        this._labelsFailCount = 0
         // 重建时若旧实例已挂载则先移除（首次挂载 findIndex 为 -1，不销毁新 provider）
         this._removeVectorImagery(runtime, provider)
         const il = new Cesium.ImageryLayer(provider as unknown as Cesium.ImageryProvider)
@@ -553,9 +567,19 @@ export class CesiumFacade {
           provider.destroy()
           return
         }
-        console.error('[globe] 矢量标注样式加载失败', e)
         provider.destroy()
         this._labelsProvider = null
+        if (this._labelsFailCount < LABEL_INIT_MAX_RETRY) {
+          this._labelsFailCount += 1
+          console.warn('[globe] 矢量标注初始化失败，稍后重试', e)
+          this._labelsRetryTimer = window.setTimeout(() => {
+            if (!this.viewer || this.viewer.isDestroyed()) return
+            if (token !== this._labelsToken) return
+            this._attachLabels(runtime)
+          }, 1200)
+        } else {
+          console.error('[globe] 矢量标注样式加载失败', e)
+        }
       })
   }
 
@@ -886,6 +910,8 @@ export class CesiumFacade {
         ;(v.scene.primitives.remove as (p: unknown, destroy?: boolean) => boolean)(prim, true)
       }
     })
+    // 移除图层是视觉变更：requestRenderMode 下同样需要请求一帧，否则残留像素不刷新。
+    this.requestFrame()
   }
 
   destroy() {
@@ -895,6 +921,7 @@ export class CesiumFacade {
     this._gpuUnsub = null
     this._gpu = null
     for (const provider of this._vectorProviders.values()) provider.destroy()
+    if (this._labelsRetryTimer) { clearTimeout(this._labelsRetryTimer); this._labelsRetryTimer = null }
     this._labelsProvider?.destroy()
     this._labelsProvider = null
     this._vectorRebuilds.clear()

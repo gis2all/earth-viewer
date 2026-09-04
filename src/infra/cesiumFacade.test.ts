@@ -616,7 +616,7 @@ describe('CesiumFacade（W3.4）', () => {
       expect(v.imageryLayers.list.length).toBe(2)
     })
 
-    it('setBaseVisible(false) 隐藏固定底图与已挂载标注，true 恢复', async () => {
+    it('setBaseVisible(false) 隐藏固定底图与已挂载标注，true 恢复，并请求一帧刷新', async () => {
       const { facade, v } = makeFacade()
       const runtime = freshRuntime()
       facade.addBaseLayers(runtime)
@@ -624,12 +624,16 @@ describe('CesiumFacade（W3.4）', () => {
       expect(v.imageryLayers.list.length).toBe(2)
       expect(v.imageryLayers.list[0].show).toBe(true)
       expect(v.imageryLayers.list[1].show).toBe(true)
+      const framesBeforeHide = v.scene.requestRender.mock.calls.length
       facade.setBaseVisible(false)
       expect(v.imageryLayers.list[0].show).toBe(false)
       expect(v.imageryLayers.list[1].show).toBe(false)
+      expect(v.scene.requestRender.mock.calls.length).toBeGreaterThan(framesBeforeHide)
+      const framesBeforeShow = v.scene.requestRender.mock.calls.length
       facade.setBaseVisible(true)
       expect(v.imageryLayers.list[0].show).toBe(true)
       expect(v.imageryLayers.list[1].show).toBe(true)
+      expect(v.scene.requestRender.mock.calls.length).toBeGreaterThan(framesBeforeShow)
     })
 
     it('setBaseVisible(false) 后新挂载的标注层也保持隐藏', async () => {
@@ -653,6 +657,7 @@ describe('CesiumFacade（W3.4）', () => {
       const p = maplibreMock.instances[0]
       expect(p.destroy).toHaveBeenCalled()
       spy.mockRestore()
+      facade.destroy()
     })
 
     it('addWebLayerImagery 挂载 ImageryLayer 且一律不透明（忽略来源 opacity）', async () => {
@@ -1003,11 +1008,13 @@ describe('CesiumFacade（W3.4）', () => {
         vectorProviders: [{ id: 'v', destroy: vi.fn(), provider: { destroy: providerDestroy } }],
         dispose: vi.fn(),
       } as unknown as LayerRuntime
+      const framesBefore = v.scene.requestRender.mock.calls.length
       facade.removeRuntime(runtime)
       expect(v.imageryLayers.remove).toHaveBeenCalledWith(layer, true)
       expect(v.dataSources.remove).toHaveBeenCalledWith(ds, true)
       expect(v.scene.primitives.remove).toHaveBeenCalledWith(prim, true)
       expect(providerDestroy).toHaveBeenCalledTimes(1)
+      expect(v.scene.requestRender.mock.calls.length).toBeGreaterThan(framesBefore)
       expect(() => facade.removeRuntime(runtime)).not.toThrow()
     })
 
