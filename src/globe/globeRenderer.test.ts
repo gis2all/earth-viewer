@@ -22,6 +22,7 @@ const ogcMock = vi.hoisted(() => ({ fetchOgcFeatureGeoJSON: vi.fn() }))
 const csvMock = vi.hoisted(() => ({ fetchCsvGeoJSON: vi.fn() }))
 const vpMock = vi.hoisted(() => ({ runViewportProcess: vi.fn(), pipe: undefined as unknown }))
 const safetyMock = vi.hoisted(() => ({ assertUrlWithinLimit: vi.fn() }))
+const repoMock = vi.hoisted(() => ({ detectMapService: vi.fn(), fetchServiceGeoExtent: vi.fn() }))
 
 vi.mock('../infra/webmapProviders', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../infra/webmapProviders')>()
@@ -64,6 +65,11 @@ vi.mock('../service/processing/viewportWorker', async (importOriginal) => {
 vi.mock('../domain/loadSafety', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../domain/loadSafety')>()
   return { ...mod, assertUrlWithinLimit: safetyMock.assertUrlWithinLimit }
+})
+
+vi.mock('../service/repository', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../service/repository')>()
+  return { ...mod, detectMapService: repoMock.detectMapService, fetchServiceGeoExtent: repoMock.fetchServiceGeoExtent }
 })
 
 function makeJob(webmap: Record<string, unknown>, overrides: Partial<LayerRenderJob> = {}): LayerRenderJob {
@@ -142,6 +148,8 @@ beforeEach(() => {
     )
   )
   safetyMock.assertUrlWithinLimit.mockResolvedValue(undefined)
+  repoMock.detectMapService.mockResolvedValue(null)
+  repoMock.fetchServiceGeoExtent.mockResolvedValue(null)
 })
 
 afterEach(() => {
@@ -159,6 +167,43 @@ describe('renderWebmap：分支渲染', () => {
     expect(f.addWebLayerImagery.mock.calls[0][0]).toMatchObject({ id: 'op', layerType: 'ArcGISTiledMapServiceLayer' })
     expect(job.onError).not.toHaveBeenCalled()
   })
+
+    it('独立 Map 服务带 fullExtent → flyToExtent 到数据范围', async () => {
+      repoMock.detectMapService.mockResolvedValue({ wkid: 4326, maxLevel: 0, tiled: false, extent: { west: -95, south: 29, east: -90, north: 33 } })
+      const f = makeFacade({ addWebLayerImagery: vi.fn(async () => false) })
+      const job = makeJob(webmapWithLayer({ id: 'op', title: 'Map', url: 'https://x/MapServer', layerType: 'ArcGISMapServiceLayer' }))
+      await renderWebmap(job, f)
+      expect(f.flyToExtent).toHaveBeenCalledWith({ west: -95, south: 29, east: -90, north: 33 })
+      expect(f.flyToHome).not.toHaveBeenCalled()
+    })
+
+    it('自定义投影未知（如 102682）→ 回退服务端地理范围', async () => {
+      repoMock.detectMapService.mockResolvedValue({ wkid: 102682, maxLevel: 0, tiled: false, extent: { west: 3292954, south: 670052, east: 3426011, north: 772359 } })
+      repoMock.fetchServiceGeoExtent.mockResolvedValue({ west: -91.3, south: 30.4, east: -91.0, north: 30.7 })
+      const f = makeFacade({ addWebLayerImagery: vi.fn(async () => false) })
+      const job = makeJob(webmapWithLayer({ id: 'op', title: 'Road', url: 'https://x/MapServer', layerType: 'ArcGISMapServiceLayer' }))
+      await renderWebmap(job, f)
+      expect(f.flyToExtent).toHaveBeenCalledWith({ west: -91.3, south: 30.4, east: -91.0, north: 30.7 })
+      expect(f.flyToHome).not.toHaveBeenCalled()
+    })
+
+    it('无 fullExtent 且未知投影 → 回退 flyToHome', async () => {
+      repoMock.detectMapService.mockResolvedValue(null)
+      const f = makeFacade({ addWebLayerImagery: vi.fn(async () => false) })
+      const job = makeJob(webmapWithLayer({ id: 'op', title: 'Map', url: 'https://x/MapServer', layerType: 'ArcGISMapServiceLayer' }))
+      await renderWebmap(job, f)
+      expect(f.flyToHome).toHaveBeenCalled()
+      expect(f.flyToExtent).not.toHaveBeenCalled()
+    })
+
+    it('全球级范围（如世界底图）不跳相机 → 回退 flyToHome', async () => {
+      repoMock.detectMapService.mockResolvedValue({ wkid: 4326, maxLevel: 0, tiled: true, extent: { west: -180, south: -90, east: 180, north: 90 } })
+      const f = makeFacade({ addWebLayerImagery: vi.fn(async () => false) })
+      const job = makeJob(webmapWithLayer({ id: 'op', title: 'World', url: 'https://x/MapServer', layerType: 'ArcGISMapServiceLayer' }))
+      await renderWebmap(job, f)
+      expect(f.flyToHome).toHaveBeenCalled()
+      expect(f.flyToExtent).not.toHaveBeenCalled()
+    })
 
   it('矢量瓦片 → addVectorTile 挂载回调（成功清错/失败报错）', async () => {
     const f = makeFacade()

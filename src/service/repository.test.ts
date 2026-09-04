@@ -13,6 +13,7 @@ import {
   clearCrsCache,
   fetchFeatureGeoJSON,
   fetchFeatureRenderer,
+  fetchServiceGeoExtent,
 } from './repository'
 
 describe('repository 搜索查询（W2.1）', () => {
@@ -186,6 +187,40 @@ describe('repository detectMapService（W2.1）', () => {
   })
 })
 
+
+describe('repository 服务范围（服务 extent 解析）', () => {
+  beforeEach(() => clearCrsCache())
+
+  it('detectMapService 从 fullExtent 读取四角范围', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ spatialReference: { wkid: 28992 }, fullExtent: { xmin: -271549, ymin: 227882, xmax: 508740, ymax: 665169 } }) })))
+    const info = await detectMapService('https://rd/MapServer')
+    expect(info).toMatchObject({ wkid: 28992, extent: { west: -271549, south: 227882, east: 508740, north: 665169 } })
+    vi.unstubAllGlobals()
+  })
+
+  it('fetchServiceGeoExtent 用 outSR=4326 要素外包框求地理范围', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('?f=json')) return { ok: true, json: async () => ({ layers: [{ id: 0 }] }) }
+      return { ok: true, json: async () => ({ features: [{ geometry: { paths: [[[-91.15, 30.45], [-91.1, 30.6]]] } }] }) }
+    }))
+    const ext = await fetchServiceGeoExtent('https://br/MapServer')
+    expect(ext).not.toBeNull()
+    expect(ext!.west).toBeCloseTo(-91.15, 4)
+    expect(ext!.south).toBeCloseTo(30.45, 4)
+    expect(ext!.east).toBeCloseTo(-91.1, 4)
+    expect(ext!.north).toBeCloseTo(30.6, 4)
+    vi.unstubAllGlobals()
+  })
+
+  it('无 fullExtent 且子层不可查询 → fetchServiceGeoExtent 返回 null', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('?f=json')) return { ok: true, json: async () => ({ layers: [{ id: 0 }] }) }
+      return { ok: false, status: 400 }
+    }))
+    await expect(fetchServiceGeoExtent('https://tiled/MapServer')).resolves.toBeNull()
+    vi.unstubAllGlobals()
+  })
+})
 describe('repository 要素数据（W2.1）', () => {
   it('fetchFeatureGeoJSON 分页拉取并返回 FeatureCollection', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {

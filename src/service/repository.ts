@@ -12,6 +12,7 @@
 import { SEARCH_ITEM_TYPES, isWebMapContainer } from '../domain/itemTypes'
 import { DEFAULT_BUDGET_POLICY } from '../domain/budgetPolicy'
 import { fetchJson, HttpError } from './http'
+import type { ViewEnvelope } from '../domain/geometry/geometry'
 
 // ---------- 搜索结果 ----------
 
@@ -226,6 +227,8 @@ export interface MapServiceInfo {
   maxLevel: number
   /** 是否有缓存瓦片（tileInfo）——false 表示动态 MapServer，不能用 /tile/ 模板请求 */
   tiled: boolean
+  /** 服务 fullExtent 四角（wkid 所在坐标系），用于添加独立服务时飞到数据范围 */
+  extent?: { west: number; south: number; east: number; north: number }
 }
 
 /** 服务坐标系探测缓存（同一 URL 只探测一次）。 */
@@ -240,12 +243,17 @@ export async function detectMapService(url: string, signal?: AbortSignal): Promi
     const j = await fetchJson<{
       spatialReference?: { wkid?: number; latestWkid?: number }
       tileInfo?: { lods?: unknown[] }
+      fullExtent?: { xmin?: number; ymin?: number; xmax?: number; ymax?: number }
     }>(`${base}?f=json`, { signal })
     const wkid = j.spatialReference?.wkid ?? j.spatialReference?.latestWkid
     if (typeof wkid !== 'number') return null
     const lods = j.tileInfo?.lods
     const maxLevel = Array.isArray(lods) && lods.length ? lods.length - 1 : 0
-    const info: MapServiceInfo = { wkid, maxLevel, tiled: !!j.tileInfo }
+    const fe = j.fullExtent
+    const extent = fe && [fe.xmin, fe.ymin, fe.xmax, fe.ymax].every((n) => typeof n === 'number')
+      ? { west: fe.xmin as number, south: fe.ymin as number, east: fe.xmax as number, north: fe.ymax as number }
+      : undefined
+    const info: MapServiceInfo = { wkid, maxLevel, tiled: !!j.tileInfo, extent }
     CRS_CACHE.set(base, info)
     return info
   } catch {
@@ -256,6 +264,68 @@ export async function detectMapService(url: string, signal?: AbortSignal): Promi
 /** 测试辅助：清空 CRS 探测缓存。 */
 export function clearCrsCache(): void {
   CRS_CACHE.clear()
+}
+/** 遍历 GeoJSON geometry.coordinates，求最小外接矩形（4326，度）。 */
+function extentFromGeoJson(gj: { features?: unknown[] }): ViewEnvelope | null {
+  let west = Infinity
+  let south = Infinity
+  let east = -Infinity
+  let north = -Infinity
+  let found = false
+  const walk = (v: unknown): void => {
+    if (Array.isArray(v) && typeof v[0] === 'number' && v.length >= 2) {
+      const x = v[0] as number
+      const y = v[1] as number
+      if (Number.isFinite(x) && Number.isFinite(y)) {
+        found = true
+        if (x < west) west = x
+        if (x > east) east = x
+        if (y < south) south = y
+        if (y > north) north = y
+      }
+      return
+    }
+    if (Array.isArray(v)) for (const c of v) walk(c)
+  }
+  for (const raw of gj.features ?? []) {
+    const geometry = (raw as { geometry?: { coordinates?: unknown } } | null)?.geometry
+    walk(geometry?.coordinates)
+  }
+  if (!found) return null
+  return { west, south, east, north }
+}
+
+/**
+ * 查询服务在 WGS84 下的实际数据范围（outSR=4326）。
+ * 用于 proj4 不认识的局部自定义投影（如 wkid 102682），由服务端反投影后求要素外包框。
+ * 只挑前几个子层、每条最多取 200 条要素，避免大图层拖垮页面。
+ */
+export async function fetchServiceGeoExtent(url: string, signal?: AbortSignal): Promise<ViewEnvelope | null> {
+  const base = url.replace(/\/?$/, '')
+  try {
+    const info = await fetchJson<{ layers?: Array<{ id?: number }>; error?: { message?: string } }>(`${base}?f=json`, { signal })
+    if (info.error) return null
+    const ids = (info.layers ?? []).map((l) => l.id).filter((n): n is number => typeof n === 'number')
+    for (const id of ids.slice(0, 5)) {
+      try {
+        const jj = await fetchJson<{
+          features?: Array<{ attributes?: Record<string, unknown>; geometry?: unknown }>
+          error?: { message?: string }
+        }>(
+          `${base}/${id}/query?where=1%3D1&outFields=*&outSR=4326&returnGeometry=true&resultRecordCount=200&f=json`,
+          { signal }
+        )
+        if (jj.error) continue
+        const ext = extentFromGeoJson(arcgisQueryToFeatureCollection(jj))
+        if (ext) return ext
+      } catch {
+        // 该子层不支持查询（如瓦片缓存参考层），尝试下一子层
+      }
+    }
+  } catch {
+    // 元数据读取失败，返回 null（调用方回退 flyToHome）
+  }
+  return null
 }
 
 // ---------- 要素数据 ----------

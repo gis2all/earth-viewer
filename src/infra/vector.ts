@@ -6,6 +6,8 @@ import type { FeatureStyleSpec } from '../domain/types'
 // 常见 ArcGIS Web Mercator wkid 与 EPSG:3857 等价（部分服务用旧 wkid 102100/102113）
 proj4.defs('EPSG:102100', proj4.defs('EPSG:3857'))
 proj4.defs('EPSG:102113', proj4.defs('EPSG:3857'))
+// 荷兰 Rijksdriehoeks（RD New）本地图层常用 28992，proj4 默认不含需显式注册
+proj4.defs('EPSG:28992', '+proj=sterea +lat_0=52.15616055555555 +lon_0=5.38763888888889 +k=0.9999079 +x_0=155000 +y_0=463000 +ellps=bessel +units=m +no_defs')
 
 /** 递归重投影一组坐标（支持任意嵌套深度的 [x,y] / ring / polygon 数组） */
 export function reprojectCoordinates(
