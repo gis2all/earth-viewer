@@ -44,6 +44,8 @@ export interface FacadeLifecycleCallbacks {
   onContextLost?: (msg: string) => void
   onContextRestored?: () => void
   onInitError?: (msg: string) => void
+  /** 版权署名容器：Cesium 把 credit / attribution 渲染到此节点（底部状态栏左段）。 */
+  creditContainer?: HTMLElement
 }
 
 /**
@@ -128,6 +130,7 @@ export class CesiumFacade {
         maximumRenderTimeChange: Infinity,
         // 默认 true 会忽略 devicePixelRatio 按 1x 渲染，高分屏下整球被拉伸发虚；false 跟随系统 DPI
         useBrowserRecommendedResolution: false,
+        creditContainer: cb.creditContainer,
       })
     } catch (e) {
       console.error('[globe] 初始化失败', e)
@@ -322,6 +325,20 @@ export class CesiumFacade {
       const carto = v.scene.globe.ellipsoid.cartesianToCartographic(picked)
       cb(Cesium.Math.toDegrees(carto.longitude), Cesium.Math.toDegrees(carto.latitude))
     }, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK)
+    return () => this.releaseInputHandler()
+  }
+
+  /** 注册鼠标移动（拾取后回调经纬度，度）；返回注销函数。底部状态栏实时坐标用。 */
+  onPointerMove(cb: (lon: number, lat: number) => void): () => void {
+    const v = this.viewer
+    const h = this.acquireInputHandler()
+    if (!h || !v) return () => {}
+    h.setInputAction((movement: { endPosition: Cesium.Cartesian2 }) => {
+      const picked = v.camera.pickEllipsoid(movement.endPosition, v.scene.globe.ellipsoid)
+      if (!picked) return
+      const carto = v.scene.globe.ellipsoid.cartesianToCartographic(picked)
+      cb(Cesium.Math.toDegrees(carto.longitude), Cesium.Math.toDegrees(carto.latitude))
+    }, Cesium.ScreenSpaceEventType.MOUSE_MOVE)
     return () => this.releaseInputHandler()
   }
 
