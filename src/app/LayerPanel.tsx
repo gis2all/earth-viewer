@@ -89,6 +89,10 @@ function FoldIcon({ collapsed }: { collapsed: boolean }) {
   return <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="square" strokeLinejoin="miter" aria-hidden="true"><path d={collapsed ? 'm6 4 4 4-4 4' : 'm10 4-4 4 4 4'} /></svg>
 }
 
+function BackToTopIcon() {
+  return <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="square" strokeLinejoin="miter" aria-hidden="true"><path d="m5 7 3-3 3 3" /><path d="m5 12 3-3 3 3" /></svg>
+}
+
 function itemDetailsUrl(id: string): string {
   return 'https://www.arcgis.com/home/item.html?id=' + encodeURIComponent(id)
 }
@@ -391,13 +395,22 @@ export function LayerPanel() {
     el.scrollBy({ top: direction * Math.max(120, el.clientHeight * 0.8), behavior: 'smooth' })
   }
 
+  const scrollToTop = () => {
+    scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
   return (
     <aside className={'panel' + (collapsed ? ' collapsed' : '')}>
       <div className="side-head">
         <span className="side-title">图层</span>
-        <button className="fold" onClick={toggleCollapsed} title={collapsed ? '展开面板' : '收起面板'}>
-          <FoldIcon collapsed={collapsed} />
-        </button>
+        <div className="side-actions">
+          <button className="fold back-to-top" onClick={scrollToTop} title="回到顶部" aria-label="回到顶部">
+            <BackToTopIcon />
+          </button>
+          <button className="fold" onClick={toggleCollapsed} title={collapsed ? '展开面板' : '收起面板'}>
+            <FoldIcon collapsed={collapsed} />
+          </button>
+        </div>
       </div>
       <div className="panel-inner" ref={scrollRef} onScroll={onScroll}>
         <section className="group">

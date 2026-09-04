@@ -61,6 +61,7 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .scroll-arrow:hover,.scroll-arrow:focus-visible{background:transparent;color:var(--scrollbar-thumb-hover)}
 .side-head{height:46px;flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;padding:0 10px 0 16px;border-bottom:0;min-width:0}
 .side-title{font-size:13px;font-weight:600;letter-spacing:-.01em;white-space:nowrap;color:var(--muted)}
+.side-actions{display:flex;align-items:center;gap:4px;flex:0 0 auto;min-width:0}
 .fold{width:24px;height:24px;flex:0 0 24px;background:transparent;border:1px solid transparent;color:var(--muted);display:grid;place-items:center;transition:background .15s,color .15s}
 .fold svg{display:block;width:16px;height:16px}
 .fold:hover,.fold:focus-visible{color:var(--fg);background:var(--panel-2)}
