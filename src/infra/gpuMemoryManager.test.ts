@@ -147,8 +147,8 @@ describe('内存估算函数', () => {
     // low 与 critical 的离屏画布/pool/block 完全一致，仅块缓存（CPU）与离屏暂停不同，
     // 故估算相同；预算核算只关心 GPU 驻留，排序按非递增即可。
     expect(critical).toBeLessThanOrEqual(low)
-    // high: 1×1536²×8（离屏画布，poolSize=1）+ 3²×512²×4（上屏纹理，不按 cacheBlocks 累加）
-    expect(high).toBe(1 * 1536 ** 2 * 8 + 3 ** 2 * 512 ** 2 * 4)
+    // high: 2×1536²×8（离屏画布，poolSize=2）+ 3²×512²×4（上屏纹理，不按 cacheBlocks 累加）
+    expect(high).toBe(2 * 1536 ** 2 * 8 + 3 ** 2 * 512 ** 2 * 4)
   })
 
   it('estimateSceneCanvasBytes：分辨率缩放后缓冲字节按比例缩减', () => {

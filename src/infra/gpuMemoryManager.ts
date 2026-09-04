@@ -8,6 +8,7 @@
  * - 上下文丢失统一处理：任意 WebGL 上下文丢失上报后强制降档，订阅者重建失效 provider，
  *   避免 GPU 内存耗尽后白屏/崩溃。
  */
+import { appConfig } from '../domain/config'
 import {
   GPU_TIER_ORDER,
   GPU_TIERS,
@@ -20,11 +21,15 @@ export interface GpuResource {
   estimateBytes(tier: GpuTierConfig): number
 }
 
-/** 默认预算约 256MB；低内存设备按 deviceMemory 收紧（4GB → 256MB，2GB → 128MB）。 */
+/** GPU budget (bytes): explicit appConfig().gpu.budgetMB wins; otherwise device memory tiers (>=6GB->512, >=4GB->384, else old formula, floor 128MB). */
 export function defaultGpuBudgetBytes(): number {
-  if (typeof navigator !== 'undefined') {
+  const explicit = appConfig().gpu.budgetMB
+  if (typeof explicit === "number" && explicit > 0) return explicit * 1024 * 1024
+  if (typeof navigator !== "undefined") {
     const dm = (navigator as { deviceMemory?: number }).deviceMemory
-    if (typeof dm === 'number' && dm > 0) {
+    if (typeof dm === "number" && dm > 0) {
+      if (dm >= 6) return 512 * 1024 * 1024
+      if (dm >= 4) return 384 * 1024 * 1024
       const mb = Math.max(128, Math.min(256, dm * 64))
       return mb * 1024 * 1024
     }

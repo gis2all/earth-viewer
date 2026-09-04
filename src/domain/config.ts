@@ -45,6 +45,12 @@ export interface CameraConfig {
   wheelActiveWindowMs: number
 }
 
+/** GPU 预算配置。budgetMB 显式设定时覆盖设备自适应分档；未设定时按 deviceMemory 分档。 */
+export interface GpuConfig {
+  /** 显式 GPU 预算（MB）；不设或 <=0 时按设备内存自适应分档。 */
+  budgetMB?: number
+}
+
 /** 侧边面板 UI 常量（原 LayerPanel 局部常量）。 */
 export interface PanelConfig {
   /** 搜索结果首页条数。 */
@@ -92,6 +98,9 @@ export interface AppConfig {
   // ---- 相机 ----
   camera: CameraConfig
 
+  // ---- GPU ----
+  gpu: GpuConfig
+
   // ---- UI 面板 ----
   panel: PanelConfig
 }
@@ -128,6 +137,11 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     wheelActiveWindowMs: 1500,
   },
 
+  gpu: {
+    // budgetMB 未设定：由 GpuMemoryManager 按 deviceMemory 分档（默认 256MB 基线）
+    budgetMB: undefined,
+  },
+
   panel: {
     galleryPage: 24,
     appendStep: 12,
@@ -151,6 +165,7 @@ export function configureApp(overrides: AppConfigOverrides): AppConfig {
     ...overrides,
     viewportFallback: overrides.viewportFallback ?? current.viewportFallback,
     camera: { ...current.camera, ...overrides.camera },
+    gpu: { ...current.gpu, ...overrides.gpu },
     panel: { ...current.panel, ...overrides.panel },
   }
   return current
