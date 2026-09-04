@@ -63,4 +63,16 @@ describe('resolveServiceItem', () => {
   it('unknown type returns null', async () => {
     expect(await resolveServiceItem({ id: 'x', type: 'Streaming Service' })).toBeNull()
   })
+
+  it('Scene Service 点云 -> 屏蔽（返回 null），不添加', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ layers: [{ id: 0, layerType: 'Point' }] }) })))
+    const l = await resolveServiceItem({ id: 's1', type: 'Scene Service', url: 'https://x/SceneServer', title: 'Trees' })
+    expect(l).toBeNull()
+  })
+
+  it('Scene Service 网格（3DObject）-> 可添加', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ layers: [{ id: 0, layerType: '3DObject' }] }) })))
+    const l = await resolveServiceItem({ id: 's2', type: 'Scene Service', url: 'https://x/SceneServer', title: 'Buildings' })
+    expect(l).toMatchObject({ url: 'https://x/SceneServer', layerType: 'ArcGISSceneServiceLayer' })
+  })
 })

@@ -1,4 +1,5 @@
 import { withFetchTimeout } from './http'
+import { fetchSceneLayerKinds, isPointCloudScene } from './repository'
 import type { WebLayer } from '../domain/types'
 import { layerTypeForItemType } from '../domain/itemTypes'
 
@@ -99,6 +100,11 @@ export async function resolveServiceItem(it: ServiceItemInput, signal?: AbortSig
     case 'CSV':
       return { ...base, url: '/sharing/rest/content/items/' + it.id + '/data' }
     default:
+      if (it.type === 'Scene Service' && it.url) {
+        // 点云场景（Point/PointCloud/Splat）：Cesium I3SDataProvider 不渲染，直接拦截不让添加
+        const kinds = await fetchSceneLayerKinds(it.url, signal)
+        if (isPointCloudScene(kinds)) return null
+      }
       return it.url ? base : null
   }
 }

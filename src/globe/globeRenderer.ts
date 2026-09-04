@@ -16,7 +16,7 @@ import type { ViewEnvelope } from '../domain/geometry/geometry'
 import type { WebLayer } from '../domain/types'
 import { classifyWebLayerKind } from '../domain/webLayerKind'
 import { reprojectCoordinates } from '../infra/vector'
-import { detectMapService, fetchServiceGeoExtent } from '../service/repository'
+import { detectMapService, fetchSceneExtent, fetchServiceGeoExtent } from '../service/repository'
 import { renderWebLayer } from './webLayerRenderer'
 
 /** 独立 Map/Image 服务的 WGS84 范围。
@@ -28,7 +28,21 @@ async function resolveServiceGeoExtent(layer: WebLayer, signal?: AbortSignal): P
   const url = layer.url
   if (!url) return null
   const kind = classifyWebLayerKind(layer)
-  if (kind !== 'map' && kind !== 'image') return null
+  if (kind !== 'map' && kind !== 'image' && kind !== 'scene') return null
+  if (kind === 'scene') {
+    // I3S 场景：外层无 fullExtent，读 SceneLayer 的 fullExtent 反投影；未知投影则放弃飞行
+    const native = await fetchSceneExtent(url, signal)
+    if (!native) return null
+    try {
+      if (native.wkid === 4326) return { west: native.west, south: native.south, east: native.east, north: native.north }
+      const [w, s] = reprojectCoordinates([native.west, native.south], 'EPSG:' + native.wkid, 'EPSG:4326') as [number, number]
+      const [ea, n] = reprojectCoordinates([native.east, native.north], 'EPSG:' + native.wkid, 'EPSG:4326') as [number, number]
+      if ([w, s, ea, n].every(Number.isFinite)) return { west: w, south: s, east: ea, north: n }
+    } catch {
+      return null
+    }
+    return null
+  }
   const crs = await detectMapService(url, signal)
   if (!crs?.extent) return null
   const e = crs.extent
@@ -46,13 +60,15 @@ async function resolveServiceGeoExtent(layer: WebLayer, signal?: AbortSignal): P
 }
 
 /** 独立服务 webmap（无初始相机视图、仅单个可渲染业务层）时，把相机飞到该层的数据范围。 */
-async function serviceExtentForFlight(wm: Record<string, unknown>, signal?: AbortSignal): Promise<ViewEnvelope | null> {
+async function serviceExtentForFlight(
+  wm: Record<string, unknown>,
+  signal?: AbortSignal
+): Promise<{ ext: ViewEnvelope | null; isScene: boolean }> {
   const layers = renderableLayersFromWebmap(wm)
-  if (layers.length !== 1) return null
-  const ext = await resolveServiceGeoExtent(layers[0], signal)
-  // 全球级范围（覆盖近整个地球）不跳相机：保持用户当前视角，避免添加世界底图时被拉到全球总览
-  if (ext && (ext.east - ext.west >= 300 || ext.north - ext.south >= 150)) return null
-  return ext
+  if (layers.length !== 1) return { ext: null, isScene: false }
+  const layer = layers[0]
+  const ext = await resolveServiceGeoExtent(layer, signal)
+  return { ext, isScene: classifyWebLayerKind(layer) === 'scene' }
 }
 
 /** 渲染一个 webmap 的全部内层；抛错由 LayerController 兜底为"图层加载失败"。 */
@@ -90,15 +106,18 @@ export async function renderWebmap(job: LayerRenderJob, f: CesiumFacade): Promis
       }
     } else {
       // 独立服务：飞到服务数据范围，否则程序初始位置（世界视图）下局部图层不可见
-      const ext = await serviceExtentForFlight(wm, signal)
-      if (ext) {
+      const r = await serviceExtentForFlight(wm, signal)
+      const isGlobal = !!r.ext && (r.ext.east - r.ext.west >= 300 || r.ext.north - r.ext.south >= 150)
+      if (r.ext && !isGlobal) {
         try {
-          f.flyToExtent(ext)
+          f.flyToExtent(r.ext)
         } catch {
           // ignore
         }
       } else {
         f.flyToHome()
+        // 全球级 3D 场景没有可定位中心：提示放大到城市，避免用户以为没渲染
+        if (r.isScene && isGlobal) job.onNote?.('该 3D 场景覆盖全球，放大到城市可见对象')
       }
     }
   }

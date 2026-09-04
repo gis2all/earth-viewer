@@ -14,6 +14,9 @@ import {
   fetchFeatureGeoJSON,
   fetchFeatureRenderer,
   fetchServiceGeoExtent,
+  fetchSceneLayerKinds,
+  isPointCloudScene,
+  fetchSceneExtent,
 } from './repository'
 
 describe('repository 搜索查询（W2.1）', () => {
@@ -291,4 +294,53 @@ describe('repository 要素数据（W2.1）', () => {
     await expect(fetchFeatureRenderer('https://f/FeatureServer')).resolves.toBeNull()
     vi.unstubAllGlobals()
   })
+})
+
+describe('repository 场景图层类型（点云屏蔽）', () => {
+  it('fetchSceneLayerKinds：根 SceneServer 读 layers[].layerType', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ layers: [{ id: 0, layerType: 'Point' }] }) })))
+    await expect(fetchSceneLayerKinds('https://x/SceneServer')).resolves.toEqual(['point'])
+  })
+
+  it('fetchSceneLayerKinds：SceneLayer URL 读顶层 layerType', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ id: 0, layerType: '3DObject' }) })))
+    await expect(fetchSceneLayerKinds('https://x/SceneServer/layers/0')).resolves.toEqual(['mesh'])
+  })
+
+  it('fetchSceneLayerKinds 失败或无 layers -> 空数组', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 400 })))
+    await expect(fetchSceneLayerKinds('https://x/SceneServer')).resolves.toEqual([])
+  })
+
+  it('isPointCloudScene 纯点云为真，含 mesh 为假', () => {
+    expect(isPointCloudScene(['point'])).toBe(true)
+    expect(isPointCloudScene(['point', 'unknown'])).toBe(true)
+    expect(isPointCloudScene(['mesh'])).toBe(false)
+    expect(isPointCloudScene(['mesh', 'point'])).toBe(false)
+    expect(isPointCloudScene([])).toBe(false)
+  })
+
+describe('repository 场景 extent（独立 Scene Service 飞到数据范围）', () => {
+  it('fetchSceneExtent：SceneServer 根无 fullExtent 时读第一个图层', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (u: string) => {
+      if (u.includes('/layers/0?f=json')) {
+        return { ok: true, json: async () => ({ id: 0, fullExtent: { xmin: 5, ymin: 50, xmax: 7, ymax: 53 }, spatialReference: { wkid: 4326 } }) }
+      }
+      return { ok: true, json: async () => ({ layers: [{ id: 0, layerType: '3DObject' }] }) }
+    }))
+    const ext = await fetchSceneExtent('https://x/SceneServer')
+    expect(ext).toEqual({ wkid: 4326, west: 5, south: 50, east: 7, north: 53 })
+  })
+
+  it('fetchSceneExtent：SceneLayer URL 直接读 fullExtent', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ id: 0, fullExtent: { xmin: -10, ymin: -10, xmax: 10, ymax: 10 }, spatialReference: { wkid: 3857 } }) })))
+    const ext = await fetchSceneExtent('https://x/SceneServer/layers/0')
+    expect(ext).toEqual({ wkid: 3857, west: -10, south: -10, east: 10, north: 10 })
+  })
+
+  it('fetchSceneExtent：失败/无 fullExtent -> null', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 400 })))
+    await expect(fetchSceneExtent('https://x/SceneServer')).resolves.toBeNull()
+  })
+})
 })

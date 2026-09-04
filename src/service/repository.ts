@@ -328,6 +328,90 @@ export async function fetchServiceGeoExtent(url: string, signal?: AbortSignal): 
   return null
 }
 
+// ---------- 场景图层类型探测 ----------
+
+export type SceneLayerKind = 'point' | 'mesh' | 'unknown'
+
+/** 根据 ArcGIS layerType 归一化为 point/mesh；点云层 Cesium I3SDataProvider 不渲染。 */
+function toSceneLayerKind(layerType: string | undefined): SceneLayerKind {
+  const v = (layerType || '').toLowerCase()
+  if (['point', 'pointcloud', 'splat', 'pointcloudlayer', '3dpoint', 'slam'].includes(v)) return 'point'
+  if (['3dobject', 'integratedmesh', 'buildingscene', 'mesh', 'mesh3d', 'building'].includes(v)) return 'mesh'
+  return 'unknown'
+}
+
+/** 探测 SceneServer（根，读 layers[].layerType）或 SceneLayer（读顶层 layerType）的图层类型。失败返回空数组。 */
+export async function fetchSceneLayerKinds(url: string, signal?: AbortSignal): Promise<SceneLayerKind[]> {
+  const base = url.replace(/\/?$/, '')
+  try {
+    const j = await fetchJson<{
+      layerType?: string
+      layers?: Array<{ layerType?: string }>
+      error?: { message?: string }
+    }>(`${base}?f=json`, { signal })
+    if (j.error) return []
+    const raw = Array.isArray(j.layers) && j.layers.length ? j.layers : j.layerType ? [{ layerType: j.layerType }] : []
+    return raw.map((l) => toSceneLayerKind((l as { layerType?: string }).layerType))
+  } catch {
+    return []
+  }
+}
+
+/** SceneServer/SceneLayer 原生坐标系下的 fullExtent 四角。 */
+export interface ServiceNativeExtent {
+  wkid: number
+  west: number
+  south: number
+  east: number
+  north: number
+}
+
+/**
+ * 探测 SceneServer（根，无 fullExtent 时取第一个图层）或 SceneLayer 的 fullExtent。
+ * 返回原生坐标系下四角，供 globe 反投影后飞行。失败返回 null。
+ */
+export async function fetchSceneExtent(url: string, signal?: AbortSignal): Promise<ServiceNativeExtent | null> {
+  const base = url.replace(/\/?$/, '')
+  const readExtent = (meta: {
+    fullExtent?: { xmin?: number; ymin?: number; xmax?: number; ymax?: number; spatialReference?: { wkid?: number } }
+    spatialReference?: { wkid?: number }
+    layers?: Array<{ id?: number }>
+  }): ServiceNativeExtent | null => {
+    const fe = meta?.fullExtent
+    if (!fe) return null
+    const wkid = fe.spatialReference?.wkid ?? meta.spatialReference?.wkid
+    if ([fe.xmin, fe.ymin, fe.xmax, fe.ymax].some((n) => typeof n !== 'number') || typeof wkid !== 'number') return null
+    return { wkid, west: fe.xmin as number, south: fe.ymin as number, east: fe.xmax as number, north: fe.ymax as number }
+  }
+  try {
+    const j = await fetchJson<{
+      fullExtent?: { xmin?: number; ymin?: number; xmax?: number; ymax?: number }
+      spatialReference?: { wkid?: number }
+      layers?: Array<{ id?: number }>
+      error?: { message?: string }
+    }>(`${base}?f=json`, { signal })
+    if (j.error) return null
+    const root = readExtent(j)
+    if (root) return root
+    const first = (j.layers ?? [])[0]?.id
+    if (typeof first === 'number') {
+      const layer = await fetchJson<{
+        fullExtent?: { xmin?: number; ymin?: number; xmax?: number; ymax?: number }
+        spatialReference?: { wkid?: number }
+        error?: { message?: string }
+      }>(`${base}/layers/${first}?f=json`, { signal })
+      if (layer.error) return null
+      return readExtent(layer)
+    }
+  } catch {
+    // 忽略
+  }
+  return null
+}
+/** 该服务是否纯点云场景（没有任何可渲染的 mesh 层）。用于屏蔽点云 I3S。 */
+export function isPointCloudScene(kinds: SceneLayerKind[]): boolean {
+  return kinds.length > 0 && kinds.every((k) => k !== 'mesh')
+}
 // ---------- 要素数据 ----------
 
 /** ArcGIS JSON (f=json) query -> GeoJSON FeatureCollection (Point/Line/Polygon)。 */

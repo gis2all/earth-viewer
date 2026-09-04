@@ -22,7 +22,7 @@ const ogcMock = vi.hoisted(() => ({ fetchOgcFeatureGeoJSON: vi.fn() }))
 const csvMock = vi.hoisted(() => ({ fetchCsvGeoJSON: vi.fn() }))
 const vpMock = vi.hoisted(() => ({ runViewportProcess: vi.fn(), pipe: undefined as unknown }))
 const safetyMock = vi.hoisted(() => ({ assertUrlWithinLimit: vi.fn() }))
-const repoMock = vi.hoisted(() => ({ detectMapService: vi.fn(), fetchServiceGeoExtent: vi.fn() }))
+const repoMock = vi.hoisted(() => ({ detectMapService: vi.fn(), fetchServiceGeoExtent: vi.fn(), fetchSceneLayerKinds: vi.fn(), isPointCloudScene: vi.fn(), fetchSceneExtent: vi.fn() }))
 
 vi.mock('../infra/webmapProviders', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../infra/webmapProviders')>()
@@ -69,7 +69,7 @@ vi.mock('../domain/loadSafety', async (importOriginal) => {
 
 vi.mock('../service/repository', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../service/repository')>()
-  return { ...mod, detectMapService: repoMock.detectMapService, fetchServiceGeoExtent: repoMock.fetchServiceGeoExtent }
+  return { ...mod, detectMapService: repoMock.detectMapService, fetchServiceGeoExtent: repoMock.fetchServiceGeoExtent, fetchSceneLayerKinds: repoMock.fetchSceneLayerKinds, isPointCloudScene: repoMock.isPointCloudScene, fetchSceneExtent: repoMock.fetchSceneExtent }
 })
 
 function makeJob(webmap: Record<string, unknown>, overrides: Partial<LayerRenderJob> = {}): LayerRenderJob {
@@ -150,6 +150,9 @@ beforeEach(() => {
   safetyMock.assertUrlWithinLimit.mockResolvedValue(undefined)
   repoMock.detectMapService.mockResolvedValue(null)
   repoMock.fetchServiceGeoExtent.mockResolvedValue(null)
+  repoMock.fetchSceneLayerKinds.mockResolvedValue([])
+  repoMock.isPointCloudScene.mockImplementation((k: unknown[]) => k.length > 0 && k.every((x) => x !== 'mesh'))
+  repoMock.fetchSceneExtent.mockResolvedValue(null)
 })
 
 afterEach(() => {
@@ -259,6 +262,34 @@ describe('renderWebmap：分支渲染', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     await renderWebmap(job2, f)
     expect(job2.onError).toHaveBeenCalledWith('3D 场景加载失败：Scene2')
+  })
+
+  it('Point cloud scene → 跳过 addScene 并提示（不支持点云）', async () => {
+    const f = makeFacade()
+    repoMock.fetchSceneLayerKinds.mockResolvedValue(['point'])
+    const job = makeJob(webmapWithLayer({ id: 'pc', title: 'Trees', url: 'https://x/SceneServer', layerType: 'ArcGISSceneLayer' }))
+    await renderWebmap(job, f)
+    expect(f.addScene).not.toHaveBeenCalled()
+    expect(job.onNote).toHaveBeenCalledWith('该场景为点云图层，暂不支持渲染')
+  })
+
+  it('独立 Scene 带 fullExtent → flyToExtent 到数据范围', async () => {
+    repoMock.fetchSceneExtent.mockResolvedValue({ wkid: 4326, west: 5, south: 50, east: 7, north: 53 })
+    const f = makeFacade({ addWebLayerImagery: vi.fn(async () => false) })
+    const job = makeJob(webmapWithLayer({ id: 'sc', title: 'Scene', url: 'https://x/SceneServer', layerType: 'ArcGISSceneServiceLayer' }))
+    await renderWebmap(job, f)
+    expect(f.flyToExtent).toHaveBeenCalledWith({ west: 5, south: 50, east: 7, north: 53 })
+    expect(f.flyToHome).not.toHaveBeenCalled()
+  })
+
+  it('全球级 3D 场景不跳相机，并提示放大到城市', async () => {
+    repoMock.fetchSceneExtent.mockResolvedValue({ wkid: 4326, west: -180, south: -90, east: 180, north: 90 })
+    const f = makeFacade({ addWebLayerImagery: vi.fn(async () => false) })
+    const job = makeJob(webmapWithLayer({ id: 'gs', title: 'Global', url: 'https://x/SceneServer', layerType: 'ArcGISSceneServiceLayer' }))
+    await renderWebmap(job, f)
+    expect(f.flyToHome).toHaveBeenCalled()
+    expect(f.flyToExtent).not.toHaveBeenCalled()
+    expect(job.onNote).toHaveBeenCalledWith('该 3D 场景覆盖全球，放大到城市可见对象')
   })
 
   it('OGC 3D Tiles → add3dTiles', async () => {

@@ -17,6 +17,7 @@ import { createViewportDriver } from './viewport/viewportController'
 import type { ViewEnvelope } from '../domain/geometry/geometry'
 import { hasPrimitiveRendering } from '../infra/primitive'
 import { fetchFeatureStyle, fetchFeatureRenderer } from '../infra/webmapProviders'
+import { fetchSceneLayerKinds, isPointCloudScene } from '../service/repository'
 import { withFetchTimeout } from '../service/http'
 import {
   isVectorTileInput,
@@ -148,6 +149,12 @@ const sceneRenderer: LayerRenderer = {
   matches: (op) => Boolean(op.url) && isSceneInput(op),
   async render(ctx, op) {
     const { job, facade: f } = ctx
+    // 点云场景（Point/PointCloud/Splat）：Cesium I3SDataProvider 不渲染，跳过并提示，避免静默空图层
+    const kinds = await fetchSceneLayerKinds(op.url as string, ctx.signal)
+    if (isPointCloudScene(kinds)) {
+      job.onNote('该场景为点云图层，暂不支持渲染')
+      return 'handled'
+    }
     try {
       const prim = await f.addScene(op.url as string, job.runtime, ctx.keepAlive)
       if (!ctx.keepAlive() || !prim) return 'stop'
