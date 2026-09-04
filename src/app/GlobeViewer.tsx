@@ -108,6 +108,8 @@ export function GlobeViewer({ onStatus }: { onStatus?: (s: BottomStatus) => void
           terrainExaggeration: e.terrainExaggeration,
           globeTranslucency: e.globeTranslucency,
           translucencyAlpha: e.translucencyAlpha,
+          sunGlow: e.sunGlow,
+          atmosphereRing: e.atmosphereRing,
         }
       },
       onChanged: () => cameraCtrl.wake(),
