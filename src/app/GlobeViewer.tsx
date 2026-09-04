@@ -85,7 +85,8 @@ export function GlobeViewer() {
         if (noteTimerRef.current) clearTimeout(noteTimerRef.current)
         noteTimerRef.current = window.setTimeout(() => setLayerNote(''), 5000)
       },
-      getReferenceVisible: () => useAppStore.getState().effects.showReferenceLayers ?? true,
+      // 区划网格默认开启且不再暴露 UI 开关：恒 true，避免持久化残留/误关影响参考层渲染
+      getReferenceVisible: () => true,
       removeRuntime: (rt) => facade.removeRuntime(rt),
     })
     layerCtrlRef.current = layerCtrl
