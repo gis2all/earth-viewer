@@ -58,7 +58,7 @@ sizing:
   right-panel-width: "clamp(240px, 14vw, 304px)"
   scrollbar-width: 7px
   icon-button: 32px
-  small-icon: 15px
+  small-icon: 16px
   card-title-row: 28px
   card-action-row: 26px
 rounded:
@@ -96,7 +96,7 @@ Dark mode uses `dark.surface` (`#05070d`) for the globe and all panels. Light mo
 
 ### Top Bar
 
-The top bar contains the brand mark, orient/reset view actions, theme toggle, immersive-mode toggle, and GitHub link. Icon buttons are 32px square with 14-15px SVG drawings. Default icons use the muted text color; hover uses the theme foreground and a subtle theme hover surface. The GitHub mark is centered in its button and links to the project repository.
+The top bar contains the brand mark, a compass (north indicator), orient/reset view actions, theme toggle, immersive-mode toggle, and GitHub link. Icon buttons are 32px square with SVG drawings sized 15-18px (theme/immersive/GitHub 16, orient 17, reset 18). Default icons use the muted text color; hover uses the theme foreground and a subtle theme hover surface. The compass rotates to the camera heading (0°=north, +90°=east), switches to the accent color within ±2° of north, and clicking it aligns heading to north while preserving pitch/tilt. The GitHub mark is centered in its button and links to the project repository.
 
 ### Layer Card
 
@@ -107,7 +107,7 @@ The thumbnail area sits directly on the theme panel surface (white in light mode
 The bottom row has status icons on the left and two independent actions on the right:
 
 - The detail icon is a 20px square link using a simple list-style SVG. It opens the ArcGIS item page and is aligned to the add action.
-- The add action is a 20px square button with no default border or background. Its base color is the theme accent. Loading uses the same footprint and a compact spinner. Added uses the semantic added color and does not gain a filled background.
+- The add action is a 20px square button with no default border or background. Its base color is the theme accent. Loading uses the same footprint and a compact spinner. Added uses the semantic added color and does not gain a filled background. Once added, an independent remove action replaces the add action: a 22px square button with a single centered horizontal line (24 grid, strokeWidth 3.6, butt caps). It uses the faint color; hover raises it to the foreground and theme hover surface. It removes the layer from the globe and list. Load failures render an inline `加载失败` marker with the theme danger color.
 
 The card body is not an add target. Adding a layer happens only through the add button. Detail navigation happens only through the detail link. Hover must not translate, resize, or otherwise move the card; it may change border and surface colors only. In dark mode the hover surface must remain visibly distinguishable from the base surface.
 
@@ -123,6 +123,11 @@ Fold and expand controls are 24px square, borderless by default, with a 16px SVG
 
 Immersive mode hides the top bar and both side panels, leaving the globe and one 32px exit icon. It is session-only and can be exited with the icon or `Escape`.
 
+
+### Bottom Status Bar
+
+A centered bar sits at the bottom of the globe. It auto-constricts around the open side panels and stretches to full width in immersive mode or when the matching panel is collapsed. The left side shows the pointer/center position (for example `位置: 104.00°E, 35.00°N`) and camera altitude (`相机高度: 22000.31 km`); coordinates follow the pointer while hovering the globe, otherwise the camera center. The right side shows the plain text `Powered by gis2all` (logo removed, rendered as one text element). The bar shares the panel background and has no border; text uses the muted color.
+
 ## Interaction States
 
 - **Default:** muted icons and labels, transparent icon-button backgrounds, theme surfaces.
@@ -131,6 +136,7 @@ Immersive mode hides the top bar and both side panels, leaving the globe and one
 - **Loading:** preserve the action footprint; show a compact spinner and use a wait cursor.
 - **Added:** use the theme semantic added color, with no filled rectangle behind the icon.
 - **Disabled/error:** reduce disabled controls' opacity; errors use the theme danger token and remain readable.
+- **Transient note/toast:** lower-left messages (e.g. unsupported scene, load error) use the theme `panel-3` surface with a `line-2` border and `fg` text, non-interactive, and auto-dismiss after a few seconds.
 
 ## Accessibility and Consistency
 
