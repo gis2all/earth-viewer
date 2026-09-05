@@ -404,7 +404,7 @@ export function LayerPanel() {
       <div className="side-head">
         <span className="side-title">图层</span>
         <div className="side-actions">
-          <button className="fold back-to-top" onClick={scrollToTop} title="回到顶部" aria-label="回到顶部">
+          <button className="back-to-top" onClick={scrollToTop} title="回到顶部" aria-label="回到顶部">
             <BackToTopIcon />
           </button>
           <button className="fold" onClick={toggleCollapsed} title={collapsed ? '展开面板' : '收起面板'}>
