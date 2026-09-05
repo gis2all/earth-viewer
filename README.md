@@ -7,9 +7,9 @@
 [![Tests](https://img.shields.io/endpoint?url=https://gis2all.github.io/earth-viewer/tests.json)](https://github.com/gis2all/earth-viewer/actions)
 [![E2E](https://img.shields.io/endpoint?url=https://gis2all.github.io/earth-viewer/e2e.json)](https://github.com/gis2all/earth-viewer/actions)
 
-3D 地球图层应用：Cesium 渲染地球，接入 ArcGIS Online 公开图层，搜索、评估、添加、叠加和管理地图图层，并实时调节地球渲染效果。
+3D 地球图层应用：Cesium 渲染地球，接入 ArcGIS Online 公开图层，支持搜索、添加、叠加和管理地图图层，并实时调节地球渲染效果。
 
-![Earth Viewer](public/screenshot.jpg)
+![Earth Viewer](public/app.jpg)
 
 ## 技术栈
 
@@ -21,10 +21,12 @@
 | Vite 5 | 开发与构建 |
 | zustand | 全局状态与持久化 |
 | proj4 / @mapbox/vector-tile / pbf | ArcGIS 数据转换 |
+| maplibre-gl | 矢量瓦片官方样式离屏栅格化 → 自定义 ImageryProvider |
 | Vitest / Testing Library | 单元测试 |
 | Playwright | E2E 浏览器回归 |
 | Node.js（内置 http） | 生产静态托管 + `/sharing` ArcGIS 代理 |
 | Docker | 容器化运行 |
+| Cloudflare Pages | 生产部署平台（本地 `wrangler pages deploy`） |
 
 ## 快速开始
 
