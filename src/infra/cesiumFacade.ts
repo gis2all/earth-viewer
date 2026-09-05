@@ -30,6 +30,9 @@ const TERRAIN_URL =
 let cachedTerrain: Cesium.TerrainProvider | null = null
 let terrainLoading: Promise<Cesium.TerrainProvider> | null = null
 
+/** 标注 provider 初始化失败的最多重试次数（静置/上下文丢失重建可能瞬时失败）。 */
+const LABEL_INIT_MAX_RETRY = 3
+
 /** 测试用：重置地形 Provider 缓存（避免跨用例共享模块级状态）。 */
 export function __resetTerrainCacheForTest() {
   cachedTerrain = null
@@ -41,6 +44,8 @@ export interface FacadeLifecycleCallbacks {
   onContextLost?: (msg: string) => void
   onContextRestored?: () => void
   onInitError?: (msg: string) => void
+  /** 版权署名容器：Cesium 把 credit / attribution 渲染到此节点（底部状态栏左段）。 */
+  creditContainer?: HTMLElement
 }
 
 /**
@@ -93,6 +98,12 @@ export class CesiumFacade {
   private _vectorSeq = 0
   private _labelsProvider: ArcGISVectorTileImageryProvider | null = null
   private _labelsToken = 0
+  private _labelsFailCount = 0
+  private _labelsRetryTimer: ReturnType<typeof setTimeout> | null = null
+  /** 固定底图对应的 runtime（addBaseLayers 时记录，供 setBaseVisible 切换图层 show）。 */
+  private _baseRuntime: LayerRuntime | null = null
+  /** 固定底图（World Imagery + World Labels）当前是否可见；缺省 true。 */
+  private _baseVisible = true
   /** 档位重建中：阻止嵌套 _applyTier（重建时 register/unregister 触发核算） */
   private _applyingTier = false
   /** 相机运动监听是否已注册（有矢量 provider 时才需要） */
@@ -119,6 +130,7 @@ export class CesiumFacade {
         maximumRenderTimeChange: Infinity,
         // 默认 true 会忽略 devicePixelRatio 按 1x 渲染，高分屏下整球被拉伸发虚；false 跟随系统 DPI
         useBrowserRecommendedResolution: false,
+        creditContainer: cb.creditContainer,
       })
     } catch (e) {
       console.error('[globe] 初始化失败', e)
@@ -316,6 +328,30 @@ export class CesiumFacade {
     return () => this.releaseInputHandler()
   }
 
+  /** 注册鼠标移动（拾取后回调经纬度，度）；返回注销函数。底部状态栏实时坐标用。
+   * 用 canvas 的 pointermove DOM 事件而非 ScreenSpaceEventHandler，避免在此环境 MOUSE_MOVE 不触发。 */
+  onPointerMove(cb: (lon: number, lat: number) => void): () => void {
+    const v = this.viewer
+    if (!v || v.isDestroyed()) return () => {}
+    const canvas = v.scene.canvas
+    const onMove = (e: PointerEvent | MouseEvent) => {
+      const rect = canvas.getBoundingClientRect()
+      const x = e.clientX - rect.left
+      const y = e.clientY - rect.top
+      const picked = v.camera.pickEllipsoid({ x, y } as unknown as Cesium.Cartesian2, v.scene.globe.ellipsoid)
+      if (!picked) return
+      const carto = v.scene.globe.ellipsoid.cartesianToCartographic(picked)
+      cb(Cesium.Math.toDegrees(carto.longitude), Cesium.Math.toDegrees(carto.latitude))
+    }
+    // 同时监听 pointermove 与 mousemove：真机走 pointer，测试合成事件走 mouse，确保经纬度随鼠标更新
+    canvas.addEventListener('pointermove', onMove as EventListener)
+    canvas.addEventListener('mousemove', onMove as EventListener)
+    return () => {
+      canvas.removeEventListener('pointermove', onMove as EventListener)
+      canvas.removeEventListener('mousemove', onMove as EventListener)
+    }
+  }
+
   /** 注册每帧回调（postUpdate）；返回注销函数。 */
   onPostUpdate(cb: () => void): () => void {
     const v = this.viewer
@@ -379,6 +415,22 @@ export class CesiumFacade {
     // Cesium 的 frontFaceAlpha/backFaceAlpha 默认 1（完全不透明），需显式调低才有半透明效果
     g.translucency.frontFaceAlpha = enabled ? alpha : 1
     g.translucency.backFaceAlpha = enabled ? Math.min(1, alpha + 0.1) : 1
+  }
+
+
+  /** 太阳辉光强度（scene.sun.glowFactor）。 */
+  setSunGlow(value: number) {
+    const v = this.viewer
+    if (!v || v.isDestroyed()) return
+    if (v.scene.sun) v.scene.sun.glowFactor = value
+  }
+
+
+  /** 大气圆环（天空大气壳）显示。 */
+  setAtmosphereRing(show: boolean) {
+    const v = this.viewer
+    if (!v || v.isDestroyed()) return
+    if (v.scene.skyAtmosphere) v.scene.skyAtmosphere.show = show
   }
 
   private inputHandler: Cesium.ScreenSpaceEventHandler | null = null
@@ -461,6 +513,7 @@ export class CesiumFacade {
     if (!v || v.isDestroyed()) return
     const layers = v.imageryLayers
     if (layers.length > 0) return
+    this._baseRuntime = runtime
     const base = new Cesium.ImageryLayer(
       new Cesium.UrlTemplateImageryProvider({
         url: WORLD_IMAGERY_WGS84_TILES,
@@ -468,9 +521,28 @@ export class CesiumFacade {
         maximumLevel: 22,
       })
     )
+    base.show = this._baseVisible
     layers.add(base, 0)
     this.pushImagery(runtime, base)
     this._attachLabels(runtime)
+    this.requestFrame()
+  }
+
+  /**
+   * 切换固定底图（World Imagery + World Labels）的可见性。
+   * 当某个 webmap 自带可替代底图时调用方传入 false，避免其透明像素把固定底图透出。
+   * 用 ImageryLayer.show 隐藏，不移除图层也不销毁 provider，可随时恢复。
+   */
+  setBaseVisible(visible: boolean) {
+    this._baseVisible = visible
+    const rt = this._baseRuntime
+    if (!rt) return
+    for (const entry of rt.imagery) {
+      const layer = (entry as unknown as { layer?: Cesium.ImageryLayer }).layer
+      if (layer) layer.show = visible
+    }
+    // requestRenderMode 下切换 show 不会自动触发重绘：不加 requestFrame，
+    // 移除自带底图数据后 Cesium 不会重新评估瓦片覆盖，标注层瓦片不会被重新请求而保持空白。
     this.requestFrame()
   }
 
@@ -497,7 +569,15 @@ export class CesiumFacade {
       title: 'World Labels',
       gpuTier: gpu.current(),
       onContextLost: () => this._gpu?.reportContextLost(),
-      canRenderNow: () => this._canRenderOffscreen(),
+      onContextRestored: () => {
+        this._gpu?.reportContextRestored()
+        // 标注离屏上下文恢复后清空了块缓存；requestRenderMode + 相机静止时 Cesium 不会重发瓦片请求，
+        // 需显式请求一帧让标注重新展平（否则静置后标注消失且不回来）。
+        this.requestFrame()
+      },
+      // 标注是常驻底图元素：不随 critical 档“相机静止暂停离屏”而消失。
+      // 若也走 _canRenderOffscreen 门控，浏览器静置后离线上下文降档重建时
+      // _cameraMoving=false，_drain 会早退，底图在而标注丢。
     })
     this._labelsProvider = provider
     gpu.register('labels', { estimateBytes: (tier) => estimateVectorProviderBytes(tier) })
@@ -515,9 +595,11 @@ export class CesiumFacade {
           provider.destroy()
           return
         }
+        this._labelsFailCount = 0
         // 重建时若旧实例已挂载则先移除（首次挂载 findIndex 为 -1，不销毁新 provider）
         this._removeVectorImagery(runtime, provider)
         const il = new Cesium.ImageryLayer(provider as unknown as Cesium.ImageryProvider)
+        il.show = this._baseVisible
         v.imageryLayers.add(il)
         this.pushImagery(runtime, il, provider)
         this.requestFrame()
@@ -528,9 +610,19 @@ export class CesiumFacade {
           provider.destroy()
           return
         }
-        console.error('[globe] 矢量标注样式加载失败', e)
         provider.destroy()
         this._labelsProvider = null
+        if (this._labelsFailCount < LABEL_INIT_MAX_RETRY) {
+          this._labelsFailCount += 1
+          console.warn('[globe] 矢量标注初始化失败，稍后重试', e)
+          this._labelsRetryTimer = window.setTimeout(() => {
+            if (!this.viewer || this.viewer.isDestroyed()) return
+            if (token !== this._labelsToken) return
+            this._attachLabels(runtime)
+          }, 1200)
+        } else {
+          console.error('[globe] 矢量标注样式加载失败', e)
+        }
       })
   }
 
@@ -551,7 +643,7 @@ export class CesiumFacade {
       return false
     }
     const il = new Cesium.ImageryLayer(img)
-    if (typeof op.opacity === 'number') il.alpha = op.opacity
+    // 数据层一律不透明：不再应用来源 opacity，避免半透明把固定底图与标注透出导致视觉错乱。
     v.imageryLayers.add(il)
     this.pushImagery(runtime, il)
     this.requestFrame()
@@ -598,6 +690,7 @@ export class CesiumFacade {
       signal,
       gpuTier: gpu.current(),
       onContextLost: () => this._gpu?.reportContextLost(),
+      onContextRestored: () => this._gpu?.reportContextRestored(),
       canRenderNow: () => this._canRenderOffscreen(),
     })
     this._vectorProviders.set(key, provider)
@@ -621,7 +714,7 @@ export class CesiumFacade {
         // 重建时若旧实例已挂载则先移除（首次挂载 findIndex 为 -1，不销毁新 provider）
         this._removeVectorImagery(runtime, provider)
         const il = new Cesium.ImageryLayer(provider as unknown as Cesium.ImageryProvider)
-        if (typeof op.opacity === 'number') il.alpha = op.opacity
+        // 数据层一律不透明：不再应用来源 opacity，避免半透明把固定底图与标注透出导致视觉错乱。
         v.imageryLayers.add(il)
         this.pushImagery(runtime, il, provider)
         this.requestFrame()
@@ -860,6 +953,8 @@ export class CesiumFacade {
         ;(v.scene.primitives.remove as (p: unknown, destroy?: boolean) => boolean)(prim, true)
       }
     })
+    // 移除图层是视觉变更：requestRenderMode 下同样需要请求一帧，否则残留像素不刷新。
+    this.requestFrame()
   }
 
   destroy() {
@@ -869,11 +964,13 @@ export class CesiumFacade {
     this._gpuUnsub = null
     this._gpu = null
     for (const provider of this._vectorProviders.values()) provider.destroy()
+    if (this._labelsRetryTimer) { clearTimeout(this._labelsRetryTimer); this._labelsRetryTimer = null }
     this._labelsProvider?.destroy()
     this._labelsProvider = null
     this._vectorRebuilds.clear()
     this._vectorProviders.clear()
     this._vectorTokens.clear()
+    this._baseRuntime = null
     this.inputHandler?.destroy()
     this.inputHandler = null
     this.inputRefs = 0

@@ -14,6 +14,8 @@ export interface EffectsSurface {
   setLighting(enabled: boolean): void
   setVerticalExaggeration(value: number): void
   setTranslucency(enabled: boolean, alpha: number): void
+  setSunGlow(value: number): void
+  setAtmosphereRing(show: boolean): void
   requestFrame(): void
 }
 
@@ -27,6 +29,8 @@ export interface EffectsSnapshot {
   terrainExaggeration: number
   globeTranslucency: boolean
   translucencyAlpha: number
+  sunGlow: number
+  atmosphereRing: boolean
 }
 
 export interface EffectsControllerDeps {
@@ -57,6 +61,8 @@ export class EffectsController {
     s.setLighting(e.dayNight)
     s.setVerticalExaggeration(e.terrainExaggeration)
     s.setTranslucency(e.globeTranslucency, e.translucencyAlpha)
+    s.setSunGlow(e.sunGlow)
+    s.setAtmosphereRing(e.atmosphereRing)
     this.deps.onChanged()
     s.requestFrame()
   }

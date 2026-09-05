@@ -3,6 +3,10 @@ import {
   fetchFeatureStyle,
   providerForWebLayer,
 } from './webmapProviders'
+import { classifyWebLayerKind, layerKindOf } from '../domain/webLayerKind'
+import { riskOfLayer } from '../domain/loadSafety'
+import { classifyLayer } from '../domain/layerAssessment'
+import type { WebLayer } from '../domain/types'
 
 // Cesium 在 node 环境不可用，mock 掉（webmap 只用到 Color / WMS provider / UrlTemplate）
 vi.mock('cesium', () => ({
@@ -55,6 +59,48 @@ describe('providerForWebLayer', () => {
     expect(pr).not.toBeNull()
     expect(ut).toHaveBeenCalledWith(expect.objectContaining({ url: expect.stringContaining('/export?bbox={westDegrees}') }))
     expect(geo).toHaveBeenCalled()
+  })
+
+  it('动态 ImageServer（无 tileInfo）→ 走 /exportImage 出图，而非固定 /export', async () => {
+    const { UrlTemplateImageryProvider } = await import('cesium')
+    const ut = UrlTemplateImageryProvider as unknown as ReturnType<typeof vi.fn>
+    ut.mockClear()
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ spatialReference: { wkid: 102100, latestWkid: 3857 } }) })))
+    await providerForWebLayer({ url: 'https://pimg/ImageServer', layerType: 'ArcGISImageServiceLayer' })
+    expect(ut).toHaveBeenCalledWith(expect.objectContaining({ url: expect.stringContaining('/exportImage?bbox={westDegrees}') }))
+  })
+
+  it('动态 MapServer 用 /export，ImageServer 用 /exportImage，端点不混用', async () => {
+    const { UrlTemplateImageryProvider } = await import('cesium')
+    const ut = UrlTemplateImageryProvider as unknown as ReturnType<typeof vi.fn>
+    ut.mockClear()
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ spatialReference: { wkid: 3857 } }) })))
+    await providerForWebLayer({ url: 'https://m/MapServer', layerType: 'ArcGISMapServiceLayer' })
+    const mapUrl = (ut.mock.calls[0][0] as { url: string }).url
+    ut.mockClear()
+    await providerForWebLayer({ url: 'https://i/ImageServer', layerType: 'ArcGISImageServiceLayer' })
+    const imgUrl = (ut.mock.calls[0][0] as { url: string }).url
+    expect(mapUrl).toContain('/export?bbox={westDegrees}')
+    expect(imgUrl).toContain('/exportImage?bbox={westDegrees}')
+  })
+
+  it('自定义投影瓦片（RD 28992）→ 不走 /tile，改用 /export 重投影出图', async () => {
+    const { UrlTemplateImageryProvider } = await import('cesium')
+    const ut = UrlTemplateImageryProvider as unknown as ReturnType<typeof vi.fn>
+    ut.mockClear()
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ spatialReference: { wkid: 28992 }, tileInfo: { lods: [{}, {}, {}] } }) })))
+    await providerForWebLayer({ url: 'https://prd/MapServer', layerType: 'ArcGISMapServiceLayer' })
+    expect(ut).toHaveBeenCalledWith(expect.objectContaining({ url: expect.stringContaining('/export?bbox={westDegrees}') }))
+    expect(ut).not.toHaveBeenCalledWith(expect.objectContaining({ url: expect.stringContaining('/tile/{z}/{y}/{x}') }))
+  })
+
+  it('Web Mercator 102100 瓦片 → 仍走 /tile，不因非 4326 被误判为自定义投影', async () => {
+    const { UrlTemplateImageryProvider } = await import('cesium')
+    const ut = UrlTemplateImageryProvider as unknown as ReturnType<typeof vi.fn>
+    ut.mockClear()
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ spatialReference: { wkid: 102100, latestWkid: 3857 }, tileInfo: { lods: [{}, {}, {}] } }) })))
+    await providerForWebLayer({ url: 'https://pmerc/MapServer', layerType: 'ArcGISMapServiceLayer' })
+    expect(ut).toHaveBeenCalledWith(expect.objectContaining({ url: 'https://pmerc/MapServer/tile/{z}/{y}/{x}' }))
   })
 
   it('动态 MapServer 4326 → 用 GeographicTilingScheme', async () => {
@@ -179,6 +225,63 @@ describe('fetchFeatureStyle（SimpleRenderer 符号映射）', () => {
     expect(await fetchFeatureStyle('https://x/FeatureServer/0')).toBeNull()
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({}) })))
     expect(await fetchFeatureStyle('https://x/FeatureServer/0')).toBeNull()
+  })
+})
+
+describe('图层分类跨模块一致性（W4.4 防再次漂移）', () => {
+  it('评估、风险、Provider 对同一 WebLayer 不再各自维护正则', () => {
+    const cases: Array<{
+      op: WebLayer
+      fine: string
+      coarse: ReturnType<typeof layerKindOf>
+      risk: ReturnType<typeof riskOfLayer>
+      support: ReturnType<typeof classifyLayer>['support']
+    }> = [
+      {
+        op: { layerType: 'ArcGISTiledMapServiceLayer', url: 'https://x/MapServer' },
+        fine: 'map',
+        coarse: 'map',
+        risk: 'medium',
+        support: 'full',
+      },
+      {
+        op: { layerType: 'ArcGISFeatureLayer', url: 'https://x/FeatureServer/0' },
+        fine: 'feature',
+        coarse: 'feature',
+        risk: 'heavy',
+        support: 'partial',
+      },
+      {
+        op: { layerType: 'OGCFeatureServer', url: 'https://x/FeatureServer' },
+        fine: 'wfs',
+        coarse: 'wfs',
+        risk: 'heavy',
+        support: 'partial',
+      },
+      {
+        op: { urlTemplate: 'https://x/{z}/{x}/{y}.png' },
+        fine: 'urlTemplate',
+        coarse: null,
+        risk: 'light',
+        support: 'full',
+      },
+    ]
+
+    for (const { op, fine, coarse, risk, support } of cases) {
+      expect(classifyWebLayerKind(op)).toBe(fine)
+      expect(layerKindOf(op)).toBe(coarse)
+      expect(riskOfLayer(op)).toBe(risk)
+      expect(classifyLayer(op, 'business').support).toBe(support)
+    }
+  })
+
+  it('layerType 优先于 type，FeatureLayer 不被同 URL/type 的 MapServer 分支抢走', async () => {
+    const conflict: WebLayer = { type: 'ArcGISTiledMapServiceLayer', layerType: 'ArcGISFeatureLayer', url: 'https://x/MapServer' }
+    expect(classifyWebLayerKind(conflict)).toBe('feature')
+    expect(layerKindOf(conflict)).toBe('feature')
+    expect(riskOfLayer(conflict)).toBe('heavy')
+    expect(classifyLayer(conflict, 'business').support).toBe('partial')
+    await expect(providerForWebLayer(conflict)).resolves.toBeNull()
   })
 })
 

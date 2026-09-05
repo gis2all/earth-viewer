@@ -22,6 +22,7 @@ const ogcMock = vi.hoisted(() => ({ fetchOgcFeatureGeoJSON: vi.fn() }))
 const csvMock = vi.hoisted(() => ({ fetchCsvGeoJSON: vi.fn() }))
 const vpMock = vi.hoisted(() => ({ runViewportProcess: vi.fn(), pipe: undefined as unknown }))
 const safetyMock = vi.hoisted(() => ({ assertUrlWithinLimit: vi.fn() }))
+const repoMock = vi.hoisted(() => ({ detectMapService: vi.fn(), fetchServiceGeoExtent: vi.fn(), fetchSceneLayerKinds: vi.fn(), isPointCloudScene: vi.fn(), fetchSceneExtent: vi.fn() }))
 
 vi.mock('../infra/webmapProviders', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../infra/webmapProviders')>()
@@ -64,6 +65,11 @@ vi.mock('../service/processing/viewportWorker', async (importOriginal) => {
 vi.mock('../domain/loadSafety', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../domain/loadSafety')>()
   return { ...mod, assertUrlWithinLimit: safetyMock.assertUrlWithinLimit }
+})
+
+vi.mock('../service/repository', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../service/repository')>()
+  return { ...mod, detectMapService: repoMock.detectMapService, fetchServiceGeoExtent: repoMock.fetchServiceGeoExtent, fetchSceneLayerKinds: repoMock.fetchSceneLayerKinds, isPointCloudScene: repoMock.isPointCloudScene, fetchSceneExtent: repoMock.fetchSceneExtent }
 })
 
 function makeJob(webmap: Record<string, unknown>, overrides: Partial<LayerRenderJob> = {}): LayerRenderJob {
@@ -142,6 +148,11 @@ beforeEach(() => {
     )
   )
   safetyMock.assertUrlWithinLimit.mockResolvedValue(undefined)
+  repoMock.detectMapService.mockResolvedValue(null)
+  repoMock.fetchServiceGeoExtent.mockResolvedValue(null)
+  repoMock.fetchSceneLayerKinds.mockResolvedValue([])
+  repoMock.isPointCloudScene.mockImplementation((k: unknown[]) => k.length > 0 && k.every((x) => x !== 'mesh'))
+  repoMock.fetchSceneExtent.mockResolvedValue(null)
 })
 
 afterEach(() => {
@@ -159,6 +170,43 @@ describe('renderWebmap：分支渲染', () => {
     expect(f.addWebLayerImagery.mock.calls[0][0]).toMatchObject({ id: 'op', layerType: 'ArcGISTiledMapServiceLayer' })
     expect(job.onError).not.toHaveBeenCalled()
   })
+
+    it('独立 Map 服务带 fullExtent → flyToExtent 到数据范围', async () => {
+      repoMock.detectMapService.mockResolvedValue({ wkid: 4326, maxLevel: 0, tiled: false, extent: { west: -95, south: 29, east: -90, north: 33 } })
+      const f = makeFacade({ addWebLayerImagery: vi.fn(async () => false) })
+      const job = makeJob(webmapWithLayer({ id: 'op', title: 'Map', url: 'https://x/MapServer', layerType: 'ArcGISMapServiceLayer' }))
+      await renderWebmap(job, f)
+      expect(f.flyToExtent).toHaveBeenCalledWith({ west: -95, south: 29, east: -90, north: 33 })
+      expect(f.flyToHome).not.toHaveBeenCalled()
+    })
+
+    it('自定义投影未知（如 102682）→ 回退服务端地理范围', async () => {
+      repoMock.detectMapService.mockResolvedValue({ wkid: 102682, maxLevel: 0, tiled: false, extent: { west: 3292954, south: 670052, east: 3426011, north: 772359 } })
+      repoMock.fetchServiceGeoExtent.mockResolvedValue({ west: -91.3, south: 30.4, east: -91.0, north: 30.7 })
+      const f = makeFacade({ addWebLayerImagery: vi.fn(async () => false) })
+      const job = makeJob(webmapWithLayer({ id: 'op', title: 'Road', url: 'https://x/MapServer', layerType: 'ArcGISMapServiceLayer' }))
+      await renderWebmap(job, f)
+      expect(f.flyToExtent).toHaveBeenCalledWith({ west: -91.3, south: 30.4, east: -91.0, north: 30.7 })
+      expect(f.flyToHome).not.toHaveBeenCalled()
+    })
+
+    it('无 fullExtent 且未知投影 → 回退 flyToHome', async () => {
+      repoMock.detectMapService.mockResolvedValue(null)
+      const f = makeFacade({ addWebLayerImagery: vi.fn(async () => false) })
+      const job = makeJob(webmapWithLayer({ id: 'op', title: 'Map', url: 'https://x/MapServer', layerType: 'ArcGISMapServiceLayer' }))
+      await renderWebmap(job, f)
+      expect(f.flyToHome).toHaveBeenCalled()
+      expect(f.flyToExtent).not.toHaveBeenCalled()
+    })
+
+    it('全球级范围（如世界底图）不跳相机 → 回退 flyToHome', async () => {
+      repoMock.detectMapService.mockResolvedValue({ wkid: 4326, maxLevel: 0, tiled: true, extent: { west: -180, south: -90, east: 180, north: 90 } })
+      const f = makeFacade({ addWebLayerImagery: vi.fn(async () => false) })
+      const job = makeJob(webmapWithLayer({ id: 'op', title: 'World', url: 'https://x/MapServer', layerType: 'ArcGISMapServiceLayer' }))
+      await renderWebmap(job, f)
+      expect(f.flyToHome).toHaveBeenCalled()
+      expect(f.flyToExtent).not.toHaveBeenCalled()
+    })
 
   it('矢量瓦片 → addVectorTile 挂载回调（成功清错/失败报错）', async () => {
     const f = makeFacade()
@@ -214,6 +262,34 @@ describe('renderWebmap：分支渲染', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     await renderWebmap(job2, f)
     expect(job2.onError).toHaveBeenCalledWith('3D 场景加载失败：Scene2')
+  })
+
+  it('Point cloud scene → 跳过 addScene 并提示（不支持点云）', async () => {
+    const f = makeFacade()
+    repoMock.fetchSceneLayerKinds.mockResolvedValue(['point'])
+    const job = makeJob(webmapWithLayer({ id: 'pc', title: 'Trees', url: 'https://x/SceneServer', layerType: 'ArcGISSceneLayer' }))
+    await renderWebmap(job, f)
+    expect(f.addScene).not.toHaveBeenCalled()
+    expect(job.onNote).toHaveBeenCalledWith('该场景为点云图层，暂不支持渲染')
+  })
+
+  it('独立 Scene 带 fullExtent → flyToExtent 到数据范围', async () => {
+    repoMock.fetchSceneExtent.mockResolvedValue({ wkid: 4326, west: 5, south: 50, east: 7, north: 53 })
+    const f = makeFacade({ addWebLayerImagery: vi.fn(async () => false) })
+    const job = makeJob(webmapWithLayer({ id: 'sc', title: 'Scene', url: 'https://x/SceneServer', layerType: 'ArcGISSceneServiceLayer' }))
+    await renderWebmap(job, f)
+    expect(f.flyToExtent).toHaveBeenCalledWith({ west: 5, south: 50, east: 7, north: 53 })
+    expect(f.flyToHome).not.toHaveBeenCalled()
+  })
+
+  it('全球级 3D 场景不跳相机，并提示放大到城市', async () => {
+    repoMock.fetchSceneExtent.mockResolvedValue({ wkid: 4326, west: -180, south: -90, east: 180, north: 90 })
+    const f = makeFacade({ addWebLayerImagery: vi.fn(async () => false) })
+    const job = makeJob(webmapWithLayer({ id: 'gs', title: 'Global', url: 'https://x/SceneServer', layerType: 'ArcGISSceneServiceLayer' }))
+    await renderWebmap(job, f)
+    expect(f.flyToHome).toHaveBeenCalled()
+    expect(f.flyToExtent).not.toHaveBeenCalled()
+    expect(job.onNote).toHaveBeenCalledWith('该 3D 场景覆盖全球，放大到城市可见对象')
   })
 
   it('OGC 3D Tiles → add3dTiles', async () => {
@@ -403,22 +479,51 @@ describe('renderWebmap：分支渲染', () => {
 })
 
 describe('renderWebmap：相机', () => {
-  it('webmap 自带 viewpoint → flyTo 一次并标记 flew', async () => {
-    const f = makeFacade()
-    const job = makeJob({
-      baseMap: { baseMapLayers: [] },
-      operationalLayers: [],
+    it('webmap 自带 viewpoint → flyTo 一次并标记 flew', async () => {
+      const f = makeFacade()
+      const job = makeJob({
+        baseMap: { baseMapLayers: [] },
+        operationalLayers: [],
       initialState: {
         viewpoint: { camera: { position: { x: 10, y: 20, z: 1000, spatialReference: { wkid: 4326 } }, heading: 30, tilt: 45 } },
       },
     })
     await renderWebmap(job, f)
     expect(job.markFlew).toHaveBeenCalledTimes(1)
-    expect(f.flyTo).toHaveBeenCalledTimes(1)
-    expect(f.flyTo.mock.calls[0][0]).toMatchObject({ destination: { tag: 'fromDegrees', args: [10, 20, 1000] } })
-  })
+      expect(f.flyTo).toHaveBeenCalledTimes(1)
+      expect(f.flyTo.mock.calls[0][0]).toMatchObject({ destination: { tag: 'fromDegrees', args: [10, 20, 1000] } })
+    })
 
-  it('无 viewpoint → flyToHome；已 flew 不再重复', async () => {
+    it('viewpoint 相机高度超过 maxZoom → 回退 flyToHome（保持一致）', async () => {
+      const f = makeFacade()
+      const job = makeJob({
+        baseMap: { baseMapLayers: [] },
+        operationalLayers: [],
+        initialState: {
+          viewpoint: { camera: { position: { x: 104, y: 34.9, z: 25512548, spatialReference: { wkid: 4326 } }, heading: 0, tilt: 0.1 } },
+        },
+      })
+      await renderWebmap(job, f)
+      expect(job.markFlew).toHaveBeenCalledTimes(1)
+      expect(f.flyTo).not.toHaveBeenCalled()
+      expect(f.flyToHome).toHaveBeenCalledTimes(1)
+    })
+
+    it('viewpoint 相机高度等于 maxZoom → 仍按自带相机飞', async () => {
+      const f = makeFacade()
+      const job = makeJob({
+        baseMap: { baseMapLayers: [] },
+        operationalLayers: [],
+        initialState: {
+          viewpoint: { camera: { position: { x: 104, y: 10, z: 25000000, spatialReference: { wkid: 4326 } }, heading: 0, tilt: 0 } },
+        },
+      })
+      await renderWebmap(job, f)
+      expect(f.flyTo).toHaveBeenCalledTimes(1)
+      expect(f.flyToHome).not.toHaveBeenCalled()
+    })
+  
+    it('无 viewpoint → flyToHome；已 flew 不再重复', async () => {
     const f = makeFacade()
     const job = makeJob({ baseMap: { baseMapLayers: [] }, operationalLayers: [] })
     await renderWebmap(job, f)

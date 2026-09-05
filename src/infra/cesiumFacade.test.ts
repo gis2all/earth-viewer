@@ -166,7 +166,7 @@ vi.mock('cesium', () => {
       return { scheme: 'geo' }
     }),
     ImageryLayer: vi.fn(function (provider: unknown) {
-      const inst = { provider, alpha: 1 }
+      const inst = { provider, alpha: 1, show: true }
       CM.imageryLayerInstances.push(inst)
       return inst
     }),
@@ -616,6 +616,37 @@ describe('CesiumFacade（W3.4）', () => {
       expect(v.imageryLayers.list.length).toBe(2)
     })
 
+    it('setBaseVisible(false) 隐藏固定底图与已挂载标注，true 恢复，并请求一帧刷新', async () => {
+      const { facade, v } = makeFacade()
+      const runtime = freshRuntime()
+      facade.addBaseLayers(runtime)
+      await flush()
+      expect(v.imageryLayers.list.length).toBe(2)
+      expect(v.imageryLayers.list[0].show).toBe(true)
+      expect(v.imageryLayers.list[1].show).toBe(true)
+      const framesBeforeHide = v.scene.requestRender.mock.calls.length
+      facade.setBaseVisible(false)
+      expect(v.imageryLayers.list[0].show).toBe(false)
+      expect(v.imageryLayers.list[1].show).toBe(false)
+      expect(v.scene.requestRender.mock.calls.length).toBeGreaterThan(framesBeforeHide)
+      const framesBeforeShow = v.scene.requestRender.mock.calls.length
+      facade.setBaseVisible(true)
+      expect(v.imageryLayers.list[0].show).toBe(true)
+      expect(v.imageryLayers.list[1].show).toBe(true)
+      expect(v.scene.requestRender.mock.calls.length).toBeGreaterThan(framesBeforeShow)
+    })
+
+    it('setBaseVisible(false) 后新挂载的标注层也保持隐藏', async () => {
+      const { facade, v } = makeFacade()
+      const runtime = freshRuntime()
+      facade.addBaseLayers(runtime)
+      facade.setBaseVisible(false)
+      expect(v.imageryLayers.list[0].show).toBe(false)
+      await flush()
+      expect(v.imageryLayers.list.length).toBe(2)
+      expect(v.imageryLayers.list[1].show).toBe(false)
+    })
+
     it('addBaseLayers 标注样式失败时销毁 provider', async () => {
       const { facade } = makeFacade()
       const runtime = freshRuntime()
@@ -626,16 +657,17 @@ describe('CesiumFacade（W3.4）', () => {
       const p = maplibreMock.instances[0]
       expect(p.destroy).toHaveBeenCalled()
       spy.mockRestore()
+      facade.destroy()
     })
 
-    it('addWebLayerImagery 挂载 ImageryLayer 并应用透明度', async () => {
+    it('addWebLayerImagery 挂载 ImageryLayer 且一律不透明（忽略来源 opacity）', async () => {
       const { facade, v } = makeFacade()
       const runtime = freshRuntime()
       const ok = await facade.addWebLayerImagery({ opacity: 0.7 } as never, runtime)
       expect(ok).toBe(true)
       expect(v.imageryLayers.list.length).toBe(1)
-      expect(v.imageryLayers.list[0].alpha).toBe(0.7)
-      expect(runtime.imagery[0].alpha).toBe(0.7)
+      expect(v.imageryLayers.list[0].alpha).toBe(1)
+      expect(runtime.imagery[0].alpha).toBe(1)
     })
 
     it('addWebLayerImagery 探测完成后 keepAlive=false → 不挂载且销毁 provider', async () => {
@@ -666,7 +698,7 @@ describe('CesiumFacade（W3.4）', () => {
       expect(onError).not.toHaveBeenCalled()
       expect(onDone).toHaveBeenCalledTimes(1)
       expect(v.imageryLayers.list.length).toBe(1)
-      expect(v.imageryLayers.list[0].alpha).toBe(0.5)
+      expect(v.imageryLayers.list[0].alpha).toBe(1)
       expect((runtime.imagery[0] as unknown as { provider?: unknown }).provider).toBe(maplibreMock.instances[0])
     })
 
@@ -886,6 +918,24 @@ describe('CesiumFacade（W3.4）', () => {
       expect(maplibreMock.instances.length).toBeGreaterThan(before)
     })
 
+    it('critical 档相机静止时，底图标注不被离屏暂停门控（可继续出图）', () => {
+      const { facade } = makeFacade()
+      facade.addBaseLayers(freshRuntime())
+      const gpu = (facade as unknown as { _gpu: { reportContextLost(): unknown } })._gpu
+      gpu.reportContextLost()
+      gpu.reportContextLost()
+      gpu.reportContextLost()
+      // 已降 critical 且相机静止（_cameraMoving 默认 false）；标注不得被相机移动门控
+      const labels = (
+        facade as unknown as {
+          _labelsProvider: null | { opts: { canRenderNow?: () => boolean } }
+        }
+      )._labelsProvider
+      expect(labels).not.toBeNull()
+      const gate = labels!.opts.canRenderNow
+      expect(typeof gate !== 'function' || gate()).toBe(true)
+    })
+
     it('_applyTier 重入或被销毁 viewer 时直接跳过', () => {
       const { facade } = makeFacade()
       ;(facade as unknown as { _applyingTier: boolean })._applyingTier = true
@@ -958,11 +1008,13 @@ describe('CesiumFacade（W3.4）', () => {
         vectorProviders: [{ id: 'v', destroy: vi.fn(), provider: { destroy: providerDestroy } }],
         dispose: vi.fn(),
       } as unknown as LayerRuntime
+      const framesBefore = v.scene.requestRender.mock.calls.length
       facade.removeRuntime(runtime)
       expect(v.imageryLayers.remove).toHaveBeenCalledWith(layer, true)
       expect(v.dataSources.remove).toHaveBeenCalledWith(ds, true)
       expect(v.scene.primitives.remove).toHaveBeenCalledWith(prim, true)
       expect(providerDestroy).toHaveBeenCalledTimes(1)
+      expect(v.scene.requestRender.mock.calls.length).toBeGreaterThan(framesBefore)
       expect(() => facade.removeRuntime(runtime)).not.toThrow()
     })
 

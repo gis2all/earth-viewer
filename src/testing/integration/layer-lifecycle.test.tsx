@@ -31,6 +31,8 @@ const freshEffects = {
   globeTranslucency: false,
   translucencyAlpha: 0.6,
   autoRotate: false,
+  sunGlow: 2,
+  atmosphereRing: true,
 }
 
 function stubSearchFetch(opts: { data: 'ok' | 'throw' | 'error' }) {

@@ -4,6 +4,7 @@ import {
   unregisterViewer,
   resetView,
   orientView,
+  orientNorth,
   flyToHome,
   setUserHomeResolver,
   setInitialHeightForTest,
@@ -80,6 +81,19 @@ describe('cameraActions', () => {
       expect.objectContaining({
         destination: v.camera.position,
         orientation: expect.objectContaining({ heading: 0, roll: 0 }),
+      })
+    )
+    expect(v.scene.requestRender).toHaveBeenCalledTimes(1)
+  })
+
+  it('orientNorth 保持当前位置与当前 pitch/roll，仅把 heading 转正北', () => {
+    const v = makeViewer()
+    registerViewer(v as never)
+    orientNorth()
+    expect(v.camera.flyTo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        destination: v.camera.position,
+        orientation: expect.objectContaining({ heading: 0, pitch: -0.5, roll: 3 }),
       })
     )
     expect(v.scene.requestRender).toHaveBeenCalledTimes(1)

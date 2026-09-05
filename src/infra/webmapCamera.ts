@@ -9,6 +9,8 @@ import { reprojectCoordinates } from './vector'
 export interface ViewpointCamera {
   destination: Cesium.Cartesian3
   orientation: { heading: number; pitch: number; roll: number }
+  /** 相机高出椭球的高度（米），来自 viewpoint 的 position.z；用于上限判定。 */
+  heightMeters?: number
 }
 
 function positionToCartesian(pos: Record<string, unknown> | undefined): Cesium.Cartesian3 | null {
@@ -42,5 +44,10 @@ export function viewpointCameraFromWebmap(wm: Record<string, unknown> | undefine
   const heading = Cesium.Math.toRadians(cam.heading ?? 0)
   // tilt: 0=俯视(向下)，90=水平；Cesium pitch: -90=俯视，0=水平 → pitch = tilt - 90
   const pitch = Cesium.Math.toRadians((cam.tilt ?? 0) - 90)
-  return { destination, orientation: { heading, pitch, roll: 0 } }
+  const heightMeters = Number(cam.position.z ?? 0)
+  return {
+    destination,
+    orientation: { heading, pitch, roll: 0 },
+    heightMeters: Number.isFinite(heightMeters) ? heightMeters : undefined,
+  }
 }

@@ -43,6 +43,7 @@ describe('viewpointCameraFromWebmap（W3.5）', () => {
     expect(vp).toEqual({
       destination: { lon: 116.39, lat: 39.9, height: 100 },
       orientation: { heading: Math.PI / 2, pitch: (-60 * Math.PI) / 180, roll: 0 },
+      heightMeters: 100,
     })
   })
 

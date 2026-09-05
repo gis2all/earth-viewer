@@ -108,12 +108,12 @@ describe('CameraController（W3.2）', () => {
     })
   })
 
-  it('无交互超过 idle 且 autoRotate 开启时经度递增', () => {
+  it('无交互超过 idle 且 autoRotate 开启时经度递减（自西向东）', () => {
     const { surface, postUpdate } = setup({ autoRotate: () => true })
     now = 5000
     postUpdate.fns[0]()
     expect(surface.setView).toHaveBeenCalledWith(
-      { longitude: 1 + 0.0012, latitude: 0.5, height: 10000 },
+      { longitude: 1 - 0.0012, latitude: 0.5, height: 10000 },
       { heading: 0.1, pitch: -0.2, roll: 0 }
     )
     expect(surface.requestFrame).toHaveBeenCalled()

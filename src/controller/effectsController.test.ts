@@ -16,6 +16,8 @@ function snapshot(overrides: Partial<EffectsSnapshot> = {}): EffectsSnapshot {
     terrainExaggeration: 2,
     globeTranslucency: true,
     translucencyAlpha: 0.4,
+    sunGlow: 2,
+    atmosphereRing: true,
     ...overrides,
   }
 }
@@ -31,6 +33,8 @@ function setup(overrides: Partial<EffectsControllerDeps> = {}) {
     setLighting: vi.fn(),
     setVerticalExaggeration: vi.fn(),
     setTranslucency: vi.fn(),
+    setSunGlow: vi.fn(),
+    setAtmosphereRing: vi.fn(),
     requestFrame: vi.fn(),
   } as unknown as MockedSurface
   const theme = vi.fn<() => 'dark' | 'light'>(() => 'dark')

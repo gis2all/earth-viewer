@@ -23,8 +23,27 @@ export interface Effects {
   globeTranslucency: boolean
   translucencyAlpha: number
   autoRotate: boolean
+  /** 太阳辉光强度（0~10）。 */
+  sunGlow: number
+  /** 大气光晕（天空大气壳）显示。 */
+  atmosphereRing: boolean
   /** 是否显示区划/参考网格层（如 NWS zones） */
   showReferenceLayers?: boolean
+}
+
+export const DEFAULT_EFFECTS: Effects = {
+  atmosphere: false,
+  stars: true,
+  sunMoon: false,
+  fog: false,
+  dayNight: false,
+  terrainExaggeration: 1,
+  globeTranslucency: false,
+  translucencyAlpha: 0.6,
+  autoRotate: false,
+  showReferenceLayers: true,
+  sunGlow: 2,
+    atmosphereRing: true,
 }
 
 interface AppState {
@@ -70,18 +89,7 @@ export const useAppStore = create<AppState>()(
       delete next[id]
       return { layerErrors: next }
     }),
-  effects: {
-    atmosphere: false,
-    stars: true,
-    sunMoon: false,
-    fog: false,
-    dayNight: false,
-    terrainExaggeration: 1,
-    globeTranslucency: false,
-    translucencyAlpha: 0.6,
-    autoRotate: false,
-    showReferenceLayers: true,
-  },
+  effects: { ...DEFAULT_EFFECTS },
     setEffect: (key, value) => set((s) => ({ effects: { ...s.effects, [key]: value } })),
     userHome: null,
     setUserHome: (h) => set({ userHome: h }),
@@ -95,6 +103,12 @@ export const useAppStore = create<AppState>()(
         collapsedRight: s.collapsedRight,
         added: s.added,
         effects: s.effects,
+      }),
+      // 旧版本持久化的 effects 可能缺新字段（如 sunGlow），用默认值补齐，避免 UI 显示 NaN / Cesium 渲染崩
+      merge: (persisted, current) => ({
+        ...current,
+        ...(persisted as Partial<AppState>),
+        effects: { ...DEFAULT_EFFECTS, ...current.effects, ...((persisted as Partial<AppState> | null)?.effects ?? {}) },
       }),
     }
   )

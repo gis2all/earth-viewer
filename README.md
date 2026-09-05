@@ -7,9 +7,9 @@
 [![Tests](https://img.shields.io/endpoint?url=https://gis2all.github.io/earth-viewer/tests.json)](https://github.com/gis2all/earth-viewer/actions)
 [![E2E](https://img.shields.io/endpoint?url=https://gis2all.github.io/earth-viewer/e2e.json)](https://github.com/gis2all/earth-viewer/actions)
 
-3D 地球图层应用：Cesium 渲染地球，接入 ArcGIS Online 公开图层，搜索、评估、添加、叠加和管理地图图层，并实时调节地球渲染效果。
+3D 地球图层应用：Cesium 渲染地球，接入 ArcGIS Online 公开图层，支持搜索、添加、叠加和管理地图图层，并实时调节地球渲染效果。
 
-![Earth Viewer](public/screenshot.jpg)
+![Earth Viewer](public/app.jpg)
 
 ## 技术栈
 
@@ -21,10 +21,12 @@
 | Vite 5 | 开发与构建 |
 | zustand | 全局状态与持久化 |
 | proj4 / @mapbox/vector-tile / pbf | ArcGIS 数据转换 |
+| maplibre-gl | 矢量瓦片官方样式离屏栅格化 → 自定义 ImageryProvider |
 | Vitest / Testing Library | 单元测试 |
 | Playwright | E2E 浏览器回归 |
 | Node.js（内置 http） | 生产静态托管 + `/sharing` ArcGIS 代理 |
 | Docker | 容器化运行 |
+| Cloudflare Pages | 生产部署平台（本地 `wrangler pages deploy`） |
 
 ## 快速开始
 
@@ -71,9 +73,9 @@ GitHub Actions 在 `push`（main）与 `pull_request` 时执行：`npm audit --o
 flowchart TD
     App[app 表现层<br/>React 组件 / store 订阅]
     Ctrl[controller 控制器<br/>DI 依赖注入]
-    Svc[service 数据与调度<br/>repository / loader / scheduler / http / formats / processing]
+    Svc[service 数据与调度<br/>repository / scheduler / http / formats / processing]
     Dom[domain 纯 TS 零依赖<br/>类型 / 契约 / 配置 / 状态机 / 几何]
-    Globe[globe 渲染适配<br/>globeRenderer + viewport]
+    Globe[globe 渲染适配<br/>globeRenderer + webLayerRenderer + viewport]
     Infra[infra Cesium / MapLibre 深度封装<br/>cesiumFacade / gpuMemoryManager]
 
     App --> Ctrl
@@ -99,10 +101,10 @@ flowchart TD
 ```text
 src/app/              UI + 组合根：AppShell / LayerPanel / EffectsPanel / GlobeViewer / store
 src/controller/       三个控制器（Layer / Camera / Effects），构造器依赖注入，不直接接触 Cesium 或 store
-src/service/          ArcGIS 数据入口 + 视口加工：repository / loader / scheduler / http / formats / processing
+src/service/          ArcGIS 数据入口 + 视口加工：repository / scheduler / http / formats / processing
 src/domain/           纯 TS 零依赖：类型 / 契约 / 配置 / 状态机 / 预算 / 几何（被所有层引用）
 src/infra/            Cesium / MapLibre 深度封装：cesiumFacade / gpuMemoryManager / 各 provider 适配（唯一深接触点）
-src/globe/            渲染编排：globeRenderer、viewport 视口查询与 Primitive
+src/globe/            渲染编排：globeRenderer / webLayerRenderer / viewport 视口查询与 Primitive
 src/styles/           全部样式（直角、深浅主题 CSS 变量）
 e2e/                  Playwright 冒烟、UI 与真实 ArcGIS 集成测试
 functions/            Cloudflare Pages Functions：/sharing/* 代理 + /api/geo 用户定位

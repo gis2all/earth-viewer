@@ -1,5 +1,6 @@
 import type { WebLayer } from './types'
 import { DEFAULT_APP_CONFIG } from './config'
+import { classifyWebLayerKind } from './webLayerKind'
 
 export type LayerSupport = 'full' | 'partial' | 'none'
 export const MAX_BUSINESS_LAYERS = DEFAULT_APP_CONFIG.maxBusinessLayers
@@ -51,89 +52,69 @@ function baseMapRole(l: WebLayer): LayerRole {
 export function classifyLayer(l: WebLayer, role: LayerRole): LayerAssessment {
   const kind = kindOf(l)
   const url = (l.url || '').trim()
+  const classified = classifyWebLayerKind(l)
   const base: LayerAssessment = { title: l.title, url, kind, role, support: 'full' }
 
-  // 无服务地址：仅样式驱动的 VectorTile / 内嵌 featureCollection 可尝试渲染
+  // 无 url：样式驱动的 VectorTile、内嵌 featureCollection、模板类图层仍可尝试渲染
   if (!url) {
-    if (/VectorTileLayer/i.test(kind) && l.styleUrl) {
+    if (classified === 'vectorTile' && l.styleUrl) {
       return { ...base, support: 'full', reason: '矢量瓦片用 MapLibre 按官方样式渲染' }
     }
-    if (/featureCollection|Feature Collection/i.test(kind) || l.layerDefinition) {
+    if (classified === 'featureCollection' || l.layerDefinition) {
       return { ...base, support: 'partial', reason: '内嵌要素集按 GeoJSON 渲染' }
+    }
+    if ((classified === 'webtiled' && l.urlTemplate) || classified === 'osm' || classified === 'urlTemplate') {
+      return base
     }
     return { ...base, support: 'none', reason: '图层缺少可加载的服务地址' }
   }
 
-  // 矢量切片：MapLibre GL 按 ArcGIS 官方样式（root.json）渲染 → Cesium ImageryProvider
-  if (/VectorTileLayer/i.test(kind)) {
-    return { ...base, support: 'full', reason: '矢量瓦片用 MapLibre 按官方样式渲染' }
-  }
-  // 3D 场景：ArcGIS SceneServer / I3S
-  if (/SceneLayer|ArcGISSceneServiceLayer|ArcGISSceneLayer|I3S|IntegratedMesh|PointCloud|3DObject|BuildingScene/i.test(kind)) {
-    return { ...base, support: 'partial', reason: '3D 场景图层用 I3S 渲染' }
-  }
-  // 3D Tiles
-  if (/3DTiles|Cesium3DTiles|Tileset/i.test(kind) || /tileset\.json/i.test(url)) {
-    return { ...base, support: 'partial', reason: '3D Tiles 用 Cesium3DTileset 渲染' }
-  }
-  // 流 / Feed / 知识图谱：暂不支持
-  if (/StreamLayer|GeoRSSLayer|KnowledgeGraph/i.test(kind)) {
-    return { ...base, support: 'none', reason: '流/Feed/知识图谱图层暂不支持' }
-  }
-
-  const isTiled = /\/MapServer\/?$|\/ImageServer\/?$/i.test(url)
-  const isWfs = /WFS|OGCFeatureServer|OGCFeatureService/i.test(kind)
-  const isGeoJson = /GeoJSONLayer/i.test(kind)
-  const isCsv = /CSVLayer/i.test(kind)
-  const isWms = /WMSLayer|^WMS$/i.test(kind) || /\/wms\/?/i.test(url)
-  const isWmts = /WMTSLayer|^WMTS$/i.test(kind)
-  const isKml = /KMLLayer|KMLCollection|^KML(?:\s+Collection)?$/i.test(kind)
-  const isWebTiled = /WebTiledLayer/i.test(kind)
-  const isOsm = /OpenStreetMap/i.test(kind)
-  const isFeature = /FeatureLayer|FeatureServer/i.test(kind) || /\/FeatureServer\/?/i.test(url)
-
-  if (isWfs) {
-    return { ...base, support: 'partial', reason: 'WFS 要素按 GeoJSON 渲染' }
-  }
-  if (isGeoJson) {
-    return { ...base, support: 'partial', reason: 'GeoJSON 图层直接渲染' }
-  }
-  if (isCsv) {
-    return { ...base, support: 'partial', reason: 'CSV 解析为点要素渲染' }
-  }
-  if (isTiled) {
-    return base
-  }
-  if (isWms) {
-    // WMS 必须能确定图层名（layerName 或 layers 数组/字符串），否则 provider 无法构造
-    const hasName = !!l.layerName || Array.isArray(l.layers) || typeof l.layers === 'string'
-    if (!hasName) {
-      return { ...base, support: 'partial', reason: '缺少 WMS 图层名，无法渲染' }
+  switch (classified) {
+    case 'vectorTile':
+      return { ...base, support: 'full', reason: '矢量瓦片用 MapLibre 按官方样式渲染' }
+    case 'scene':
+      return { ...base, support: 'partial', reason: '3D 场景图层用 I3S 渲染' }
+    case '3dTiles':
+      return { ...base, support: 'partial', reason: '3D Tiles 用 Cesium3DTileset 渲染' }
+    case 'stream':
+    case 'georss':
+    case 'knowledgeGraph':
+      return { ...base, support: 'none', reason: '流/Feed/知识图谱图层暂不支持' }
+    case 'wfs':
+      return { ...base, support: 'partial', reason: 'WFS 要素按 GeoJSON 渲染' }
+    case 'geojson':
+      return { ...base, support: 'partial', reason: 'GeoJSON 图层直接渲染' }
+    case 'csv':
+      return { ...base, support: 'partial', reason: 'CSV 解析为点要素渲染' }
+    case 'map':
+    case 'image':
+      return base
+    case 'wms': {
+      // WMS 必须能确定图层名（layerName 或 layers 数组/字符串），否则 provider 无法构造
+      const hasName = !!l.layerName || Array.isArray(l.layers) || typeof l.layers === 'string'
+      return hasName
+        ? base
+        : { ...base, support: 'partial', reason: '缺少 WMS 图层名，无法渲染' }
     }
-    return base
-  }
-  if (isWmts) {
-    const hasCfg = !!l.layerName || !!l.urlTemplate || !!l.layers
-    if (!hasCfg) {
-      return { ...base, support: 'partial', reason: '缺少 WMTS 图层配置' }
+    case 'wmts': {
+      const hasCfg = !!l.layerName || !!l.urlTemplate || !!l.layers
+      return hasCfg
+        ? base
+        : { ...base, support: 'partial', reason: '缺少 WMTS 图层配置' }
     }
-    return base
-  }
-  if (isKml) {
-    return base
-  }
-  if (isWebTiled) {
-    return base
-  }
-  if (isOsm) {
-    return base
-  }
-  if (isFeature) {
-    return {
-      ...base,
-      support: 'partial',
-      reason: '要素图层按 GeoJSON 渲染（映射样式，条数受限）',
-    }
+    case 'kml':
+    case 'webtiled':
+    case 'osm':
+    case 'urlTemplate':
+      return base
+    case 'feature':
+      return {
+        ...base,
+        support: 'partial',
+        reason: '要素图层按 GeoJSON 渲染（映射样式，条数受限）',
+      }
+    default:
+      break
   }
   return { ...base, support: 'none', reason: '图层类型暂不支持：' + (kind || url) }
 }
@@ -187,6 +168,24 @@ function businessRenderableCount(wm: Record<string, unknown>): number {
 /** 渲染时被 MAX_BUSINESS_LAYERS 省略的业务层数（>0 时应提示"部分图层未渲染"） */
 export function skippedBusinessLayers(wm: Record<string, unknown>): number {
   return Math.max(0, businessRenderableCount(wm) - MAX_BUSINESS_LAYERS)
+}
+
+/** 判断 webmap 是否自带可替代固定底图的底图（baseMapLayers 中存在 full/partial 且非纯 overlay）。 */
+export function hasOwnBasemap(wm: Record<string, unknown>): boolean {
+  const bmLayers = ((wm.baseMap as { baseMapLayers?: WebLayer[] } | undefined)?.baseMapLayers) ?? []
+  const stack = [...bmLayers]
+  while (stack.length) {
+    const l = stack.pop() as WebLayer
+    if (isGroupLayer(l)) {
+      stack.push(...groupChildren(l))
+      continue
+    }
+    const role = baseMapRole(l)
+    if (role === 'overlay') continue
+    const a = classifyLayer(l, role)
+    if (a.support === 'full' || a.support === 'partial') return true
+  }
+  return false
 }
 
 /** 整体评估一个 webmap 在 Cesium 下的渲染能力（统一入口） */

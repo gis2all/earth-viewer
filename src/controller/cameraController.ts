@@ -2,7 +2,7 @@
  * CameraController（W3.2）：收编 GlobeViewer 的相机交互逻辑。
  * - 滚轮缓动缩放（1.25/0.8、ZOOM_EASE 0.25）；
  * - 双击 zoom in（ratio 0.5、下限 MIN_ZOOM*2）；
- * - 自动环绕（无交互 3s 后沿东西方向递增经度）；
+ * - 自动环绕（无交互 3s 后相机向西移动，视觉自西向东转）；
  * - 鼠标抓取取消飞行 + 关闭缓动窗口；
  * - pitch 钳制（-89.9° ~ 0°）；
  * - SSE 切换（缩放中 2 → 稳定后 1，高分屏清晰度对齐）。
@@ -164,11 +164,11 @@ export class CameraController {
   private onFrame(): void {
     const s = this.deps.surface
     let needsNextFrame = false
-    // 自动旋转（无交互 3 秒后、且非飞行中）—— 沿东西方向绕地球转
+    // 自动旋转（无交互 3 秒后、且非飞行中）—— 相机向西移动（经度递减），视觉自西向东
     if (this.deps.autoRotate() && performance.now() - this.lastInteract > this.idleMs && !s.isFlying()) {
       const p = s.cameraPosition()
       s.setView(
-        { longitude: p.longitude + this.stepRad, latitude: p.latitude, height: p.height },
+        { longitude: p.longitude - this.stepRad, latitude: p.latitude, height: p.height },
         s.cameraOrientation()
       )
       needsNextFrame = true

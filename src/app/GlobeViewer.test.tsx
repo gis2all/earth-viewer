@@ -18,6 +18,8 @@ const freshEffects = {
   globeTranslucency: false,
   translucencyAlpha: 0.6,
   autoRotate: false,
+  sunGlow: 2,
+  atmosphereRing: true,
   showReferenceLayers: true,
 }
 
@@ -31,6 +33,24 @@ function mapServerWebmap() {
     kind: 'webmap',
     webmap: {
       baseMap: { baseMapLayers: [] },
+      operationalLayers: [
+        { id: 'op', title: 'World Imagery', url: 'https://x/MapServer', layerType: 'ArcGISTiledMapServiceLayer' },
+      ],
+    },
+  }
+}
+
+function ownBasemapWebmap() {
+  return {
+    id: 'wm1',
+    title: 'Own Basemap',
+    kind: 'webmap',
+    webmap: {
+      baseMap: {
+        baseMapLayers: [
+          { title: 'Topo', url: 'https://x/World_Topo_Map/MapServer', layerType: 'ArcGISTiledMapServiceLayer' },
+        ],
+      },
       operationalLayers: [
         { id: 'op', title: 'World Imagery', url: 'https://x/MapServer', layerType: 'ArcGISTiledMapServiceLayer' },
       ],
@@ -221,6 +241,35 @@ describe('GlobeViewer（W3.5 瘦身后）', () => {
     act(() => useAppStore.getState().removeLayer('wm1'))
     await flush()
     expect(v.imageryLayers.length).toBe(before - 1)
+  })
+
+  it('添加自带底图 webmap → 隐藏固定底图与标注；移除后恢复显示并请求重绘', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ spatialReference: { wkid: 3857 }, tileInfo: { lods: [] } }),
+      }))
+    )
+    render(<GlobeViewer />)
+    await flush()
+    const v = viewer()
+    const baseLayer = v.imageryLayers.list[0]
+    const labelLayer = v.imageryLayers.list[1]
+    act(() => {
+      useAppStore.getState().addLayer(ownBasemapWebmap() as never)
+    })
+    await flush()
+    // 自带可替代底图：固定底图与标注应被隐藏
+    expect(baseLayer.show).toBe(false)
+    expect(labelLayer.show).toBe(false)
+    const framesBeforeRemove = v.scene.requestRender.mock.calls.length
+    act(() => useAppStore.getState().removeLayer('wm1'))
+    await flush()
+    // 移除后 added 为空：固定底图与标注恢复，并至少请求一帧把标注渲染出来
+    expect(baseLayer.show).toBe(true)
+    expect(labelLayer.show).toBe(true)
+    expect(v.scene.requestRender.mock.calls.length).toBeGreaterThan(framesBeforeRemove)
   })
 
   it('卸载时销毁 viewer 并移除事件监听', async () => {

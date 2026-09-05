@@ -22,9 +22,11 @@ const GROUPS: { name: string; items: Item[] }[] = [
   {
     name: '环境',
     items: [
+      { key: 'atmosphereRing', label: '大气光晕', kind: 'switch' },
       { key: 'atmosphere', label: '大气散射', kind: 'switch' },
       { key: 'stars', label: '星空背景', kind: 'switch' },
       { key: 'sunMoon', label: '日月', kind: 'switch' },
+      { key: 'sunGlow', label: '太阳光晕', kind: 'slider', min: 0, max: 10, step: 0.5, suffix: '', precision: 1, dependsOn: 'sunMoon' },
       { key: 'fog', label: '雾效', kind: 'switch' },
       { key: 'dayNight', label: '昼夜光照', kind: 'switch' },
     ],
@@ -34,14 +36,13 @@ const GROUPS: { name: string; items: Item[] }[] = [
     items: [
       { key: 'globeTranslucency', label: '地形透明', kind: 'switch' },
       { key: 'translucencyAlpha', label: '透明度', kind: 'slider', min: 0.1, max: 1, step: 0.05, suffix: '', precision: 2, dependsOn: 'globeTranslucency' },
-      { key: 'terrainExaggeration', label: '地形夸张', kind: 'slider', min: 1, max: 3, step: 0.1, suffix: 'X' },
+      { key: 'terrainExaggeration', label: '地形夸张', kind: 'slider', min: 1, max: 100, step: 1, suffix: '', precision: 1 },
     ],
   },
   {
     name: '视图',
     items: [
       { key: 'autoRotate', label: '自动环绕', kind: 'switch' },
-      { key: 'showReferenceLayers', label: '区划网格', kind: 'switch', note: '显示区划/参考层描边' },
     ],
   },
 ]
@@ -83,8 +84,9 @@ export function EffectsPanel() {
                       aria-label={it.label}
                     />
                   </div>
-                ) : (
+                                ) : (
                   <div className="fx-row" key={it.key}>
+
                     <span className="fx-label">{it.label}</span>
                     <div className="fx-slider-group">
                       <input

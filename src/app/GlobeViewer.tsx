@@ -16,11 +16,13 @@ import { LayerController } from '../controller/layerController'
 import { renderWebmap } from '../globe/globeRenderer'
 import { createEmptyRuntime } from '../domain/layerRuntime'
 import { fetchUserHome } from '../service/userLocation'
+import type { BottomStatus } from './BottomStatusBar'
+import { hasOwnBasemap } from '../domain/layerAssessment'
 
 const WEBGL_UNAVAILABLE_MSG =
   '当前浏览器无法创建 WebGL，地球无法渲染。请使用开启硬件加速的 Chrome/Edge 访问（Codex内置浏览器 / 无GPU环境不支持）'
 
-export function GlobeViewer() {
+export function GlobeViewer({ onStatus, onHeading }: { onStatus?: (s: BottomStatus) => void; onHeading?: (heading: number) => void }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const facadeRef = useRef<CesiumFacade | null>(null)
   const cameraCtrlRef = useRef<CameraController | null>(null)
@@ -31,6 +33,8 @@ export function GlobeViewer() {
   const effects = useAppStore((s) => s.effects)
   const [glError, setGlError] = useState('')
   const [layerNote, setLayerNote] = useState('')
+  const noteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const statusCleanupRef = useRef<(() => void) | null>(null)
 
   // 创建 CesiumFacade + 三个控制器（仅一次）
   useEffect(() => {
@@ -48,6 +52,7 @@ export function GlobeViewer() {
       onContextLost: (msg) => setGlError(msg),
       onContextRestored: () => setGlError(''),
       onInitError: (msg) => setGlError(msg),
+      creditContainer: document.getElementById('cesium-credit-container') ?? undefined,
     })
     if (!ok) return
     facadeRef.current = facade
@@ -78,8 +83,13 @@ export function GlobeViewer() {
       render: (job) => renderWebmap(job, facade),
       setError: (id, msg) => useAppStore.getState().setLayerError(id, msg),
       clearError: (id) => useAppStore.getState().clearLayerError(id),
-      setNote: (msg) => setLayerNote(msg),
-      getReferenceVisible: () => useAppStore.getState().effects.showReferenceLayers ?? true,
+      setNote: (msg) => {
+        setLayerNote(msg)
+        if (noteTimerRef.current) clearTimeout(noteTimerRef.current)
+        noteTimerRef.current = window.setTimeout(() => setLayerNote(''), 5000)
+      },
+      // 区划网格默认开启且不再暴露 UI 开关：恒 true，避免持久化残留/误关影响参考层渲染
+      getReferenceVisible: () => true,
       removeRuntime: (rt) => facade.removeRuntime(rt),
     })
     layerCtrlRef.current = layerCtrl
@@ -98,25 +108,66 @@ export function GlobeViewer() {
           terrainExaggeration: e.terrainExaggeration,
           globeTranslucency: e.globeTranslucency,
           translucencyAlpha: e.translucencyAlpha,
+          sunGlow: e.sunGlow,
+          atmosphereRing: e.atmosphereRing,
         }
       },
       onChanged: () => cameraCtrl.wake(),
     })
     effectsCtrlRef.current = effectsCtrl
 
+    // 底部状态栏实时信息：鼠标经纬度优先，无鼠标数据时用相机中心；高度取相机高度
+    if (onStatus) {
+      let hasPointer = false
+      let pointerLon = 0
+      let pointerLat = 0
+      const send = (lon: number, lat: number) => {
+        const p = facade.cameraPosition()
+        onStatus({ lon, lat, height: p.height })
+      }
+      const reportCamera = () => {
+        if (onHeading) onHeading(facade.cameraOrientation().heading)
+        // 每帧只更新高度（经纬度保持鼠标位置；无鼠标数据时才用相机中心）
+        if (!hasPointer) {
+          const p = facade.cameraPosition()
+          onStatus({ lon: (p.longitude * 180) / Math.PI, lat: (p.latitude * 180) / Math.PI, height: p.height })
+        } else {
+          send(pointerLon, pointerLat)
+        }
+      }
+      const offMove = facade.onPointerMove((lon, lat) => {
+        hasPointer = true
+        pointerLon = lon
+        pointerLat = lat
+        send(lon, lat)
+      })
+      const offPost = facade.onPostUpdate(reportCamera)
+      statusCleanupRef.current = () => { offMove(); offPost() }
+      reportCamera()
+    } else if (onHeading) {
+      // 无 status 订阅但需要 heading（顶栏指南针）：单独每帧上报相机 heading
+      const hb = () => onHeading(facade.cameraOrientation().heading)
+      const offPost = facade.onPostUpdate(hb)
+      statusCleanupRef.current = () => offPost()
+      hb()
+    }
+
     return () => {
+      if (noteTimerRef.current) clearTimeout(noteTimerRef.current)
       setUserHomeResolver(null)
       effectsCtrl.dispose()
       cameraCtrl.dispose()
       layerCtrl.dispose()
       facade.removeRuntime(baseRuntime)
       facade.destroy()
+      statusCleanupRef.current?.()
+      statusCleanupRef.current = null
       effectsCtrlRef.current = null
       cameraCtrlRef.current = null
       layerCtrlRef.current = null
       facadeRef.current = null
     }
-  }, [])
+  }, [onStatus, onHeading])
 
   // 场景级效果/主题变化 → 同步场景副作用（控制器内部会唤醒相机 + 请求一帧）
   useEffect(() => {
@@ -128,6 +179,17 @@ export function GlobeViewer() {
     layerCtrlRef.current?.setItems(added.filter((a) => a.kind === 'webmap' && a.webmap))
   }, [added])
 
+  // 固定底图可见性：任一 webmap 自带可替代底图时隐藏，避免其透明像素把 WGS84 影像与标注透出；
+  // 全部移除后恢复固定底图。
+  useEffect(() => {
+    const f = facadeRef.current
+    if (!f) return
+    const anyOwnBasemap = added.some(
+      (a) => a.kind === 'webmap' && a.webmap && hasOwnBasemap(a.webmap)
+    )
+    f.setBaseVisible(!anyOwnBasemap)
+  }, [added])
+
   return (
     <div ref={containerRef} style={{ position: 'absolute', inset: 0 }}>
       {glError && (
@@ -137,7 +199,7 @@ export function GlobeViewer() {
       )}
       {layerNote && (
         <div
-          style={{ position: 'absolute', left: 12, bottom: 12, maxWidth: '70%', padding: '8px 12px', borderRadius: 8, background: 'rgba(20,24,32,0.85)', color: '#fff', fontSize: 13, zIndex: 9, pointerEvents: 'none' }}
+          className="globe-note"
           role="status"
         >
           {layerNote}

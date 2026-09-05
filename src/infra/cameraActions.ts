@@ -64,6 +64,18 @@ export function orientView() {
   requestViewerRender(v)
 }
 
+/** 指南针：保持位置与当前俯仰/滚转，只把方位转到正北（不改变翻的角度）。 */
+export function orientNorth() {
+  const v = viewer
+  if (!v) return
+  const c = v.camera
+  c.flyTo({
+    destination: c.position,
+    orientation: { heading: 0, pitch: c.pitch, roll: c.roll },
+  })
+  requestViewerRender(v)
+}
+
 /** 测试用：重置内部初始高度。 */
 export function setInitialHeightForTest(h: number) {
   initialHeight = h

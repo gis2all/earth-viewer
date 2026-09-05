@@ -14,12 +14,7 @@ import {
   isWmsInput,
   isWmtsInput,
   layerKindOf,
-  createRegistry,
-} from './layerRegistry'
-import type { LayerAdapter, LayerInput } from './layerAdapter'
-import { LayerLoadError } from './layerAdapter'
-import { createEmptyRuntime } from './layerRuntime'
-import type { LayerKind } from './types'
+} from './webLayerKind'
 
 // —— 迁移自 webmap.test.ts 的「图层类型判断」用例（判定逻辑已收敛到 domain）——
 
@@ -93,44 +88,5 @@ describe('layerKindOf 完整分类', () => {
   it('未知类型与容器返回 null', () => {
     expect(layerKindOf({ layerType: 'Foo' })).toBeNull()
     expect(layerKindOf({})).toBeNull()
-  })
-})
-
-describe('LAYER_REGISTRY API', () => {
-  function makeAdapter(kind: LayerKind, matches: (input: LayerInput) => boolean): LayerAdapter {
-    return {
-      kind,
-      matches,
-      estimateRisk: () => 'light',
-      load: async ({ signal }) => {
-        if (signal.aborted) throw new LayerLoadError('aborted', 'aborted')
-        return createEmptyRuntime()
-      },
-    }
-  }
-
-  it('register / get / kinds / 重复注册报错', () => {
-    const reg = createRegistry()
-    const a = makeAdapter('feature', (input) => input.type === 'feature')
-    reg.register(a)
-    expect(reg.get('feature')).toBe(a)
-    expect(reg.kinds()).toEqual(['feature'])
-    expect(() => reg.register(makeAdapter('feature', () => false))).toThrow(/已注册/)
-  })
-
-  it('matchAll 按注册顺序返回命中的 adapter', () => {
-    const reg = createRegistry()
-    reg.register(makeAdapter('geojson', (input) => input.type === 'geojson'))
-    reg.register(makeAdapter('feature', (input) => input.type === 'feature' || input.type === 'both'))
-    reg.register(makeAdapter('kml', (input) => input.type === 'both'))
-
-    const geojson = reg.matchAll({ id: '1', type: 'geojson' })
-    expect(geojson.map((a) => a.kind)).toEqual(['geojson'])
-
-    const both = reg.matchAll({ id: '2', type: 'both' })
-    expect(both.map((a) => a.kind)).toEqual(['feature', 'kml'])
-
-    expect(reg.matchAll({ id: '3', type: 'nope' })).toEqual([])
-    expect(reg.get('kml')?.kind).toBe('kml')
   })
 })
