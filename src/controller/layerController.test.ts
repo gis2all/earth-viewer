@@ -70,7 +70,7 @@ describe('LayerController：状态流转与事件', () => {
     const { ctrl, render, setError } = setup()
     render.mockRejectedValue(new Error('boom'))
     const events: string[] = []
-    let message = ''
+    let message: unknown
     ctrl.subscribe((e) => {
       events.push(e.type)
       if (e.type === 'error') message = e.message
@@ -79,10 +79,11 @@ describe('LayerController：状态流转与事件', () => {
     ctrl.setItems([makeItem('a', { title: '区划' })])
     await flush()
 
-    expect(setError).toHaveBeenCalledWith('a', '图层加载失败：区划')
+    const expected = { key: 'runtime.layerLoadFailed', params: { name: '区划' } }
+    expect(setError).toHaveBeenCalledWith('a', expected)
     expect(ctrl.snapshot('a')?.state).toBe('error')
-    expect(ctrl.snapshot('a')?.error).toBe('图层加载失败：区划')
-    expect(message).toBe('图层加载失败：区划')
+    expect(ctrl.snapshot('a')?.error).toEqual(expected)
+    expect(message).toEqual(expected)
     expect(events).toContain('error')
     vi.restoreAllMocks()
   })
@@ -157,15 +158,16 @@ describe('LayerController：差分同步与竞态', () => {
     const job = render.mock.calls[0][0] as LayerRenderJob
 
     // 存活期间正常写入错误
-    job.onError('服务 500')
-    expect(setError).toHaveBeenCalledWith('a', '服务 500')
+    const message = { key: 'runtime.vectorTileRenderFailed', params: { name: '服务 500' } } as const
+    job.onError(message)
+    expect(setError).toHaveBeenCalledWith('a', message)
 
     ctrl.setItems([])
     // remove 兜底清理：既有错误从 store 移除
     expect(clearError).toHaveBeenCalledWith('a')
 
     // 移除后异步回调必须被守卫拦截，不再产生孤儿状态
-    job.onError('移除后迟到的错误')
+    job.onError({ key: 'runtime.vectorTileRenderFailed', params: { name: '移除后迟到的错误' } })
     job.onClearError()
     expect(setError).toHaveBeenCalledTimes(1)
     expect(clearError).toHaveBeenCalledTimes(1)
@@ -269,12 +271,14 @@ describe('LayerController：job 回调与 deps 桥接', () => {
     await flush()
     const job = render.mock.calls[0][0] as LayerRenderJob
 
-    job.onNote('数据量大，已降级')
-    expect(setNote).toHaveBeenCalledWith('数据量大，已降级')
+    const note = { key: 'runtime.budgetDegraded' } as const
+    job.onNote(note)
+    expect(setNote).toHaveBeenCalledWith(note)
 
-    job.onError('矢量瓦片渲染失败：x')
-    expect(setError).toHaveBeenCalledWith('a', '矢量瓦片渲染失败：x')
-    expect(ctrl.snapshot('a')?.error).toBe('矢量瓦片渲染失败：x')
+    const error = { key: 'runtime.vectorTileRenderFailed', params: { name: 'x' } } as const
+    job.onError(error)
+    expect(setError).toHaveBeenCalledWith('a', error)
+    expect(ctrl.snapshot('a')?.error).toEqual(error)
 
     job.onClearError()
     expect(clearError).toHaveBeenCalledWith('a')
