@@ -21,6 +21,7 @@ import type { WebLayer } from '../domain/types'
 import { viewEnvelopeFromCamera, type ViewEnvelope } from '../domain/geometry/geometry'
 import { loadI3S, load3DTiles } from './scene'
 import { registerViewer, unregisterViewer, flyToHome } from './cameraActions'
+import type { AppMessage } from '../domain/appMessage'
 
 // 地形：Terrain3D (GCSv2, EPSG:4326)，覆盖 ±90°（3857 版只到 ±85.05°，会导致极区无 globe tile）
 const TERRAIN_URL =
@@ -41,9 +42,9 @@ export function __resetTerrainCacheForTest() {
 
 /** 创建 Viewer 时的回调（WebGL 上下文丢失/恢复，UI 提示由 Presentation 层处理）。 */
 export interface FacadeLifecycleCallbacks {
-  onContextLost?: (msg: string) => void
+  onContextLost?: (msg: AppMessage) => void
   onContextRestored?: () => void
-  onInitError?: (msg: string) => void
+  onInitError?: (msg: AppMessage) => void
   /** 版权署名容器：Cesium 把 credit / attribution 渲染到此节点（底部状态栏左段）。 */
   creditContainer?: HTMLElement
 }
@@ -97,6 +98,7 @@ export class CesiumFacade {
   private readonly _vectorTokens = new Map<string, number>()
   private _vectorSeq = 0
   private _labelsProvider: ArcGISVectorTileImageryProvider | null = null
+  private _labelsMountedProvider: ArcGISVectorTileImageryProvider | null = null
   private _labelsToken = 0
   private _labelsFailCount = 0
   private _labelsRetryTimer: ReturnType<typeof setTimeout> | null = null
@@ -134,7 +136,7 @@ export class CesiumFacade {
       })
     } catch (e) {
       console.error('[globe] 初始化失败', e)
-      cb.onInitError?.('地球初始化失败：' + String(e).slice(0, 120))
+      cb.onInitError?.({ key: 'runtime.globeInitFailed', params: { reason: String(e).slice(0, 120) } })
       return false
     }
     this.viewer = v
@@ -142,7 +144,7 @@ export class CesiumFacade {
     // WebGL 上下文丢失预案（内存不足/卡死时不白屏：易加载并提示）
     const onCtxLost = (e: Event) => {
       e.preventDefault()
-      cb.onContextLost?.('WebGL 上下文已丢失（可能内存不足，正在尝试恢复…）')
+      cb.onContextLost?.({ key: 'runtime.webglContextLost' })
     }
     const onCtxRestored = () => {
       cb.onContextRestored?.()
@@ -581,14 +583,7 @@ export class CesiumFacade {
     })
     this._labelsProvider = provider
     gpu.register('labels', { estimateBytes: (tier) => estimateVectorProviderBytes(tier) })
-    this._vectorRebuilds.set('labels', () => {
-      if (this._labelsProvider) {
-        this._removeVectorImagery(runtime, this._labelsProvider)
-        this._labelsProvider.destroy()
-        this._labelsProvider = null
-      }
-      this._attachLabels(runtime)
-    })
+    this._vectorRebuilds.set('labels', () => this._attachLabels(runtime))
     provider.readyPromise
       .then(() => {
         if (v.isDestroyed() || token !== this._labelsToken || !this._gpu) {
@@ -596,12 +591,18 @@ export class CesiumFacade {
           return
         }
         this._labelsFailCount = 0
-        // 重建时若旧实例已挂载则先移除（首次挂载 findIndex 为 -1，不销毁新 provider）
+        const previous = this._labelsMountedProvider
         this._removeVectorImagery(runtime, provider)
         const il = new Cesium.ImageryLayer(provider as unknown as Cesium.ImageryProvider)
         il.show = this._baseVisible
         v.imageryLayers.add(il)
         this.pushImagery(runtime, il, provider)
+        if (previous && previous !== provider) {
+          this._removeVectorImagery(runtime, previous)
+          previous.destroy()
+        }
+        this._labelsMountedProvider = provider
+        this._labelsProvider = provider
         this.requestFrame()
       })
       .catch((e: unknown) => {
@@ -611,7 +612,7 @@ export class CesiumFacade {
           return
         }
         provider.destroy()
-        this._labelsProvider = null
+        if (this._labelsProvider === provider) this._labelsProvider = this._labelsMountedProvider
         if (this._labelsFailCount < LABEL_INIT_MAX_RETRY) {
           this._labelsFailCount += 1
           console.warn('[globe] 矢量标注初始化失败，稍后重试', e)
@@ -656,7 +657,7 @@ export class CesiumFacade {
     signal: AbortSignal | undefined,
     runtime: LayerRuntime,
     keepAlive: () => boolean,
-    onError: (msg: string) => void,
+    onError: (msg: AppMessage) => void,
     onDone: () => void
   ) {
     const v = this.viewer
@@ -674,7 +675,7 @@ export class CesiumFacade {
     signal: AbortSignal | undefined,
     runtime: LayerRuntime,
     keepAlive: () => boolean,
-    onError: (msg: string) => void,
+    onError: (msg: AppMessage) => void,
     onDone: () => void
   ) {
     const v = this.viewer
@@ -729,7 +730,10 @@ export class CesiumFacade {
         console.error('[layer] 矢量瓦片样式渲染失败', op.url || op.styleUrl, e)
         if (this._vectorProviders.get(key) === provider) this._vectorProviders.delete(key)
         provider.destroy()
-        onError('矢量瓦片渲染失败：' + (op.title || op.url || op.styleUrl))
+        onError({
+          key: 'runtime.vectorTileRenderFailed',
+          params: { name: op.title || op.url || op.styleUrl || '' },
+        })
       })
   }
 
@@ -798,6 +802,7 @@ export class CesiumFacade {
     this._vectorProviders.delete(key)
     this._vectorTokens.delete(key)
     if (key === 'labels') this._labelsProvider = null
+    if (key === 'labels') this._labelsMountedProvider = null
   }
 
   /** 加载 GeoJSON → DataSource（可带 Cesium 样式参数），挂 runtime 并开启点聚合。 */
@@ -928,8 +933,10 @@ export class CesiumFacade {
       }
     }
     if (
-      this._labelsProvider &&
-      runtime.imagery.some((l) => (l as unknown as { provider?: unknown }).provider === this._labelsProvider)
+      (this._labelsProvider &&
+        runtime.imagery.some((l) => (l as unknown as { provider?: unknown }).provider === this._labelsProvider)) ||
+      (this._labelsMountedProvider &&
+        runtime.imagery.some((l) => (l as unknown as { provider?: unknown }).provider === this._labelsMountedProvider))
     ) {
       keysToForget.add('labels')
     }
@@ -966,7 +973,11 @@ export class CesiumFacade {
     for (const provider of this._vectorProviders.values()) provider.destroy()
     if (this._labelsRetryTimer) { clearTimeout(this._labelsRetryTimer); this._labelsRetryTimer = null }
     this._labelsProvider?.destroy()
+    if (this._labelsMountedProvider && this._labelsMountedProvider !== this._labelsProvider) {
+      this._labelsMountedProvider.destroy()
+    }
     this._labelsProvider = null
+    this._labelsMountedProvider = null
     this._vectorRebuilds.clear()
     this._vectorProviders.clear()
     this._vectorTokens.clear()
