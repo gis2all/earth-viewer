@@ -204,7 +204,21 @@ export function applyStyleOverrides(
   return out
 }
 
-/** 地名语言改写：'en' 统一优先英文并回退，'local' 把水系全球名换成当地语言名 */
+function preferredLabelExpression(fields: string[]): unknown[] {
+  let fallback: unknown = ''
+  for (let i = fields.length - 1; i >= 0; i -= 1) {
+    const field = fields[i]
+    fallback = [
+      'case',
+      ['all', ['has', field], ['!=', ['get', field], '']],
+      ['get', field],
+      fallback,
+    ]
+  }
+  return fallback as unknown[]
+}
+
+/** 地名语言改写：'en' 优先英文，'local' 把水系全球名换成当地语言名。 */
 export function applyLabelLanguage(
   style: Record<string, unknown>,
   language: 'en' | 'local' | undefined
@@ -223,9 +237,13 @@ export function applyLabelLanguage(
     if (language === 'local' && m[1] === '_name_global') {
       layout['text-field'] = '{_name_local}'
     } else if (language === 'en') {
-      // 仅英文：_name_en 优先，其次 _name_global/_name；
-      // 不回退到当地语言（中文景区名由范围过滤排除）
-      layout['text-field'] = ['coalesce', ['get', '_name_en'], ['get', '_name_global'], ['get', '_name']]
+      // English fallback: English -> local -> global -> style field.
+      layout['text-field'] = preferredLabelExpression([
+        '_name_en',
+        '_name_local',
+        '_name_global',
+        '_name',
+      ])
     }
     return { ...rec, layout }
   })
