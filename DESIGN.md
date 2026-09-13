@@ -41,11 +41,14 @@ typography:
     fontFamily: "PingFang SC, Microsoft YaHei, Segoe UI, system-ui, sans-serif"
     fontSize: 13px
     lineHeight: 1.5
+  panel-title:
+    fontSize: 14px
+    fontWeight: 600
   label:
     fontSize: 12px
     fontWeight: 400
   section:
-    fontSize: 11px
+    fontSize: 12px
     fontWeight: 600
 spacing:
   card-gap: 8px
@@ -55,7 +58,7 @@ spacing:
 sizing:
   header-height: 52px
   left-panel-width: "clamp(320px, 20vw, 423px)"
-  right-panel-width: "clamp(240px, 14vw, 304px)"
+  right-panel-width: "clamp(272px, 15vw, 304px)"
   scrollbar-width: 7px
   icon-button: 32px
   small-icon: 16px
@@ -88,7 +91,7 @@ Dark mode uses `dark.surface` (`#05070d`) for the globe and all panels. Light mo
 
 - The top bar is 52px high with 16px horizontal padding.
 - The left layer panel is `clamp(320px, 20vw, 423px)` wide (20% of viewport width, capped at 320–423px); its scroll content is `calc(100% - 6px)` with 16px left and 10px right padding.
-- The right effects panel is `clamp(240px, 14vw, 304px)` wide (14% of viewport width, capped at 240–304px); its scroll content is `calc(100% - 6px)` with 14px inline padding.
+- The right effects panel is `clamp(272px, 15vw, 304px)` wide (15% of viewport width, capped at 272–304px); its scroll content is `calc(100% - 6px)` with 14px inline padding.
 - Collapsed panels slide fully off-screen via a horizontal `transform: translateX` animation (left −100%, right +100%, 220ms). The panel keeps its final width throughout, so inner content never reflows during the transition; do not regress to a width-based animation. The expand controls remain 24px square and use the same icon treatment as the panel fold controls.
 - The gallery is a two-column grid with an 8px gap. The card width is fluid within the panel.
 
@@ -96,7 +99,7 @@ Dark mode uses `dark.surface` (`#05070d`) for the globe and all panels. Light mo
 
 ### Top Bar
 
-The top bar contains the brand mark, a compass (north indicator), orient/reset view actions, theme toggle, immersive-mode toggle, and GitHub link. Icon buttons are 32px square with SVG drawings sized 15-18px (theme/immersive/GitHub 16, orient 17, reset 18). Default icons use the muted text color; hover uses the theme foreground and a subtle theme hover surface. The compass rotates to the camera heading (0°=north, +90°=east), switches to the accent color within ±2° of north, and clicking it aligns heading to north while preserving pitch/tilt. The GitHub mark is centered in its button and links to the project repository.
+The top bar contains the brand mark, a compass (north indicator), orient/reset view actions, theme toggle, language toggle, immersive-mode toggle, and GitHub link. Icon buttons are 32px square with SVG drawings sized 15-18px (theme/immersive/GitHub 16, orient 17, reset 18). The language button uses 13px text (`中` / `EN`) and its tooltip/accessibility label names the next locale. Default icons use the muted text color; hover uses the theme foreground and a subtle theme hover surface. The compass rotates to the camera heading (0°=north, +90°=east), switches to the accent color within ±2° of north, and clicking it aligns heading to north while preserving pitch/tilt. The GitHub mark is centered in its button and links to the project repository.
 
 ### Layer Card
 
@@ -109,7 +112,7 @@ The bottom row has status icons on the left and two independent actions on the r
 - The detail icon is a 20px square link using a simple list-style SVG. It opens the ArcGIS item page and is aligned to the add action.
 - The add action is a 20px square button with no default border or background. Its base color is the theme accent. Loading uses the same footprint and a compact spinner. Added uses the semantic added color and does not gain a filled background. Once added, an independent remove action replaces the add action: a 22px square button with a single centered horizontal line (24 grid, strokeWidth 3.6, butt caps). It uses the faint color; hover raises it to the foreground and theme hover surface. It removes the layer from the globe and list. Load failures render an inline `加载失败` marker with the theme danger color.
 
-The card body is not an add target. Adding a layer happens only through the add button. Detail navigation happens only through the detail link. Hover must not translate, resize, or otherwise move the card; it may change border and surface colors only. In dark mode the hover surface must remain visibly distinguishable from the base surface.
+The card body is not an add target. Adding a layer happens only through the add button. Detail navigation happens only through the detail link. Hover must not translate, resize, or otherwise move the card, and it keeps the existing border color while changing only the surface color. In dark mode the hover surface must remain visibly distinguishable from the base surface.
 
 ### Effects Panel
 

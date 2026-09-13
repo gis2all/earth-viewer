@@ -30,7 +30,7 @@
 
 ## 1. 项目定位
 
-**Earth Viewer**：画廊式 3D 地球图层应用，目标是可以上线、不是 demo。左侧「图层」面板搜索 ArcGIS Online Web Map/Web Scene，点击卡片添加按钮校验并按类型叠加到 Cesium 球上；右侧「效果」面板调节环境/地形/视图；顶栏提供指北针/回正/复位/主题切换、GitHub 导航和应用内沉浸模式。深浅色双主题，全直角 UI。
+**Earth Viewer**：画廊式 3D 地球图层应用，目标是可以上线、不是 demo。左侧「图层」面板搜索 ArcGIS Online Web Map/Web Scene，点击卡片添加按钮校验并按类型叠加到 Cesium 球上；右侧「效果」面板调节环境/地形/视图；顶栏提供指北针/回正/复位/主题与中英文切换、GitHub 导航和应用内沉浸模式。深浅色双主题，全直角 UI。
 
 ### 1.1 UI 规范
 
@@ -47,6 +47,7 @@
 | Vite | 5.4.x（`vite-plugin-cesium`，生产注入经典 Cesium.js） |
 | TypeScript | 5.6.x（strict） |
 | zustand | 4.5.x（全局状态 + persist localStorage `earth-viewer`） |
+| i18n | 本地类型安全中英文字典；不引入第三方 i18n 框架 |
 | proj4 / @mapbox/vector-tile / pbf | ArcGIS 数据转换：坐标重投影 / MVT 矢量瓦片解码 |
 | maplibre-gl | 6.6.x：矢量瓦片官方样式（root.json）离屏渲染 → 自定义 ImageryProvider 喂给 Cesium |
 | Vitest / Testing Library | 单测 + 覆盖率（v8 provider） |
@@ -142,6 +143,7 @@ flowchart TD
 
 ```text
 app/            AppShell / LayerPanel / EffectsPanel / GlobeViewer / store（§9）
+i18n/           locale 检测 / 中英文资源 / useI18n / MessageKey
 controller/     layerController / cameraController / effectsController（§8）
 service/        repository / scheduler / http / userLocation / arcgisItem（§7）
   formats/      csv / kml / ogc / vectorTile
@@ -152,7 +154,7 @@ infra/          cesiumFacade / gpuMemoryManager / cameraActions / arcgisVectorTi
 globe/          globeRenderer / webLayerRenderer / viewport（§6.4）
 testing/        setup / mocks/cesium / integration
 styles/         theme.css（全部样式，直角 + 深浅主题变量）
-根目录：README / LICENSE / index.html / package.json / DESIGN.md / vite / vitest / eslint / playwright / wrangler 配置
+根目录：README / README.CN / LICENSE / index.html / package.json / DESIGN.md / vite / vitest / eslint / playwright / wrangler 配置
 public/         logo / covers / favicon-* / _headers（★CSP 唯一来源）/ _redirects
 scripts/        badge.mjs / check-arch.mjs
 functions/      sharing/[[path]].js（/sharing 代理）/ api/geo.js
@@ -193,6 +195,8 @@ functions/      sharing/[[path]].js（/sharing 代理）/ api/geo.js
 | `app/LayerPanel.tsx` / `store.ts` | 画廊：搜索/预检/流式/添加移除/toast（§9.1）/ zustand + persist（§8.1） |
 | `globe/globeRenderer.ts` | renderWebmap 编排：相机、业务层上限、跨层预算、错误与清错时机 |
 | `globe/webLayerRenderer.ts` | WebLayer 按类型渲染：静态有序分发表 + 每类渲染器（不做注册表/adapter） |
+| `i18n/messages.ts` | 中英文唯一资源表；UI key 与运行时消息 key 在此翻译 |
+| `domain/appMessage.ts` | 跨层传递的本地化消息描述 `{ key, params }`，禁止在 controller/infra 固化翻译文本 |
 
 ---
 
@@ -201,7 +205,8 @@ functions/      sharing/[[path]].js（/sharing 代理）/ api/geo.js
 ### 6.1 底图与地形（★）
 
 - 底图单数据源 = Imagery Hybrid (WGS84) 影像 + 矢量标注（`WORLD_VECTOR_LABELS_STYLE_URL`，MapLibre 离屏）；**不再叠加 3857 World_Imagery / Boundaries**。
-- 标注样式：`language:'en'`（★固定英文）、`labelsOnly:true`、白字 + 黑描边、`textScale` z6 1.15 → z16 1.6。
+- 底图标注固定英文：`_name_en → _name_local → _name_global → _name`，不跟随 UI `locale`；避免 ArcGIS 中文字段缺失时出现中英文混排。
+- 标注样式：`labelsOnly:true`、白字 + 黑描边、`textScale` z6 1.15 → z16 1.6。
 - 地形 `Terrain3D (GCSv2)`，EPSG:4326（★必须 4326——3857 截断 ±85.05°，极区无 tile）。
 
 ### 6.2 CesiumFacade（infra 唯一深接触点）
@@ -289,7 +294,7 @@ Viewer：`requestRenderMode:true` + `maximumRenderTimeChange: Infinity` + `useBr
 
 ### 8.1 store（src/app/store.ts）
 
-zustand + persist（key `earth-viewer`）；`partialize` 只持久化 `theme / collapsed / collapsedRight / added / effects`。`Effects` 字段：`atmosphereRing / atmosphere / stars / sunMoon / sunGlow / fog / dayNight / terrainExaggeration / globeTranslucency / translucencyAlpha / autoRotate / showReferenceLayers`（`showReferenceLayers` 恒开、无面板开关）。
+zustand + persist（key `earth-viewer`）；`partialize` 只持久化 `theme / locale / collapsed / collapsedRight / added / effects`。首次访问 `zh-*` 浏览器语言进入 `zh-CN`，其余进入 `en`；手动切换后持久化优先。`locale` 只影响 UI、错误提示与 aria，不改变底图标注语言。`Effects` 字段：`atmosphereRing / atmosphere / stars / sunMoon / sunGlow / fog / dayNight / terrainExaggeration / globeTranslucency / translucencyAlpha / autoRotate / showReferenceLayers`（`showReferenceLayers` 恒开、无面板开关）。
 
 ### 8.2 LayerController 状态机（★唯一）
 
@@ -322,7 +327,7 @@ stateDiagram-v2
 
 ### 8.5 GlobeViewer（组合根）
 
-创建 CesiumFacade + 三控制器；`added` 差分同步 LayerController（`added.filter(a => a.kind==='webmap' && a.webmap)`）；userHome 经 `setUserHomeResolver` 注入；★`window.__E2E__` 跳过 Cesium。
+创建 CesiumFacade + 三控制器；`added` 差分同步 LayerController（`added.filter(a => a.kind==='webmap' && a.webmap)`）；userHome 经 `setUserHomeResolver` 注入；底图标注固定英文；★`window.__E2E__` 跳过 Cesium。
 
 ## 9. 表现层
 
@@ -337,7 +342,7 @@ stateDiagram-v2
 
 ### 9.2 AppShell（顶栏/布局）
 
-- 品牌/favicon 随主题（dark/light 两套 SVG）；指北针（`orientNorth`，只转方向保俯仰）与回正/复位（cameraActions）、主题切换、GitHub 导航、沉浸模式（隐藏顶栏+左右面板，仅保留球与退出图标）。
+- 品牌/favicon 随主题（dark/light 两套 SVG）；指北针（`orientNorth`，只转方向保俯仰）与回正/复位（cameraActions）、主题与中英文切换、GitHub 导航、沉浸模式（隐藏顶栏+左右面板，仅保留球与退出图标）。语言按钮显示当前语言 `中` / `EN`，title/aria 描述下一步动作；切换只影响 UI，不改变底图英文标注。
 
 ### 9.3 EffectsPanel（效果）
 
@@ -353,19 +358,20 @@ stateDiagram-v2
 ### 9.6 底部状态栏（BottomStatusBar）
 
 - 居中横条，位于球体底部。左/右收窄按面板开合与沉浸模式自动伸缩：沉浸或对应面板折叠时占满全宽，否则避开面板宽度（与 `.panel` clamp 一致）。
-- 左段：位置（`位置: ` + 经°E/纬°N）+相机高度（km，2 位小数）。鼠标悬停时经纬度跟随指针；无鼠标数据时用相机中心。
+- 左段：位置（经°E/纬°N）+相机高度（km，2 位小数），文案随 `locale`；鼠标悬停时经纬度跟随指针；无鼠标数据时用相机中心。
 - 右段：`Powered by gis2all`（已去 logo、合并为整体文本），与左段同 muted 色系。横条背景与面板一致、无边框。
 
 ---
 
 ## 10. 测试与质量门禁
 
-- **单测**：Vitest（jsdom），**540 个用例 / 42 个文件全过**（2026-09-04 `output/test-results.json` 实测）。`npm run test:coverage`
+- **单测**：Vitest（jsdom），**589 个用例 / 47 个文件全过**（2026-09-13 `output/test-results.json` 实测）。`npm run test:coverage`
 - **覆盖率门槛**（vitest.config.ts）：★statements ≥90 / lines ≥90 / functions ≥85 / branches ≥70；include **全 src**，exclude 入口壳（`main.tsx` / `App.tsx`）、测试文件与测试基建（`src/testing/**`）、`service/processing/viewportWorker.entry.ts`、`infra/primitive.ts`——真实口径，不玩数字。
-- **覆盖率实测**（2026-09-04）：statements **94.01** / branches **86.53** / functions **95.65** / lines **96.95**。
+- **覆盖率实测**（2026-09-13）：statements **92.9** / branches **85.3** / functions **94.39** / lines **96.09**。
 - **架构门禁**：`npm run check:arch`（scripts/check-arch.mjs，含 lint）——全依赖矩阵（§4.1）：Cesium/MapLibre 仅限 `src/infra/**`（测试豁免）、domain 零外部依赖、app 不被反向导入、未知层目录报错；CI 已跑此步。
-- **E2E**：Playwright **35 项**（app.spec 2 / ui.spec 14 / integration.spec 19；integration 走真实 ArcGIS，具体以 CI/output/e2e-results.json 为准）。★E2E 轻量模式：`app.spec.ts`、`ui.spec.ts` 注入 `window.__E2E__`，GlobeViewer 跳过 Cesium 创建（CI 无头软件渲染极慢）；「球真实渲染+图层上球」由线上/容器验证覆盖。
-- **徽章**：6 个（CI / License / Coverage / Deps / Tests / E2E）；`scripts/badge.mjs` 从 coverage-summary/audit/output/test-results/output/e2e-results 生成 → GitHub Actions 发布 → shields endpoint 渲染，每次 CI 实时生成。
+- **E2E**：Playwright **39 项**（app.spec 2 / ui.spec 16 / i18n.spec 2 / integration.spec 19；integration 走真实 ArcGIS，具体以 CI/output/e2e-results.json 为准）。★E2E 轻量模式：`app.spec.ts`、`ui.spec.ts`、`i18n.spec.ts` 注入 `window.__E2E__`，GlobeViewer 跳过 Cesium 创建（CI 无头软件渲染极慢）；「球真实渲染+图层上球」由线上/容器验证覆盖。
+- **语言解耦**：功能测试不得用中文/英文文案、`title` 或 `aria-label` 定位控件；使用稳定 `data-testid` / `data-*` 契约。浏览器语言、切换、持久化和中英文文案只在 `src/i18n/**`、`*.i18n.test.tsx`、`e2e/i18n.spec.ts` 中验证。
+- **徽章**：7 个（Language / CI / Coverage / Deps / Tests / E2E / License）；`scripts/badge.mjs` 从 coverage-summary/audit/output/test-results/output/e2e-results 生成 → GitHub Actions 发布 → shields endpoint 渲染，每次 CI 实时生成。
 - **CI**（.github/workflows/ci.yml）：audit（--omit=dev）→ check:arch（含 lint）→ test:coverage → build → e2e → badge → upload-pages-artifact（main 分支 deploy 到 Pages）。
 - 每次改动建议验证顺序：`npm run lint` → `npm run check:arch` → `npm run test:coverage` → `npm run build` → `git diff --check`。
 
@@ -401,7 +407,7 @@ stateDiagram-v2
 | Cesium 按需渲染 | 静止不持续提交 GPU 帧；异步数据后显式请求一帧 |
 | 生产经典 Cesium.js + CSP blob: | worker 走 blob importScripts |
 | 矢量瓦片用 MapLibre 栅格化（非 MVTDataProvider） | 复用官方样式；裸几何难复现、全球 MVT 内存爆炸 |
-| 标注固定 language:'en' | 当前仅英文；未来本地化再走 'local' |
+| 中英文 UI 本地化；底图标注固定英文 | 无第三方依赖，UI/错误/aria 可即时切换；避免 ArcGIS 中文译名缺失造成标注混排，数据源标题保持原文 |
 | 相机优先 / 用户位置回退、/api/geo 兜底 | 有 `viewpoint` 用作者视角；自托管不弹授权 |
 | Cloudflare Pages 而非 Workers、`wrangler pages deploy` | Workers 类型会导致 deploy 报错 |
 
