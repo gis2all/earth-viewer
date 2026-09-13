@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import type { UserHome } from '../domain/types'
 import { persist } from 'zustand/middleware'
+import { detectBrowserLocale, type Locale } from '../i18n/locale'
+import type { AppMessage } from '../domain/appMessage'
 
 export type Theme = 'dark' | 'light'
 
@@ -49,6 +51,9 @@ export const DEFAULT_EFFECTS: Effects = {
 interface AppState {
   theme: Theme
   toggleTheme: () => void
+  locale: Locale
+  setLocale: (locale: Locale) => void
+  toggleLocale: () => void
   collapsed: boolean
   toggleCollapsed: () => void
   collapsedRight: boolean
@@ -57,8 +62,8 @@ interface AppState {
   addLayer: (l: AddedLayer) => void
   removeLayer: (id: string) => void
   /** 图层加载失败信息：layerId -> 错误描述（会话级，不持久化） */
-  layerErrors: Record<string, string>
-  setLayerError: (id: string, msg: string) => void
+  layerErrors: Record<string, AppMessage>
+  setLayerError: (id: string, msg: AppMessage) => void
   clearLayerError: (id: string) => void
   effects: Effects
   setEffect: <K extends keyof Effects>(key: K, value: Effects[K]) => void
@@ -72,6 +77,9 @@ export const useAppStore = create<AppState>()(
     (set) => ({
   theme: 'dark',
   toggleTheme: () => set((s) => ({ theme: s.theme === 'dark' ? 'light' : 'dark' })),
+  locale: detectBrowserLocale(),
+  setLocale: (locale) => set({ locale }),
+  toggleLocale: () => set((s) => ({ locale: s.locale === 'zh-CN' ? 'en' : 'zh-CN' })),
   collapsed: false,
   toggleCollapsed: () => set((s) => ({ collapsed: !s.collapsed })),
   collapsedRight: false,
@@ -99,6 +107,7 @@ export const useAppStore = create<AppState>()(
       // 只持久化用户状态，不持久化函数；刷新后恢复主题/面板/已添加图层/效果
       partialize: (s) => ({
         theme: s.theme,
+        locale: s.locale,
         collapsed: s.collapsed,
         collapsedRight: s.collapsedRight,
         added: s.added,

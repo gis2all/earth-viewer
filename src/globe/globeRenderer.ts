@@ -79,7 +79,10 @@ export async function renderWebmap(job: LayerRenderJob, f: CesiumFacade): Promis
   const keepAlive = () => job.keepAlive()
   const skippedBusiness = skippedBusinessLayers(wm)
   if (skippedBusiness > 0) {
-    job.onNote(`此地图含多个业务图层，仅渲染前 ${MAX_BUSINESS_LAYERS} 个（略过 ${skippedBusiness} 个）`)
+    job.onNote({
+      key: 'runtime.businessLimit',
+      params: { max: MAX_BUSINESS_LAYERS, skipped: skippedBusiness },
+    })
   }
   // 预算/降级：业务层要素合计超预算则跳过；单层超 MAX_RENDER_FEATURES 则截断，防 OOM/阻塞
   const budget: { remaining: number } = { remaining: SAFETY.MAX_TOTAL_FEATURES }
@@ -124,7 +127,7 @@ export async function renderWebmap(job: LayerRenderJob, f: CesiumFacade): Promis
       } else {
         f.flyToHome()
         // 全球级 3D 场景没有可定位中心：提示放大到城市，避免用户以为没渲染
-        if (r.isScene && isGlobal) job.onNote?.('该 3D 场景覆盖全球，放大到城市可见对象')
+        if (r.isScene && isGlobal) job.onNote({ key: 'runtime.globalSceneNote' })
       }
     }
   }

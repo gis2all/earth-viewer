@@ -5,6 +5,7 @@ import { EffectsPanel } from './EffectsPanel'
 import { BottomStatusBar, type BottomStatus } from './BottomStatusBar'
 import { useAppStore } from './store'
 import { resetView, orientView, orientNorth } from '../infra/cameraActions'
+import { localeLabel, useI18n } from '../i18n'
 
 function PanelChevronIcon({ direction }: { direction: 'left' | 'right' }) {
   return <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="square" strokeLinejoin="miter" aria-hidden="true"><path d={direction === 'right' ? 'm6 4 4 4-4 4' : 'm10 4-4 4 4 4'} /></svg>
@@ -13,6 +14,8 @@ function PanelChevronIcon({ direction }: { direction: 'left' | 'right' }) {
 export function AppShell() {
   const theme = useAppStore((s) => s.theme)
   const toggleTheme = useAppStore((s) => s.toggleTheme)
+  const { locale, t } = useI18n()
+  const toggleLocale = useAppStore((s) => s.toggleLocale)
 
   // favicon 跟随主题，与顶栏品牌图标保持一致（深色=白球黑切，浅色=黑球白切）
   useEffect(() => {
@@ -26,6 +29,8 @@ export function AppShell() {
   const [immersive, setImmersive] = useState(false)
   const [status, setStatus] = useState<BottomStatus | null>(null)
   const [heading, setHeading] = useState(0)
+  const headingDegrees = ((heading * 180 / Math.PI) % 360 + 360) % 360
+  const northAligned = Math.abs(headingDegrees) <= 2 || Math.abs(headingDegrees - 360) <= 2
 
   useEffect(() => {
     if (!immersive) return
@@ -58,27 +63,27 @@ export function AppShell() {
           <span className="brand-name">Earth Viewer</span>
         </div>
         <div className="spacer" />
-        <button className="icon-btn" onClick={orientNorth} title="指北针" aria-label="指北针">
+        <button className={'icon-btn compass-btn' + (northAligned ? ' is-north' : '')} data-testid="orient-north" onClick={orientNorth} title={t('topbar.compass')} aria-label={t('topbar.compass')}>
           <svg
+            className="compass-icon"
             viewBox="0 0 16 16"
             width="15"
             height="15"
             style={{
-              transform: `rotate(${-heading * 180 / Math.PI}deg)`,
-              color: (() => { const d = ((heading * 180 / Math.PI) % 360 + 360) % 360; return Math.abs(d) <= 2 || Math.abs(d - 360) <= 2 ? 'var(--accent)' : 'var(--muted)' })(),
+              transform: `rotate(${-headingDegrees}deg)`,
             }}
           >
             <path d="M8 4 L12 14 L8 12.2 L4 14 Z" stroke="currentColor" strokeWidth="1.35" strokeLinecap="square" strokeLinejoin="miter" fill="currentColor" />
           </svg>
         </button>
-        <button className="icon-btn" onClick={orientView} title="回正视角">
+        <button className="icon-btn" data-testid="orient-view" onClick={orientView} title={t('topbar.orientView')}>
           <svg viewBox="0 0 16 16" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="square" strokeLinejoin="miter">
             <path d="M3 6.7 V3 H6.7" />
             <path d="M13 9.3 V13 H9.3" />
             <circle cx="8" cy="8" r="0.7" fill="currentColor" stroke="none" />
           </svg>
         </button>
-        <button className="icon-btn" onClick={resetView} title="复位视角">
+        <button className="icon-btn" data-testid="reset-view" onClick={resetView} title={t('topbar.resetView')}>
           <svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="square" strokeLinejoin="miter">
             <path d="M2.8 8.1 L8 3 L13.2 8.1" />
             <path d="M4.4 8.1 V13.7 H11.6 V8.1" />
@@ -86,7 +91,7 @@ export function AppShell() {
           </svg>
         </button>
         <span className="hdr-divider" />
-        <button className="icon-btn" onClick={toggleTheme} title="切换主题">
+        <button className="icon-btn" data-testid="theme-toggle" onClick={toggleTheme} title={t('topbar.toggleTheme')}>
           {theme === 'dark' ? (
             <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.4">
               <path d="M13.5 9.2A5.6 5.6 0 1 1 6.8 2.5a4.6 4.6 0 0 0 6.7 6.7z" />
@@ -98,13 +103,23 @@ export function AppShell() {
             </svg>
           )}
         </button>
-        <button className="icon-btn" onClick={() => setImmersive(true)} title="进入沉浸模式" aria-label="进入沉浸模式">
+        <button
+          className="icon-btn lang-btn"
+          data-testid="language-toggle"
+          onClick={toggleLocale}
+          title={locale === 'zh-CN' ? t('topbar.switchToEnglish') : t('topbar.switchToChinese')}
+          aria-label={locale === 'zh-CN' ? t('topbar.switchToEnglish') : t('topbar.switchToChinese')}
+        >
+          {localeLabel(locale)}
+        </button>
+        <button className="icon-btn" data-testid="immersive-enter" onClick={() => setImmersive(true)} title={t('topbar.enterImmersive')} aria-label={t('topbar.enterImmersive')}>
           <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="square" strokeLinejoin="miter">
             <path d="M2 5L2 2L5 2M11 2L14 2L14 5M14 11L14 14L11 14M5 14L2 14L2 11" />
           </svg>
         </button>
         <a
           className="icon-btn"
+          data-testid="github-link"
           href="https://github.com/gis2all/earth-viewer"
           target="_blank"
           rel="noreferrer"
@@ -120,13 +135,13 @@ export function AppShell() {
           <LayerPanel />
           <main className="globe-wrap">
           {!immersive && collapsed && (
-            <button className="expand-btn" onClick={toggleCollapsed} title="展开面板"><PanelChevronIcon direction="right" /></button>
+            <button className="expand-btn" data-testid="expand-left-panel" onClick={toggleCollapsed} title={t('topbar.expandPanel')}><PanelChevronIcon direction="right" /></button>
           )}
           {!immersive && collapsedRight && (
-            <button className="expand-btn expand-right" onClick={toggleCollapsedRight} title="展开效果面板"><PanelChevronIcon direction="left" /></button>
+            <button className="expand-btn expand-right" data-testid="expand-right-panel" onClick={toggleCollapsedRight} title={t('topbar.expandEffects')}><PanelChevronIcon direction="left" /></button>
           )}
           {immersive && (
-            <button className="immersive-exit icon-btn" onClick={() => setImmersive(false)} title="退出沉浸模式" aria-label="退出沉浸模式">
+            <button className="immersive-exit icon-btn" data-testid="immersive-exit" onClick={() => setImmersive(false)} title={t('topbar.exitImmersive')} aria-label={t('topbar.exitImmersive')}>
               <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="square" strokeLinejoin="miter">
                 <path d="M6 2v4H2M10 2v4h4M14 10h-4v4M6 14v-4H2" />
               </svg>

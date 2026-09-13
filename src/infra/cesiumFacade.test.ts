@@ -343,7 +343,10 @@ describe('CesiumFacade（W3.4）', () => {
       cesiumMock.failNextCreate = true
       const ok = facade.create(document.createElement('div'), { onInitError })
       expect(ok).toBe(false)
-      expect(onInitError).toHaveBeenCalledWith(expect.stringContaining('地球初始化失败'))
+      expect(onInitError).toHaveBeenCalledWith({
+        key: 'runtime.globeInitFailed',
+        params: { reason: 'Error: webgl init fail' },
+      })
       expect(facade.viewer).toBeNull()
     })
 
@@ -710,7 +713,10 @@ describe('CesiumFacade（W3.4）', () => {
       const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
       facade.addVectorTile({ styleUrl: 'https://fail' } as never, undefined, runtime, () => true, onError, onDone)
       await flush()
-      expect(onError).toHaveBeenCalledWith(expect.stringContaining('矢量瓦片渲染失败'))
+      expect(onError).toHaveBeenCalledWith({
+        key: 'runtime.vectorTileRenderFailed',
+        params: { name: 'https://fail' },
+      })
       expect(onDone).not.toHaveBeenCalled()
       expect(runtime.vectorProviders.length).toBe(0)
       expect(maplibreMock.instances[maplibreMock.instances.length - 1].destroy).toHaveBeenCalled()
@@ -844,6 +850,18 @@ describe('CesiumFacade（W3.4）', () => {
       ;(facade as unknown as { _gpu: unknown })._gpu = null
       facade.addBaseLayers(freshRuntime())
       expect(maplibreMock.instances.length).toBe(0)
+    })
+
+    it('底图标注始终使用英文 provider', async () => {
+      const { facade, v } = makeFacade()
+      const runtime = freshRuntime()
+      facade.addBaseLayers(runtime)
+      await flush()
+
+      const first = maplibreMock.instances[0]
+      expect(first.opts.language).toBe('en')
+      expect(v.imageryLayers.list.length).toBe(2)
+      expect(runtime.imagery.length).toBe(2)
     })
 
     it('addVectorTile 无 GPU 管理器时直接返回，不创建 provider', () => {

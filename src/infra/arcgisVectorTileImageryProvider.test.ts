@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { validateStyleMin } from '@maplibre/maplibre-gl-style-spec'
 import {
   resolveStyleUrl,
   normalizeArcGISStyle,
@@ -923,6 +924,27 @@ describe('labelsOnly', () => {
 })
 
 describe('applyLabelLanguage', () => {
+  function validSymbolStyle(textField: unknown) {
+    return {
+      version: 8,
+      name: 'label-validation',
+      sources: { labels: { type: 'vector', tiles: ['https://example.com/{z}/{x}/{y}.mvt'] } },
+      layers: [{ id: 'place', type: 'symbol', source: 'labels', 'source-layer': 'place', layout: { 'text-field': textField } }],
+    }
+  }
+
+  function labelFields(expression: unknown): string[] {
+    const fields: string[] = []
+    let current = expression
+    while (Array.isArray(current) && current[0] === 'case') {
+      const condition = current[1]
+      const field = Array.isArray(condition) && Array.isArray(condition[1]) ? condition[1][1] : undefined
+      if (typeof field === 'string') fields.push(field)
+      current = current[3]
+    }
+    return fields
+  }
+
   it('applyLabelLanguage: en 优先英文并回退', () => {
     const style = applyLabelLanguage(
       {
@@ -935,9 +957,9 @@ describe('applyLabelLanguage', () => {
       'en'
     )
     const layers = style.layers as Array<{ layout: { 'text-field': unknown } }>
-    const expected = ['coalesce', ['get', '_name_en'], ['get', '_name_global'], ['get', '_name']]
-    expect(layers[0].layout['text-field']).toEqual(expected)
-    expect(layers[1].layout['text-field']).toEqual(expected)
+    expect(labelFields(layers[0].layout['text-field'])).toEqual(['_name_en', '_name_local', '_name_global', '_name'])
+    expect(labelFields(layers[1].layout['text-field'])).toEqual(['_name_en', '_name_local', '_name_global', '_name'])
+    expect(validateStyleMin(validSymbolStyle(layers[0].layout['text-field']) as never)).toEqual([])
     expect(layers[2].layout['text-field']).toBeUndefined()
   })
 

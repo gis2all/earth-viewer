@@ -51,7 +51,7 @@ describe('createViewportController', () => {
     const prims = { add: vi.fn() }
     const ctl = createViewportController({}, prims, { serviceUrl: 'https://x/FeatureServer', onNote })
     await ctl.update({ west: 1, south: 2, east: 3, north: 4 })
-    expect(onNote).toHaveBeenCalledWith('数据量大，已按视口/顶点预算降级显示')
+    expect(onNote).toHaveBeenCalledWith({ key: 'runtime.viewportBudgetDegraded' })
   })
 
   it('query 抛错时静默跳过，不加入 primitives', async () => {

@@ -5,11 +5,12 @@ import { featuresToGeometryModel } from '../../domain/geometry/geometry'
 import { buildLayerPrimitive, hasPrimitiveRendering } from '../../infra/primitive'
 import { createLru, viewportCacheKey } from '../../domain/geometry/lru'
 import { DEFAULT_APP_CONFIG } from '../../domain/config'
+import type { AppMessage } from '../../domain/appMessage'
 
 export interface ViewportControllerOptions extends FeatureQueryOptions {
   serviceUrl?: string
   cacheCap?: number
-  onNote?: (msg: string) => void
+  onNote?: (msg: AppMessage) => void
 }
 
 export interface ViewportController {
@@ -36,7 +37,7 @@ export function createViewportController(
       let entry = cache.get(key)
       if (!entry) {
         const res = await queryViewportData(opts.serviceUrl as string, env, { maxFeatures: opts.maxFeatures ?? 3000 })
-        if (res.capped) opts.onNote?.('数据量大，已按视口/顶点预算降级显示')
+        if (res.capped) opts.onNote?.({ key: 'runtime.viewportBudgetDegraded' })
         entry = buildLayerPrimitive(scene as never, featuresToGeometryModel(res.features))
         cache.set(key, entry)
         prims.add(entry.collection)

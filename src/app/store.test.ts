@@ -58,8 +58,9 @@ describe('store', () => {
   })
 
   it('setLayerError / clearLayerError（含不存在的 id）', () => {
-    useAppStore.getState().setLayerError('a', '加载失败')
-    expect(useAppStore.getState().layerErrors).toEqual({ a: '加载失败' })
+    const message = { key: 'runtime.layerLoadFailed', params: { name: 'A' } } as const
+    useAppStore.getState().setLayerError('a', message)
+    expect(useAppStore.getState().layerErrors).toEqual({ a: message })
     useAppStore.getState().clearLayerError('a')
     expect(useAppStore.getState().layerErrors).toEqual({})
     useAppStore.getState().clearLayerError('nope')

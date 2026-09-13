@@ -4,6 +4,7 @@
  * 具体 webmap 渲染由 globe/infra 实现（renderWebmap + CesiumFacade）。
  */
 import type { LayerRuntime } from './layerRuntime'
+import type { AppMessage } from './appMessage'
 
 /** 视口驱动句柄（infra 实现）；删除图层时统一释放。 */
 export interface ViewportHandleLike {
@@ -27,8 +28,8 @@ export interface LayerRenderJob {
   hasFlew(): boolean
   /** 区划/参考层是否可见（受效果开关控制）。 */
   isReferenceVisible(): boolean
-  onNote(msg: string): void
-  onError(msg: string): void
+  onNote(msg: AppMessage): void
+  onError(msg: AppMessage): void
   onClearError(): void
   /** Feature 服务走视口驱动时挂载句柄，删除时由控制器清理。 */
   attachViewport?(handle: ViewportHandleLike): void

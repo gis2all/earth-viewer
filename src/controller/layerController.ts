@@ -13,6 +13,7 @@ import {
   type LayerState,
 } from '../domain/layerStateMachine'
 import type { LayerRenderJob, ViewportHandleLike } from '../domain/renderContract'
+import type { AppMessage } from '../domain/appMessage'
 import { LayerScheduler } from '../service/scheduler'
 
 /** 控制器视角的图层条目（与 store.AddedLayer 结构兼容）。 */
@@ -26,17 +27,17 @@ export interface LayerItemLike {
 export type LayerControllerEvent =
   | { type: 'stateChange'; id: string; state: LayerState }
   | { type: 'ready'; id: string }
-  | { type: 'error'; id: string; message: string }
+  | { type: 'error'; id: string; message: AppMessage }
   | { type: 'removed'; id: string }
 
 export interface LayerControllerDeps {
   /** 串行渲染一个 webmap 的全部内层（由 globe/globeRenderer + CesiumFacade 实现）。 */
   render(job: LayerRenderJob): Promise<void>
   /** 渲染器外部兜底错误（如非法 webmap 结构）写入 store。 */
-  setError(id: string, message: string): void
+  setError(id: string, message: AppMessage): void
   clearError(id: string): void
   /** 图层加载提示（如"数据量大，已降级"），由 Presentation 层展示。 */
-  setNote(msg: string): void
+  setNote(msg: AppMessage): void
   /** 区划/参考层可见性（来自效果开关）。 */
   getReferenceVisible(): boolean
   /** 视口优先级：数值越大越先渲染（排队中的 webmap 实时取值；缺省 0 = 添加顺序）。 */
@@ -56,7 +57,7 @@ interface Entry {
 
 export class LayerController {
   private entries = new Map<string, Entry>()
-  private errors = new Map<string, string>()
+  private errors = new Map<string, AppMessage>()
   private listeners = new Set<(e: LayerControllerEvent) => void>()
   private scheduler = new LayerScheduler(1)
   private pendingJobs = new Map<string, Promise<unknown>>()
@@ -70,7 +71,7 @@ export class LayerController {
   }
 
   /** 只读快照：状态 + 错误信息（无则 undefined）。 */
-  snapshot(id: string): { state: LayerState; error?: string } | undefined {
+  snapshot(id: string): { state: LayerState; error?: AppMessage } | undefined {
     const e = this.entries.get(id)
     if (!e) return undefined
     return { state: e.state, error: this.errors.get(id) }
@@ -167,7 +168,10 @@ export class LayerController {
     } catch (e) {
       if (!this.entries.has(entry.item.id)) return
       console.error('[layer] webmap 渲染失败', entry.item.id, e)
-      const message = '图层加载失败：' + (entry.item.title || entry.item.id)
+      const message: AppMessage = {
+        key: 'runtime.layerLoadFailed',
+        params: { name: entry.item.title || entry.item.id },
+      }
       this.errors.set(entry.item.id, message)
       this.deps.setError(entry.item.id, message)
       this.transition(entry, 'error')

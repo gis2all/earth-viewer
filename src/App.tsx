@@ -4,8 +4,12 @@ import { useAppStore } from './app/store'
 
 export default function App() {
   const theme = useAppStore((s) => s.theme)
+  const locale = useAppStore((s) => s.locale)
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
   }, [theme])
+  useEffect(() => {
+    document.documentElement.lang = locale
+  }, [locale])
   return <AppShell />
 }

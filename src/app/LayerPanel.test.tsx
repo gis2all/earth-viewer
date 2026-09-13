@@ -18,6 +18,22 @@ const webmapData = {
   operationalLayers: [],
 }
 
+function actionFromCard(cardId: string, action: string): HTMLElement {
+  const element = screen.getByTestId('gallery-card-' + cardId).querySelector<HTMLElement>(
+    '[data-layer-action="' + action + '"]'
+  )
+  if (!element) throw new Error('Missing ' + action + ' action for gallery card ' + cardId)
+  return element
+}
+
+function actionFromAdded(cardId: string, action: string): HTMLElement {
+  const element = screen.getByTestId('added-card-' + cardId).querySelector<HTMLElement>(
+    '[data-layer-action="' + action + '"]'
+  )
+  if (!element) throw new Error('Missing ' + action + ' action for added card ' + cardId)
+  return element
+}
+
 describe('LayerPanel', () => {
   beforeEach(() => {
     useAppStore.setState({ added: [], collapsed: false, collapsedRight: false })
@@ -39,7 +55,7 @@ describe('LayerPanel', () => {
       })
     )
     render(<LayerPanel />)
-    const input = screen.getByPlaceholderText('搜索')
+    const input = screen.getByTestId('layer-search')
     fireEvent.change(input, { target: { value: 'imagery' } })
     await waitFor(() => expect(screen.getByText('Test Imagery')).toBeInTheDocument(), { timeout: 8000 })
   })
@@ -106,11 +122,11 @@ describe('LayerPanel', () => {
     render(<LayerPanel />)
     await waitFor(() => expect(screen.getByText('Test Imagery')).toBeInTheDocument(), { timeout: 8000 })
 
-    expect(screen.getByRole('article', { name: 'Test Imagery' })).toBeInTheDocument()
+    expect(screen.getByTestId('gallery-card-wm1')).toBeInTheDocument()
     expect(screen.getByLabelText('Web Map')).toBeInTheDocument()
-    expect(screen.getByLabelText('权威数据')).toBeInTheDocument()
-    expect(screen.getByLabelText('Living Atlas')).toBeInTheDocument()
-    const detailLink = screen.getByRole('link', { name: '查看 Test Imagery 详情' })
+    expect(screen.getByTestId('authoritative-icon')).toBeInTheDocument()
+    expect(screen.getByTestId('living-atlas-icon')).toBeInTheDocument()
+    const detailLink = actionFromCard('wm1', 'detail')
     expect(detailLink).toHaveAttribute('href', expect.stringContaining('wm1'))
     expect(detailLink.parentElement).toHaveClass('gc-foot')
     expect(detailLink.nextElementSibling).toHaveClass('gc-add')
@@ -119,7 +135,7 @@ describe('LayerPanel', () => {
 
     fireEvent.click(screen.getByText('Test Imagery'))
     expect(useAppStore.getState().added).toHaveLength(0)
-    fireEvent.click(screen.getByRole('button', { name: '添加 Test Imagery' }))
+    fireEvent.click(actionFromCard('wm1', 'add'))
     await waitFor(() => expect(useAppStore.getState().added.some((item) => item.id === 'wm1')).toBe(true))
   })
 
@@ -157,8 +173,8 @@ describe('LayerPanel', () => {
     render(<LayerPanel />)
     await waitFor(() => expect(screen.getByText('Metadata Item')).toBeInTheDocument(), { timeout: 8000 })
     expect(urls.some((url) => url.includes('/content/items/wm1?f=json'))).toBe(true)
-    await waitFor(() => expect(screen.getByLabelText('权威数据')).toBeInTheDocument(), { timeout: 8000 })
-    expect(screen.getByLabelText('Living Atlas')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('authoritative-icon')).toBeInTheDocument(), { timeout: 8000 })
+    expect(screen.getByTestId('living-atlas-icon')).toBeInTheDocument()
   })
 
   it('没有明确 groupDesignations 时不显示 Living Atlas 图标', async () => {
@@ -184,8 +200,8 @@ describe('LayerPanel', () => {
     )
     render(<LayerPanel />)
     await waitFor(() => expect(screen.getByText('Plain Item')).toBeInTheDocument(), { timeout: 8000 })
-    await waitFor(() => expect(screen.getByLabelText('权威数据')).toBeInTheDocument(), { timeout: 8000 })
-    expect(screen.queryByLabelText('Living Atlas')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('authoritative-icon')).toBeInTheDocument(), { timeout: 8000 })
+    expect(screen.queryByTestId('living-atlas-icon')).not.toBeInTheDocument()
   })
 
   it('默认搜索同时获取 Web Map 和 Web Scene，并合并为不重复的画廊结果', async () => {
@@ -262,7 +278,7 @@ describe('LayerPanel', () => {
     )
     render(<LayerPanel />)
     await waitFor(() => expect(screen.getByText('Scene Item')).toBeInTheDocument(), { timeout: 8000 })
-    fireEvent.click(screen.getByRole('button', { name: /Scene Item/ }))
+    fireEvent.click(actionFromCard('scene-1', 'add'))
     await waitFor(() => expect(useAppStore.getState().added.some((item) => item.id === 'scene-1')).toBe(true))
     expect(useAppStore.getState().added.find((item) => item.id === 'scene-1')?.webmap).toEqual(sceneData)
   })
@@ -278,7 +294,7 @@ describe('LayerPanel', () => {
       return { ok: true, json: async () => webmapData }
     }))
     render(<LayerPanel />)
-    fireEvent.change(screen.getByPlaceholderText('搜索'), { target: { value: 'roads OR streets' } })
+    fireEvent.change(screen.getByTestId('layer-search'), { target: { value: 'roads OR streets' } })
     await waitFor(() => expect(queries.length).toBeGreaterThanOrEqual(2), { timeout: 8000 })
     expect(queries.every((query) => query.includes(' AND (roads OR streets)'))).toBe(true)
   })
@@ -374,10 +390,10 @@ describe('LayerPanel 画廊补强', () => {
       })
     )
     render(<LayerPanel />)
-    fireEvent.change(screen.getByPlaceholderText('搜索'), { target: { value: 'quake' } })
-    const cancel = await screen.findByLabelText('取消搜索')
+    fireEvent.change(screen.getByTestId('layer-search'), { target: { value: 'quake' } })
+    const cancel = await screen.findByTestId('layer-search-cancel')
     fireEvent.click(cancel)
-    await waitFor(() => expect(screen.queryByLabelText('取消搜索')).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByTestId('layer-search-cancel')).not.toBeInTheDocument())
   })
 
   it('未输入搜索内容时不显示取消按钮（初始自动加载也不出现）', async () => {
@@ -392,14 +408,14 @@ describe('LayerPanel 画廊补强', () => {
     render(<LayerPanel />)
     // 等初始自动搜索进入 loading（防抖 300ms 后），无输入 → 按钮仍不应出现
     await new Promise((r) => setTimeout(r, 600))
-    expect(screen.queryByLabelText('取消搜索')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('layer-search-cancel')).not.toBeInTheDocument()
   })
 
   it('点击卡片添加图层到 store', async () => {
     stubGalleryFetch([[{ id: 'wm1', title: 'Imagery', thumbnail: null, numViews: 10 }]], ['wm1'])
     render(<LayerPanel />)
     await waitFor(() => expect(screen.getByText('Imagery')).toBeInTheDocument(), { timeout: 8000 })
-    fireEvent.click(screen.getAllByRole('button', { name: /Imagery/ })[0])
+    fireEvent.click(actionFromCard('wm1', 'add'))
     await waitFor(() => expect(useAppStore.getState().added.some((l) => l.id === 'wm1')).toBe(true))
   })
 
@@ -407,16 +423,15 @@ describe('LayerPanel 画廊补强', () => {
     useAppStore.getState().addLayer({ id: 'x1', title: 'Added', kind: 'fallback' })
     render(<LayerPanel />)
     expect(screen.getByText('Added')).toBeInTheDocument()
-    fireEvent.click(screen.getByTitle('移除图层'))
+    fireEvent.click(actionFromAdded('x1', 'remove'))
     await waitFor(() => expect(useAppStore.getState().added).toHaveLength(0))
   })
 
   it('移除按钮用 SVG 减号而非文本 ×', async () => {
     useAppStore.getState().addLayer({ id: 'x1', title: 'Added', kind: 'fallback' })
     render(<LayerPanel />)
-    const btn = screen.getByTitle('移除图层')
+    const btn = actionFromAdded('x1', 'remove')
     expect(btn.querySelector('svg')).toBeInTheDocument()
-    expect(btn).toHaveAttribute('aria-label', '移除图层')
     expect(btn.textContent).not.toContain('×')
   })
 
@@ -428,7 +443,7 @@ describe('LayerPanel 画廊补强', () => {
     stubGalleryFetch([[{ id: 'wm1', title: 'Partial', thumbnail: null, numViews: 5 }]], ['wm1'], webmapPartial)
     render(<LayerPanel />)
     await waitFor(() => expect(screen.getByText('Partial')).toBeInTheDocument(), { timeout: 8000 })
-    expect(screen.queryByText('部分支持')).not.toBeInTheDocument()
+    expect(actionFromCard('wm1', 'add')).toBeEnabled()
   })
 
   it('添加图层失败 → toast 提示', async () => {
@@ -445,8 +460,8 @@ describe('LayerPanel 画廊补强', () => {
     )
     render(<LayerPanel />)
     await waitFor(() => expect(screen.getByText('Broken')).toBeInTheDocument(), { timeout: 8000 })
-    fireEvent.click(screen.getAllByRole('button', { name: /Broken/ })[0])
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/添加失败/), { timeout: 8000 })
+    fireEvent.click(actionFromCard('wm1', 'add'))
+    await waitFor(() => expect(screen.getByTestId('layer-toast')).toBeInTheDocument(), { timeout: 8000 })
   }, 15000)
 
   it('滚动到底部触发加载更多（第二页）', async () => {
@@ -649,13 +664,13 @@ describe('LayerPanel 边界与错误路径', () => {
   it('搜索请求失败 → 显示加载失败提示', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('boom') }))
     render(<LayerPanel />)
-    await waitFor(() => expect(screen.getByText('加载失败，请检查网络 / 代理')).toBeInTheDocument(), { timeout: 8000 })
+    await waitFor(() => expect(screen.getByTestId('layer-load-error')).toBeInTheDocument(), { timeout: 8000 })
   })
 
   it('按 Enter 立即搜索（跳过防抖）', async () => {
     stubGalleryFetch([[{ id: 'wm1', title: 'EnterHit', thumbnail: null, numViews: 5 }]], ['wm1'])
     render(<LayerPanel />)
-    fireEvent.keyDown(screen.getByPlaceholderText('搜索'), { key: 'Enter' })
+    fireEvent.keyDown(screen.getByTestId('layer-search'), { key: 'Enter' })
     await waitFor(() => expect(screen.getByText('EnterHit')).toBeInTheDocument(), { timeout: 8000 })
   })
 
@@ -700,7 +715,7 @@ describe('LayerPanel 边界与错误路径', () => {
     )
     render(<LayerPanel />)
     await waitFor(() => expect(screen.getByText('Hillshade')).toBeInTheDocument(), { timeout: 8000 })
-    fireEvent.click(screen.getAllByRole('button', { name: /Hillshade/ })[0])
+    fireEvent.click(actionFromCard('svc1', 'add'))
     await waitFor(() => expect(useAppStore.getState().added.some((l) => l.id === 'svc1')).toBe(true))
     const added = useAppStore.getState().added.find((l) => l.id === 'svc1')
     expect((added?.webmap as unknown as { operationalLayers?: { layerType?: string }[] })?.operationalLayers?.[0]?.layerType).toBe('ArcGISMapServiceLayer')
@@ -726,8 +741,8 @@ describe('LayerPanel 边界与错误路径', () => {
       })
     )
     render(<LayerPanel />)
-    await waitFor(() => expect(screen.getByText('RKI RequireLogin')).toBeInTheDocument(), { timeout: 8000 })
-    await waitFor(() => expect(screen.queryByText('RKI RequireLogin')).not.toBeInTheDocument(), { timeout: 8000 })
+    await waitFor(() => expect(screen.getByTestId('gallery-card-fs1')).toBeInTheDocument(), { timeout: 8000 })
+    await waitFor(() => expect(screen.queryByTestId('gallery-card-fs1')).not.toBeInTheDocument(), { timeout: 8000 })
   })
 
 })
