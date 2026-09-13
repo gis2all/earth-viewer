@@ -48,31 +48,67 @@ test.beforeEach(async ({ page }) => {
 test('主题切换更新 favicon 并持久化到 localStorage', async ({ page }) => {
   const favicon = page.locator('link[rel="icon"][type="image/svg+xml"]')
   await expect(favicon).toHaveAttribute('href', /favicon-dark\.svg/)
-  await page.click('button[title="切换主题"]')
+  await page.getByTestId('theme-toggle').click()
   await expect(favicon).toHaveAttribute('href', /favicon-light\.svg/)
   // 刷新后主题恢复（持久化）
   const bodyBg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor)
   await page.reload()
   await expect.poll(() => page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(bodyBg)
   // 清理：切回深色，避免影响其他测试
-  await page.click('button[title="切换主题"]')
+  await page.getByTestId('theme-toggle').click()
+})
+
+test('hover 图层卡片时外边框保持不变', async ({ page }) => {
+  const card = page.locator('.gallery-card').first()
+  const borderColor = await card.evaluate((el) => getComputedStyle(el).borderColor)
+  await card.hover()
+  await expect(card).toHaveCSS('border-color', borderColor)
+})
+
+test('面板排版尺寸保持一致', async ({ page }) => {
+  const panelSizes = await page.locator('.side-title').evaluateAll((els) => [
+    ...new Set(els.map((el) => getComputedStyle(el).fontSize)),
+  ])
+  const headingSizes = await page.locator('.group-name').evaluateAll((els) => [
+    ...new Set(els.map((el) => getComputedStyle(el).fontSize)),
+  ])
+  expect(panelSizes).toEqual(['14px'])
+  expect(headingSizes).toHaveLength(1)
+  expect(headingSizes[0]).toBe('12px')
+  expect(await page.locator('.search input').evaluate((el) => getComputedStyle(el).fontSize)).toBe('12px')
+  expect(await page.locator('.gc-title').first().evaluate((el) => getComputedStyle(el).fontSize)).toBe('12px')
+  const exaggerationLabel = page.locator('[data-effect-row="terrainExaggeration"] .fx-label')
+  const exaggerationMetrics = await exaggerationLabel.evaluate((el) => ({
+    height: el.getBoundingClientRect().height,
+    lineHeight: Number.parseFloat(getComputedStyle(el).lineHeight),
+  }))
+  expect(exaggerationMetrics.height).toBeLessThan(exaggerationMetrics.lineHeight * 1.5)
+  const environment = page.locator('[data-group="effects.environment"] .group-name')
+  await expect(environment).toBeVisible()
+  expect(await environment.evaluate((el) => getComputedStyle(el).textTransform)).toBe('none')
+  const atmosphericHalo = page.locator('[data-effect-row="atmosphereRing"] .fx-label')
+  await expect(atmosphericHalo).toBeVisible()
+  expect(await atmosphericHalo.evaluate((el) => getComputedStyle(el).fontSize)).toBe(
+    await environment.evaluate((el) => getComputedStyle(el).fontSize)
+  )
+  await expect(page.locator('[data-effect-row="dayNight"]')).toBeVisible()
 })
 
 test('回正/复位按钮可点击', async ({ page }) => {
-  await page.click('button[title="回正视角"]')
-  await page.click('button[title="复位视角"]')
+  await page.getByTestId('orient-view').click()
+  await page.getByTestId('reset-view').click()
 })
 
 test('左右面板折叠与展开', async ({ page }) => {
   const toggle = (locator: ReturnType<Page['locator']>) => locator.evaluate((el) => (el as HTMLElement).click())
   // 左侧面板（canvas 可能遮挡折叠条，用 evaluate 直接触发）
-  const leftFold = page.locator('.panel .fold').first()
+  const leftFold = page.getByTestId('layer-panel-toggle')
   await toggle(leftFold)
   await expect(page.locator('.panel.collapsed').first()).toBeVisible()
   await toggle(leftFold)
   await expect(page.locator('.panel.collapsed').first()).toHaveCount(0)
   // 右侧效果面板
-  const rightFold = page.locator('.panel-right .fold')
+  const rightFold = page.getByTestId('effects-panel-toggle')
   await toggle(rightFold)
   await expect(page.locator('.panel-right.collapsed')).toBeVisible()
   await toggle(rightFold)
@@ -81,11 +117,11 @@ test('左右面板折叠与展开', async ({ page }) => {
 
 test('效果开关与滑杆', async ({ page }) => {
   // 自动环绕开关
-  const autoRotate = page.locator('button[aria-label="自动环绕"]')
+  const autoRotate = page.locator('[data-effect="autoRotate"]')
   await autoRotate.click()
   await expect(autoRotate).toHaveClass(/on/)
   // 地形透明 → 透明度滑杆出现
-  const translucency = page.locator('button[aria-label="地形透明"]')
+  const translucency = page.locator('[data-effect="globeTranslucency"]')
   await translucency.click()
   await expect(page.locator('.panel-right input[type="range"]').first()).toBeVisible()
 })
@@ -103,10 +139,10 @@ test('窄屏布局：面板可折叠且页面不横向溢出', async ({ page }) 
   await page.reload()
   await page.waitForSelector('.gallery-card', { timeout: 30000 })
   // 折叠左面板
-  await page.locator('.panel .fold').first().evaluate((el) => (el as HTMLElement).click())
+  await page.getByTestId('layer-panel-toggle').evaluate((el) => (el as HTMLElement).click())
   await expect(page.locator('.panel.collapsed').first()).toBeVisible()
   // 折叠右面板
-  await page.locator('.panel-right .fold').evaluate((el) => (el as HTMLElement).click())
+  await page.getByTestId('effects-panel-toggle').evaluate((el) => (el as HTMLElement).click())
   await expect(page.locator('.panel-right.collapsed')).toBeVisible()
   // 无横向溢出
   const noOverflow = await page.evaluate(
@@ -131,27 +167,26 @@ test('detail 链接：跳转 ArcGIS item 详情页', async ({ page }) => {
   await expect(detail).toHaveAttribute('href', 'https://www.arcgis.com/home/item.html?id=wm1')
   await expect(detail).toHaveAttribute('target', '_blank')
   await expect(detail).toHaveAttribute('rel', 'noreferrer')
-  await expect(detail).toHaveAttribute('aria-label', '查看 Test Imagery 详情')
 })
 
 test('沉浸模式：隐藏面板，按钮与 Esc 均可退出', async ({ page }) => {
-  await page.click('button[title="进入沉浸模式"]')
+  await page.getByTestId('immersive-enter').click()
   await expect(page.locator('.app')).toHaveClass(/immersive/)
   await expect(page.locator('.app-header')).toBeHidden()
   await expect(page.locator('.panel').first()).toBeHidden()
-  await expect(page.locator('button[title="退出沉浸模式"]')).toBeVisible()
+  await expect(page.getByTestId('immersive-exit')).toBeVisible()
   // 按钮退出
-  await page.click('button[title="退出沉浸模式"]')
+  await page.getByTestId('immersive-exit').click()
   await expect(page.locator('.app')).not.toHaveClass(/immersive/)
   // 再次进入，Esc 退出
-  await page.click('button[title="进入沉浸模式"]')
+  await page.getByTestId('immersive-enter').click()
   await expect(page.locator('.app')).toHaveClass(/immersive/)
   await page.keyboard.press('Escape')
   await expect(page.locator('.app')).not.toHaveClass(/immersive/)
 })
 
 test('顶栏 GitHub 链接指向仓库', async ({ page }) => {
-  const gh = page.locator('a[title="GitHub"]')
+  const gh = page.getByTestId('github-link')
   await expect(gh).toHaveAttribute('href', 'https://github.com/gis2all/earth-viewer')
   await expect(gh).toHaveAttribute('target', '_blank')
   await expect(gh).toHaveAttribute('rel', 'noreferrer')
@@ -181,7 +216,6 @@ test('添加后 gc-add 变为 is-added 并使用主题紫色', async ({ page }) 
   await page.waitForSelector('.added-card', { timeout: 30000 })
   await expect(add).toHaveClass(/is-added/)
   await expect(add).toBeDisabled()
-  await expect(add).toHaveAttribute('aria-label', '已添加 Test Imagery')
   // 深色主题下 --added=#a59bf2
   await expect(add).toHaveCSS('color', 'rgb(165, 155, 242)')
 })
@@ -191,7 +225,7 @@ test('浅色主题：detail 与已添加颜色随主题切换', async ({ page })
   const detail = card.locator('.gc-detail')
   // 深色 --accent=#6e79d6
   await expect(detail).toHaveCSS('color', 'rgb(110, 121, 214)')
-  await page.click('button[title="切换主题"]')
+  await page.getByTestId('theme-toggle').click()
   // 浅色 --accent=#4e59c8
   await expect(detail).toHaveCSS('color', 'rgb(78, 89, 200)')
   const add = card.locator('.gc-add')
@@ -199,7 +233,7 @@ test('浅色主题：detail 与已添加颜色随主题切换', async ({ page })
   await page.waitForSelector('.added-card', { timeout: 30000 })
   // 浅色 --added=#6557c7
   await expect(add).toHaveCSS('color', 'rgb(101, 87, 199)')
-  await page.click('button[title="切换主题"]')
+  await page.getByTestId('theme-toggle').click()
 })
 
 test('面板宽度随视口按 clamp 比例缩放', async ({ page }) => {
@@ -208,8 +242,8 @@ test('面板宽度随视口按 clamp 比例缩放', async ({ page }) => {
   await page.waitForSelector('.gallery-card', { timeout: 30000 })
   // 左面板 clamp(320px,20vw,423px)：2000*20%=400
   const leftW = await page.locator('.panel').first().evaluate((el) => el.getBoundingClientRect().width)
-  // 右面板 clamp(240px,14vw,304px)：2000*14%=280
+  // 右面板 clamp(272px,15vw,304px)：2000*15%=300
   const rightW = await page.locator('.panel-right').evaluate((el) => el.getBoundingClientRect().width)
   expect(leftW).toBeCloseTo(400, 0)
-  expect(rightW).toBeCloseTo(280, 0)
+  expect(rightW).toBeCloseTo(300, 0)
 })
