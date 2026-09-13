@@ -17,6 +17,8 @@ import {
   type PreflightEntry,
   type SearchResult,
 } from '../service/repository'
+import { useI18n } from '../i18n'
+import type { AppMessage } from '../domain/appMessage'
 
 function textTerms(value: string | string[] | undefined): string[] {
   return (Array.isArray(value) ? value : value ? [value] : [])
@@ -134,12 +136,13 @@ export function LayerPanel() {
   const addLayer = useAppStore((s) => s.addLayer)
   const removeLayer = useAppStore((s) => s.removeLayer)
   const layerErrors = useAppStore((s) => s.layerErrors)
+  const { t, tm } = useI18n()
 
   const [kw, setKw] = useState('')
   const [items, setItems] = useState<SearchResult[]>([])
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState(false)
-  const [err, setErr] = useState('')
+  const [err, setErr] = useState<AppMessage | null>(null)
   const [addingId, setAddingId] = useState<string | null>(null)
   const loadingRef = useRef(false)
   const abortRef = useRef<AbortController | null>(null)
@@ -172,7 +175,7 @@ export function LayerPanel() {
     abortRef.current = controller
     loadingRef.current = true
     setLoading(true)
-    setErr('')
+    setErr(null)
     try {
       if (reset) {
         SEARCH_TYPES.forEach((t) => (nextStartsRef.current[t] = 1))
@@ -214,7 +217,7 @@ export function LayerPanel() {
     } catch (e) {
       if ((e as Error).name === 'AbortError') return
       if (requestId !== requestIdRef.current) return
-      setErr('加载失败，请检查网络 / 代理')
+      setErr({ key: 'layer.loadFailedCheck' })
     } finally {
       if (requestId === requestIdRef.current && abortRef.current === controller) {
         loadingRef.current = false
@@ -228,7 +231,7 @@ export function LayerPanel() {
     metadataAttemptedRef.current.clear()
     setItems([])
     setDone(false)
-    setErr('')
+    setErr(null)
     void loadMore(true)
   }
 
@@ -329,12 +332,12 @@ export function LayerPanel() {
     setLoading(false)
   }
 
-  const [toast, setToast] = useState('')
+  const [toast, setToast] = useState<AppMessage | null>(null)
   const toastTimer = useRef<number | null>(null)
-  const notify = (msg: string) => {
+  const notify = (msg: AppMessage) => {
     setToast(msg)
     if (toastTimer.current !== null) clearTimeout(toastTimer.current)
-    toastTimer.current = window.setTimeout(() => setToast(''), 4000)
+    toastTimer.current = window.setTimeout(() => setToast(null), 4000)
   }
 
   async function addItem(it: SearchResult) {
@@ -354,12 +357,12 @@ export function LayerPanel() {
         const a = assessWebmap(wm as Record<string, unknown>)
         const skipped = a.layers.filter((l) => l.support === 'none').map((l) => l.title).filter(Boolean)
         if (a.fidelity === 'partial' && skipped.length > 0) {
-          notify('已添加，但部分图层不支持：' + skipped.join('、'))
+          notify({ key: 'layer.addedUnsupported', params: { names: skipped.join(', ') } })
         }
       } else {
         const layer = await resolveServiceItem({ id: it.id, type: it.type ?? '', url: it.url, title: it.title })
         if (!layer) {
-          notify('暂不支持直接添加：' + (it.title || it.id))
+          notify({ key: 'layer.unsupportedDirectAdd', params: { name: it.title || it.id } })
           return
         }
         const wm = {
@@ -376,7 +379,7 @@ export function LayerPanel() {
         })
       }
     } catch (e) {
-      notify('添加失败：' + String(e))
+      notify({ key: 'layer.addFailed', params: { reason: String(e) } })
     } finally {
       setAddingId(null)
     }
@@ -402,12 +405,12 @@ export function LayerPanel() {
   return (
     <aside className={'panel' + (collapsed ? ' collapsed' : '')}>
       <div className="side-head">
-        <span className="side-title">图层</span>
+        <span className="side-title">{t('layer.title')}</span>
         <div className="side-actions">
-          <button className="back-to-top" onClick={scrollToTop} title="回到顶部" aria-label="回到顶部">
+          <button className="back-to-top" data-testid="layer-back-to-top" onClick={scrollToTop} title={t('layer.backToTop')} aria-label={t('layer.backToTop')}>
             <BackToTopIcon />
           </button>
-          <button className="fold" onClick={toggleCollapsed} title={collapsed ? '展开面板' : '收起面板'}>
+          <button className="fold" data-testid="layer-panel-toggle" onClick={toggleCollapsed} title={collapsed ? t('layer.expand') : t('layer.collapse')}>
             <FoldIcon collapsed={collapsed} />
           </button>
         </div>
@@ -415,12 +418,12 @@ export function LayerPanel() {
       <div className="panel-inner" ref={scrollRef} onScroll={onScroll}>
         <section className="group">
           <div className="group-head">
-            <span className="group-name">已添加</span>
+            <span className="group-name">{t('layer.added')}</span>
           </div>
           {added.length > 0 && (
             <div className="added-list">
                   {added.map((l) => (
-                    <div key={l.id} className="added-card">
+                    <div key={l.id} className="added-card" data-testid={'added-card-' + l.id} data-item-id={l.id}>
                       <div className="ac-thumb-wrap">
                         <ThumbSpinner />
                         <img
@@ -447,9 +450,9 @@ export function LayerPanel() {
                       </div>
                       <span className="added-title">{l.title}</span>
                   {layerErrors[l.id] && (
-                    <span className="added-err" title={layerErrors[l.id]}>加载失败</span>
+                    <span className="added-err" title={tm(layerErrors[l.id])}>{t('layer.loadFailed')}</span>
                   )}
-                  <button className="remove-btn" onClick={() => removeLayer(l.id)} title="移除图层" aria-label="移除图层">
+                  <button className="remove-btn" data-layer-action="remove" data-layer-id={l.id} onClick={() => removeLayer(l.id)} title={t('layer.remove')} aria-label={t('layer.remove')}>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.6" strokeLinecap="butt">
                       <path d="M6 12h12" />
                     </svg>
@@ -461,21 +464,22 @@ export function LayerPanel() {
         </section>
         <section className="group">
           <div className="group-head">
-            <span className="group-name lc">ArcGIS Online 数据源</span>
+            <span className="group-name">{t('layer.dataSources')}</span>
           </div>
           <div className="search">
             <input
+              data-testid="layer-search"
               value={kw}
               onChange={(e) => setKw(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') submitSearch()
               }}
-              placeholder="搜索"
-              aria-label="搜索 ArcGIS Online 数据源"
+              placeholder={t('layer.searchPlaceholder')}
+              aria-label={t('layer.searchAria')}
             />
             {/* 取消/清除按钮：仅在有输入内容且加载中显示（无输入时初始自动加载不冒出来） */}
             {loading && kw.length > 0 && (
-              <button className="search-cancel" onClick={cancelSearch} title="取消搜索" aria-label="取消搜索">
+              <button className="search-cancel" data-testid="layer-search-cancel" onClick={cancelSearch} title={t('layer.cancelSearch')} aria-label={t('layer.cancelSearch')}>
                 ✕
               </button>
             )}
@@ -485,7 +489,7 @@ export function LayerPanel() {
               const addedItem = added.some((layer) => layer.id === it.id)
               const loadingItem = addingId === it.id
               return (
-                <article key={it.id} className="gallery-card" aria-label={it.title}>
+                <article key={it.id} className="gallery-card" data-testid={'gallery-card-' + it.id} data-item-id={it.id} aria-label={it.title}>
                   <div className="gc-thumb-wrap">
                     <ThumbSpinner />
                     <img
@@ -515,27 +519,31 @@ export function LayerPanel() {
                   </div>
                   <div className="gc-title" title={it.title}><span>{it.title}</span></div>
                   <div className="gc-foot">
-                    <div className="gc-status" aria-label="图层状态">
-                      <span className="gc-status-icon gc-type" title={it.type ?? '图层'} aria-label={it.type ?? '图层'}><TypeIcon type={it.type} /></span>
-                      {isAuthoritative(it) && <span className="gc-status-icon gc-authoritative" title="权威数据" aria-label="权威数据"><AuthorityIcon /></span>}
-                      {isLivingAtlas(it) && <span className="gc-status-icon gc-living" title="Living Atlas" aria-label="Living Atlas"><LivingAtlasIcon /></span>}
+                    <div className="gc-status" aria-label={t('layer.statusAria')}>
+                      <span className="gc-status-icon gc-type" title={it.type ?? t('layer.typeFallback')} aria-label={it.type ?? t('layer.typeFallback')}><TypeIcon type={it.type} /></span>
+                      {isAuthoritative(it) && <span className="gc-status-icon gc-authoritative" data-testid="authoritative-icon" title={t('layer.authoritative')} aria-label={t('layer.authoritative')}><AuthorityIcon /></span>}
+                      {isLivingAtlas(it) && <span className="gc-status-icon gc-living" data-testid="living-atlas-icon" title="Living Atlas" aria-label="Living Atlas"><LivingAtlasIcon /></span>}
                     </div>
                     <a
                       className="gc-detail"
+                      data-layer-action="detail"
+                      data-layer-id={it.id}
                       href={itemDetailsUrl(it.id)}
                       target="_blank"
                       rel="noreferrer"
-                      title="查看详情"
-                      aria-label={'查看 ' + it.title + ' 详情'}
+                      title={t('layer.viewDetail')}
+                      aria-label={t('layer.viewItemDetail', { title: it.title })}
                     >
                       <DetailIcon />
                     </a>
                     <button
                       className={'gc-add' + (addedItem ? ' is-added' : '') + (loadingItem ? ' is-loading' : '')}
+                      data-layer-action="add"
+                      data-layer-id={it.id}
                       onClick={() => void addItem(it)}
                       disabled={addedItem || loadingItem}
-                      title={addedItem ? '已添加' : loadingItem ? '正在添加' : '添加数据'}
-                      aria-label={addedItem ? '已添加 ' + it.title : '添加 ' + it.title}
+                      title={addedItem ? t('layer.addedAction') : loadingItem ? t('layer.adding') : t('layer.addData')}
+                      aria-label={addedItem ? t('layer.addedItem', { title: it.title }) : t('layer.addItem', { title: it.title })}
                     >
                       {loadingItem ? <span className="gc-spinner" aria-hidden="true" /> : <AddIcon added={addedItem} />}
                     </button>
@@ -545,19 +553,19 @@ export function LayerPanel() {
             })}
           </div>
           {loading && (
-            <div className="gallery-hint"><span className="dot" />加载中…</div>
+            <div className="gallery-hint"><span className="dot" />{t('layer.loading')}</div>
           )}
           {done && !loading && items.length > 0 && (
-            <div className="gallery-hint"><span className="dot" />已到底部</div>
+            <div className="gallery-hint"><span className="dot" />{t('layer.end')}</div>
           )}
-          {err && <div className="gallery-hint err">{err}</div>}
+          {err && <div className="gallery-hint err" data-testid="layer-load-error">{tm(err)}</div>}
         </section>
       </div>
-      <button className="scroll-arrow scroll-arrow-up" type="button" aria-label="向上滚动" onClick={() => scrollPage(-1)} />
-      <button className="scroll-arrow scroll-arrow-down" type="button" aria-label="向下滚动" onClick={() => scrollPage(1)} />
+      <button className="scroll-arrow scroll-arrow-up" type="button" aria-label={t('layer.scrollUp')} onClick={() => scrollPage(-1)} />
+      <button className="scroll-arrow scroll-arrow-down" type="button" aria-label={t('layer.scrollDown')} onClick={() => scrollPage(1)} />
       {toast && (
-        <div className="layer-toast" role="status" aria-live="polite">
-          {toast}
+        <div className="layer-toast" data-testid="layer-toast" role="status" aria-live="polite">
+          {tm(toast)}
         </div>
       )}
     </aside>
