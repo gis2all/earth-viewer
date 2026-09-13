@@ -123,7 +123,7 @@ const featureCollectionRenderer: LayerRenderer = {
     const fc = (op.layerDefinition as { featureCollection?: unknown } | undefined)?.featureCollection
     const realFc = (fc as { featureCollection?: unknown } | undefined)?.featureCollection ?? fc
     if (!realFc) {
-      job.onError('内嵌要素集为空')
+      job.onError({ key: 'runtime.embeddedEmpty' })
       return 'handled'
     }
     try {
@@ -133,13 +133,13 @@ const featureCollectionRenderer: LayerRenderer = {
         maxFeatures: SAFETY.MAX_RENDER_FEATURES,
       })
       if (!ctx.keepAlive()) return 'stop'
-      if (res.capped) job.onNote('内嵌数据量大，已按顶点/要素预算降级')
+      if (res.capped) job.onNote({ key: 'runtime.embeddedBudgetDegraded' })
       const ds = await f.addGeoJson({ type: 'FeatureCollection', features: res.features }, job.runtime, undefined, ctx.keepAlive)
       if (!ctx.keepAlive() || !ds) return 'stop'
       job.onClearError()
     } catch (e) {
       console.error('[layer] 内嵌要素集加载失败', op.title || op.url, e)
-      job.onError('内嵌要素集加载失败：' + (op.title || op.url))
+      job.onError({ key: 'runtime.embeddedLoadFailed', params: { name: op.title || op.url || '' } })
     }
     return 'handled'
   },
@@ -152,7 +152,7 @@ const sceneRenderer: LayerRenderer = {
     // 点云场景（Point/PointCloud/Splat）：Cesium I3SDataProvider 不渲染，跳过以避免建空 primitive
     const kinds = await fetchSceneLayerKinds(op.url as string, ctx.signal)
     if (isPointCloudScene(kinds)) {
-      job.onNote('该场景为点云图层，暂不支持渲染')
+      job.onNote({ key: 'runtime.pointCloudUnsupported' })
       return 'handled'
     }
     try {
@@ -161,7 +161,7 @@ const sceneRenderer: LayerRenderer = {
       job.onClearError()
     } catch (e) {
       console.error('[layer] 3D 场景加载失败', op.url, e)
-      job.onError('3D 场景加载失败：' + (op.title || op.url))
+      job.onError({ key: 'runtime.sceneLoadFailed', params: { name: op.title || op.url || '' } })
     }
     return 'handled'
   },
@@ -177,7 +177,7 @@ const tiles3dRenderer: LayerRenderer = {
       job.onClearError()
     } catch (e) {
       console.error('[layer] 3D Tiles 加载失败', op.url, e)
-      job.onError('3D Tiles 加载失败：' + (op.title || op.url))
+      job.onError({ key: 'runtime.3dTilesLoadFailed', params: { name: op.title || op.url || '' } })
     }
     return 'handled'
   },
@@ -195,19 +195,19 @@ const wfsRenderer: LayerRenderer = {
         maxVertices: SAFETY.MAX_RENDER_VERTICES,
         maxFeatures: SAFETY.MAX_RENDER_FEATURES,
       })
-      if (res.capped) job.onNote('数据量大，已按顶点/要素预算降级')
+      if (res.capped) job.onNote({ key: 'runtime.budgetDegraded' })
       const b = consumeBudget({ type: 'FeatureCollection', features: res.features })
       if (!b) {
-        job.onNote('数据总量过大，已省略部分图层')
+        job.onNote({ key: 'runtime.layersSkipped' })
         return 'stop'
       }
-      if (b.capped) job.onNote('数据量大，仅显示部分要素')
+      if (b.capped) job.onNote({ key: 'runtime.featuresPartial' })
       const ds = await f.addGeoJson(b.data, job.runtime, undefined, ctx.keepAlive)
       if (!ctx.keepAlive() || !ds) return 'stop'
       job.onClearError()
     } catch (e) {
       console.error('[layer] WFS/OGC 要素图层加载失败', op.url, e)
-      job.onError('WFS/OGC 要素图层加载失败：' + (op.title || op.url))
+      job.onError({ key: 'runtime.wfsLoadFailed', params: { name: op.title || op.url || '' } })
     }
     return 'handled'
   },
@@ -225,19 +225,19 @@ const csvRenderer: LayerRenderer = {
         maxVertices: SAFETY.MAX_RENDER_VERTICES,
         maxFeatures: SAFETY.MAX_RENDER_FEATURES,
       })
-      if (res.capped) job.onNote('数据量大，已按顶点/要素预算降级')
+      if (res.capped) job.onNote({ key: 'runtime.budgetDegraded' })
       const b = consumeBudget({ type: 'FeatureCollection', features: res.features })
       if (!b) {
-        job.onNote('数据总量过大，已省略部分图层')
+        job.onNote({ key: 'runtime.layersSkipped' })
         return 'stop'
       }
-      if (b.capped) job.onNote('数据量大，仅显示部分要素')
+      if (b.capped) job.onNote({ key: 'runtime.featuresPartial' })
       const ds = await f.addGeoJson(b.data, job.runtime, undefined, ctx.keepAlive)
       if (!ctx.keepAlive() || !ds) return 'stop'
       job.onClearError()
     } catch (e) {
       console.error('[layer] CSV 图层加载失败', op.url, e)
-      job.onError('CSV 图层加载失败：' + (op.title || op.url))
+      job.onError({ key: 'runtime.csvLoadFailed', params: { name: op.title || op.url || '' } })
     }
     return 'handled'
   },
@@ -256,7 +256,7 @@ const geojsonRenderer: LayerRenderer = {
       await assertUrlWithinLimit(op.url as string, SAFETY.MAX_FILE_BYTES)
     } catch (e) {
       console.error('[layer] GeoJSON 过大', op.url, e)
-      job.onError('GeoJSON 文件过大，已限制加载')
+      job.onError({ key: 'runtime.geojsonTooLarge' })
       return 'handled'
     }
     try {
@@ -264,13 +264,13 @@ const geojsonRenderer: LayerRenderer = {
       const json = await r.json().catch(() => null)
       if (!ctx.keepAlive()) return 'stop'
       const res = await runViewportProcess({ geojson: json })
-      if (res.capped) job.onNote('文件数据量大，已按顶点预算降级显示')
+      if (res.capped) job.onNote({ key: 'runtime.fileBudgetDegraded' })
       const ds = await f.addGeoJson({ type: 'FeatureCollection', features: res.features }, job.runtime, undefined, ctx.keepAlive)
       if (!ctx.keepAlive() || !ds) return 'stop'
       job.onClearError()
     } catch (e) {
       console.error('[layer] GeoJSON 图层加载失败', op.url, e)
-      job.onError('GeoJSON 图层加载失败：' + (op.title || op.url))
+      job.onError({ key: 'runtime.geojsonLoadFailed', params: { name: op.title || op.url || '' } })
     }
     return 'handled'
   },
@@ -341,7 +341,7 @@ async function renderFeatureLayer(ctx: WebLayerRenderContext, op: WebLayer): Pro
       const styleFn = rendererToStyleFn((renderer ?? undefined) as Record<string, unknown> | undefined)
       const res = await queryViewportData(base, env0, { maxFeatures: SAFETY.MAX_RENDER_FEATURES, outFields: '*' }, signal)
       if (!keepAlive()) return 'stop'
-      if (res.capped) job.onNote('数据量大，已按视口/预算降级显示')
+      if (res.capped) job.onNote({ key: 'runtime.viewportBudgetDegraded' })
       const ds = await f.addGeoJson(
         { type: 'FeatureCollection', features: res.features },
         job.runtime,
@@ -365,7 +365,7 @@ async function renderFeatureLayer(ctx: WebLayerRenderContext, op: WebLayer): Pro
       const styleFn = isRef ? referenceStyleFn(renderer) : rendererToStyleFn((renderer ?? undefined) as Record<string, unknown> | undefined)
       const res = await queryViewportData(base, env0, { maxFeatures, outFields: '*' }, signal)
       if (!keepAlive()) return null
-      if (res.capped) job.onNote('数据量大，已按视口/预算降级显示')
+      if (res.capped) job.onNote({ key: 'runtime.viewportBudgetDegraded' })
       if (res.features.length === 0) return null
       const ds = await f.addGeoJson(
         { type: 'FeatureCollection', features: res.features },
@@ -382,7 +382,7 @@ async function renderFeatureLayer(ctx: WebLayerRenderContext, op: WebLayer): Pro
     job.onClearError()
   } catch (e) {
     console.error('[layer] Feature 图层加载失败', op.url, e)
-    job.onError('要素图层加载失败：' + (op.title || op.url))
+    job.onError({ key: 'runtime.featureLoadFailed', params: { name: op.title || op.url || '' } })
   }
   return 'handled'
 }
@@ -395,7 +395,7 @@ async function renderKmlLayer(ctx: WebLayerRenderContext, op: WebLayer): Promise
     await assertUrlWithinLimit(kmlUrl, SAFETY.KML_MAX_BYTES)
   } catch (e) {
     console.error('[layer] KML 过大', kmlUrl, e)
-    job.onError('KML 文件过大，已限制加载')
+    job.onError({ key: 'runtime.kmlTooLarge' })
     return 'handled'
   }
   const kmlStyleFn = (props?: Record<string, unknown>) =>
@@ -410,7 +410,7 @@ async function renderKmlLayer(ctx: WebLayerRenderContext, op: WebLayer): Promise
       maxVertices: SAFETY.MAX_RENDER_VERTICES,
       maxFeatures: SAFETY.MAX_RENDER_FEATURES,
     })
-    if (res.capped) job.onNote('KML 数据量大，已按顶点/要素预算降级显示')
+    if (res.capped) job.onNote({ key: 'runtime.kmlBudgetDegraded' })
     const ds = await f.addGeoJson({ type: 'FeatureCollection', features: res.features }, job.runtime, undefined, ctx.keepAlive)
     if (!ctx.keepAlive() || !ds) return 'stop'
     applyFeatureStyler(ds as never, kmlStyleFn)
@@ -423,7 +423,7 @@ async function renderKmlLayer(ctx: WebLayerRenderContext, op: WebLayer): Promise
       job.onClearError()
     } catch (e2) {
       console.error('[layer] KML 图层加载失败', kmlUrl, e2)
-      job.onError('KML 图层加载失败：' + (op.title || kmlUrl))
+      job.onError({ key: 'runtime.kmlLoadFailed', params: { name: op.title || kmlUrl } })
     }
   }
   return 'handled'

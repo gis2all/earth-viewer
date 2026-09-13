@@ -220,8 +220,8 @@ describe('renderWebmap：分支渲染', () => {
     expect(signal).toBe(job.signal)
     expect(runtime).toBe(job.runtime)
     expect(keepAlive()).toBe(true)
-    onError('矢量瓦片渲染失败：VT')
-    expect(job.onError).toHaveBeenCalledWith('矢量瓦片渲染失败：VT')
+    onError({ key: 'runtime.vectorTileRenderFailed', params: { name: 'VT' } })
+    expect(job.onError).toHaveBeenCalledWith({ key: 'runtime.vectorTileRenderFailed', params: { name: 'VT' } })
     onDone()
     expect(job.onClearError).toHaveBeenCalled()
   })
@@ -246,7 +246,7 @@ describe('renderWebmap：分支渲染', () => {
     const f = makeFacade()
     const job = makeJob(webmapWithLayer({ id: 'fc2', layerType: 'FeatureCollection' }))
     await renderWebmap(job, f)
-    expect(job.onError).toHaveBeenCalledWith('内嵌要素集为空')
+    expect(job.onError).toHaveBeenCalledWith({ key: 'runtime.embeddedEmpty' })
     expect(f.addGeoJson).not.toHaveBeenCalled()
   })
 
@@ -261,7 +261,7 @@ describe('renderWebmap：分支渲染', () => {
     const job2 = makeJob(webmapWithLayer({ id: 'sc2', title: 'Scene2', url: 'https://x/SceneServer', layerType: 'ArcGISSceneLayer' }))
     vi.spyOn(console, 'error').mockImplementation(() => {})
     await renderWebmap(job2, f)
-    expect(job2.onError).toHaveBeenCalledWith('3D 场景加载失败：Scene2')
+    expect(job2.onError).toHaveBeenCalledWith({ key: 'runtime.sceneLoadFailed', params: { name: 'Scene2' } })
   })
 
   it('Point cloud scene → 跳过 addScene 并提示（不支持点云）', async () => {
@@ -270,7 +270,7 @@ describe('renderWebmap：分支渲染', () => {
     const job = makeJob(webmapWithLayer({ id: 'pc', title: 'Trees', url: 'https://x/SceneServer', layerType: 'ArcGISSceneLayer' }))
     await renderWebmap(job, f)
     expect(f.addScene).not.toHaveBeenCalled()
-    expect(job.onNote).toHaveBeenCalledWith('该场景为点云图层，暂不支持渲染')
+    expect(job.onNote).toHaveBeenCalledWith({ key: 'runtime.pointCloudUnsupported' })
   })
 
   it('独立 Scene 带 fullExtent → flyToExtent 到数据范围', async () => {
@@ -289,7 +289,7 @@ describe('renderWebmap：分支渲染', () => {
     await renderWebmap(job, f)
     expect(f.flyToHome).toHaveBeenCalled()
     expect(f.flyToExtent).not.toHaveBeenCalled()
-    expect(job.onNote).toHaveBeenCalledWith('该 3D 场景覆盖全球，放大到城市可见对象')
+    expect(job.onNote).toHaveBeenCalledWith({ key: 'runtime.globalSceneNote' })
   })
 
   it('OGC 3D Tiles → add3dTiles', async () => {
@@ -445,7 +445,7 @@ describe('renderWebmap：分支渲染', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const job = makeJob(webmapWithLayer({ id: 'km', title: 'KML', url: 'https://x/data.kml', layerType: 'KML' }))
     await renderWebmap(job, f)
-    expect(job.onError).toHaveBeenCalledWith('KML 图层加载失败：KML')
+    expect(job.onError).toHaveBeenCalledWith({ key: 'runtime.kmlLoadFailed', params: { name: 'KML' } })
   })
 
   it('数据总量超预算 → 跳过后续图层并提示', async () => {
@@ -457,7 +457,7 @@ describe('renderWebmap：分支渲染', () => {
     await renderWebmap(job, f)
     // 4 层各截断到 1500 后 remaining=500，第 5 层 remaining<=0 被省略
     expect(f.addGeoJson).toHaveBeenCalledTimes(4)
-    expect(job.onNote).toHaveBeenCalledWith('数据总量过大，已省略部分图层')
+    expect(job.onNote).toHaveBeenCalledWith({ key: 'runtime.layersSkipped' })
   })
 
   it('visibility=false 的图层被跳过', async () => {
@@ -474,7 +474,7 @@ describe('renderWebmap：分支渲染', () => {
     const layers = Array.from({ length: 8 }, (_, i) => ({ id: 'm' + i, title: 'M' + i, url: 'https://x/FeatureServer/0', layerType: 'ArcGISFeatureLayer' }))
     const job = makeJob({ baseMap: { baseMapLayers: [] }, operationalLayers: layers })
     await renderWebmap(job, f)
-    expect(job.onNote).toHaveBeenCalledWith('此地图含多个业务图层，仅渲染前 5 个（略过 3 个）')
+    expect(job.onNote).toHaveBeenCalledWith({ key: 'runtime.businessLimit', params: { max: 5, skipped: 3 } })
   })
 })
 
@@ -572,7 +572,7 @@ describe('renderWebmap：keepAlive / 失败 / 降级分支', () => {
     const f = makeFacade()
     const job = makeJob(fcLayer(Array.from({ length: 2000 }, () => ({ type: 'Feature' }))))
     await renderWebmap(job, f)
-    expect(job.onNote).toHaveBeenCalledWith('内嵌数据量大，已按顶点/要素预算降级')
+    expect(job.onNote).toHaveBeenCalledWith({ key: 'runtime.embeddedBudgetDegraded' })
   })
 
   it('内嵌 FeatureCollection 处理后 keepAlive 失效 → 中止', async () => {
@@ -597,7 +597,7 @@ describe('renderWebmap：keepAlive / 失败 / 降级分支', () => {
     vpMock.runViewportProcess.mockRejectedValueOnce(new Error('boom'))
     const job = makeJob(fcLayer([{ type: 'Feature' }]))
     await renderWebmap(job, f)
-    expect(job.onError).toHaveBeenCalledWith('内嵌要素集加载失败：内嵌')
+    expect(job.onError).toHaveBeenCalledWith({ key: 'runtime.embeddedLoadFailed', params: { name: '\u5185\u5d4c' } })
   })
 
   it('Scene addScene 返回 null → 中止', async () => {
@@ -619,7 +619,7 @@ describe('renderWebmap：keepAlive / 失败 / 降级分支', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const job = makeJob(webmapWithLayer({ id: 't', title: 'Tiles', url: 'https://x/tileset.json', layerType: '3DTilesLayer' }))
     await renderWebmap(job, f)
-    expect(job.onError).toHaveBeenCalledWith('3D Tiles 加载失败：Tiles')
+    expect(job.onError).toHaveBeenCalledWith({ key: 'runtime.3dTilesLoadFailed', params: { name: 'Tiles' } })
   })
 
   it('WFS 读取后 keepAlive 失效 → 中止', async () => {
@@ -637,7 +637,7 @@ describe('renderWebmap：keepAlive / 失败 / 降级分支', () => {
     ogcMock.fetchOgcFeatureGeoJSON.mockResolvedValue(fc(Array.from({ length: 2000 }, () => ({ type: 'Feature' }))))
     const job = makeJob(webmapWithLayer({ id: 'w', title: 'W', url: 'https://x/wfs', layerType: 'WFS' }))
     await renderWebmap(job, f)
-    expect(job.onNote).toHaveBeenCalledWith('数据量大，已按顶点/要素预算降级')
+    expect(job.onNote).toHaveBeenCalledWith({ key: 'runtime.budgetDegraded' })
   })
 
   it('WFS addGeoJson 返回 null → 中止', async () => {
@@ -654,7 +654,7 @@ describe('renderWebmap：keepAlive / 失败 / 降级分支', () => {
     ogcMock.fetchOgcFeatureGeoJSON.mockRejectedValue(new Error('net'))
     const job = makeJob(webmapWithLayer({ id: 'w', title: 'W', url: 'https://x/wfs', layerType: 'WFS' }))
     await renderWebmap(job, f)
-    expect(job.onError).toHaveBeenCalledWith('WFS/OGC 要素图层加载失败：W')
+    expect(job.onError).toHaveBeenCalledWith({ key: 'runtime.wfsLoadFailed', params: { name: 'W' } })
   })
 
   it('CSV 单层超上限 → 提示降级', async () => {
@@ -662,7 +662,7 @@ describe('renderWebmap：keepAlive / 失败 / 降级分支', () => {
     csvMock.fetchCsvGeoJSON.mockResolvedValue(fc(Array.from({ length: 2000 }, () => ({ type: 'Feature' }))))
     const job = makeJob(webmapWithLayer({ id: 'c', title: 'C', url: 'https://x/data.csv', layerType: 'CSVLayer' }))
     await renderWebmap(job, f)
-    expect(job.onNote).toHaveBeenCalledWith('数据量大，已按顶点/要素预算降级')
+    expect(job.onNote).toHaveBeenCalledWith({ key: 'runtime.budgetDegraded' })
   })
 
   it('CSV 总量超预算 → 省略后续图层', async () => {
@@ -672,7 +672,7 @@ describe('renderWebmap：keepAlive / 失败 / 降级分支', () => {
     const job = makeJob({ baseMap: { baseMapLayers: [] }, operationalLayers: layers })
     await renderWebmap(job, f)
     expect(f.addGeoJson).toHaveBeenCalledTimes(4)
-    expect(job.onNote).toHaveBeenCalledWith('数据总量过大，已省略部分图层')
+    expect(job.onNote).toHaveBeenCalledWith({ key: 'runtime.layersSkipped' })
   })
 
   it('CSV 读取后 keepAlive 失效 → 中止', async () => {
@@ -699,7 +699,7 @@ describe('renderWebmap：keepAlive / 失败 / 降级分支', () => {
     csvMock.fetchCsvGeoJSON.mockRejectedValue(new Error('net'))
     const job = makeJob(webmapWithLayer({ id: 'c', title: 'C', url: 'https://x/data.csv', layerType: 'CSVLayer' }))
     await renderWebmap(job, f)
-    expect(job.onError).toHaveBeenCalledWith('CSV 图层加载失败：C')
+    expect(job.onError).toHaveBeenCalledWith({ key: 'runtime.csvLoadFailed', params: { name: 'C' } })
   })
 
   it('GeoJSON 文件过大 → 限制加载', async () => {
@@ -708,7 +708,7 @@ describe('renderWebmap：keepAlive / 失败 / 降级分支', () => {
     safetyMock.assertUrlWithinLimit.mockRejectedValueOnce(new Error('too big'))
     const job = makeJob(webmapWithLayer({ id: 'gj', title: 'GJ', url: 'https://x/data.geojson', layerType: 'GeoJSONLayer' }))
     await renderWebmap(job, f)
-    expect(job.onError).toHaveBeenCalledWith('GeoJSON 文件过大，已限制加载')
+    expect(job.onError).toHaveBeenCalledWith({ key: 'runtime.geojsonTooLarge' })
     expect(f.addGeoJson).not.toHaveBeenCalled()
   })
 
@@ -737,7 +737,7 @@ describe('renderWebmap：keepAlive / 失败 / 降级分支', () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => fc(Array.from({ length: 4000 }, () => ({ type: 'Feature' }))) })))
     const job = makeJob(webmapWithLayer({ id: 'gj', title: 'GJ', url: 'https://x/data.geojson', layerType: 'GeoJSONLayer' }))
     await renderWebmap(job, f)
-    expect(job.onNote).toHaveBeenCalledWith('文件数据量大，已按顶点预算降级显示')
+    expect(job.onNote).toHaveBeenCalledWith({ key: 'runtime.fileBudgetDegraded' })
   })
 
   it('GeoJSON addGeoJson 返回 null → 中止', async () => {
@@ -754,7 +754,7 @@ describe('renderWebmap：keepAlive / 失败 / 降级分支', () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('net') }))
     const job = makeJob(webmapWithLayer({ id: 'gj', title: 'GJ', url: 'https://x/data.geojson', layerType: 'GeoJSONLayer' }))
     await renderWebmap(job, f)
-    expect(job.onError).toHaveBeenCalledWith('GeoJSON 图层加载失败：GJ')
+    expect(job.onError).toHaveBeenCalledWith({ key: 'runtime.geojsonLoadFailed', params: { name: 'GJ' } })
   })
 
   it('Feature 解析服务后 keepAlive 失效 → 中止', async () => {
@@ -789,7 +789,7 @@ describe('renderWebmap：keepAlive / 失败 / 降级分支', () => {
     queryMock.queryViewportData.mockResolvedValue({ features: [{ type: 'Feature' }], capped: true, vertices: 1 })
     const job = makeJob(featLayer('ft', 'Q'))
     await renderWebmap(job, f)
-    expect(job.onNote).toHaveBeenCalledWith('数据量大，已按视口/预算降级显示')
+    expect(job.onNote).toHaveBeenCalledWith({ key: 'runtime.viewportBudgetDegraded' })
   })
 
   it('Feature 单层 addGeoJson 返回 null → 中止', async () => {
@@ -815,7 +815,7 @@ describe('renderWebmap：keepAlive / 失败 / 降级分支', () => {
     fqMock.resolveFeatureService.mockRejectedValue(new Error('net'))
     const job = makeJob(featLayer('ft', 'Q'))
     await renderWebmap(job, f)
-    expect(job.onError).toHaveBeenCalledWith('要素图层加载失败：Q')
+    expect(job.onError).toHaveBeenCalledWith({ key: 'runtime.featureLoadFailed', params: { name: 'Q' } })
   })
 
   it('Feature 多层 makeLayer 与收尾 keepAlive 失效 → 中止', async () => {
@@ -846,7 +846,7 @@ describe('renderWebmap：keepAlive / 失败 / 降级分支', () => {
     queryMock.queryViewportData.mockResolvedValue({ features: [{ type: 'Feature' }], capped: true, vertices: 1 })
     const job = makeJob(featLayer('ft', 'Q'))
     await renderWebmap(job, f)
-    expect(job.onNote).toHaveBeenCalledWith('数据量大，已按视口/预算降级显示')
+    expect(job.onNote).toHaveBeenCalledWith({ key: 'runtime.viewportBudgetDegraded' })
     expect(job.onClearError).toHaveBeenCalled()
   })
 
@@ -940,7 +940,7 @@ describe('renderWebmap：keepAlive / 失败 / 降级分支', () => {
     safetyMock.assertUrlWithinLimit.mockRejectedValueOnce(new Error('too big'))
     const job = makeJob(webmapWithLayer({ id: 'km', title: 'KML', url: 'https://x/data.kml', layerType: 'KML' }))
     await renderWebmap(job, f)
-    expect(job.onError).toHaveBeenCalledWith('KML 文件过大，已限制加载')
+    expect(job.onError).toHaveBeenCalledWith({ key: 'runtime.kmlTooLarge' })
   })
 
   it('KML 数据量大 → 提示降级', async () => {
@@ -952,7 +952,7 @@ describe('renderWebmap：keepAlive / 失败 / 降级分支', () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, text: async () => kmlText })))
     const job = makeJob(webmapWithLayer({ id: 'km', title: 'KML', url: 'https://x/data.kml', layerType: 'KML' }))
     await renderWebmap(job, f)
-    expect(job.onNote).toHaveBeenCalledWith('KML 数据量大，已按顶点/要素预算降级显示')
+    expect(job.onNote).toHaveBeenCalledWith({ key: 'runtime.kmlBudgetDegraded' })
   })
 
   it('KML addGeoJson 返回 null → 中止', async () => {

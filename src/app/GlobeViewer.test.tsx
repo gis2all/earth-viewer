@@ -137,12 +137,12 @@ describe('GlobeViewer（W3.5 瘦身后）', () => {
     expect(lost).toBeTypeOf('function')
     await act(async () => { lost({ preventDefault: vi.fn() } as unknown as Event) })
     await act(async () => {})
-    expect(screen.getByText(/WebGL 上下文已丢失/)).toBeInTheDocument()
+    expect(screen.getByTestId('globe-error')).toHaveAttribute('data-message-key', 'runtime.webglContextLost')
     const requestsBeforeRestore = v.scene.requestRender.mock.calls.length
     const restored = v.scene.canvas.addEventListener.mock.calls.find((c: unknown[]) => c[0] === 'webglcontextrestored')?.[1] as () => void
     expect(restored).toBeTypeOf('function')
     act(() => { restored() })
-    expect(screen.queryByText(/WebGL 上下文已丢失/)).not.toBeInTheDocument()
+    expect(screen.queryByTestId('globe-error')).not.toBeInTheDocument()
     expect(v.scene.requestRender.mock.calls.length).toBe(requestsBeforeRestore + 1)
   })
 
@@ -219,7 +219,7 @@ describe('GlobeViewer（W3.5 瘦身后）', () => {
     })
     await flush()
     await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
-    expect(screen.getByText(/仅渲染前 5 个/)).toBeInTheDocument()
+    expect(screen.getByTestId('globe-status')).toHaveAttribute('data-message-key', 'runtime.businessLimit')
   })
 
   it('移除图层 → 从 imageryLayers 移除', async () => {
@@ -294,7 +294,7 @@ describe('GlobeViewer（W3.5 瘦身后）', () => {
     try {
       render(<GlobeViewer />)
       await act(async () => { await Promise.resolve() })
-      expect(screen.getByText(/无法创建 WebGL/)).toBeInTheDocument()
+      expect(screen.getByTestId('globe-error')).toHaveAttribute('data-message-key', 'runtime.webglUnavailable')
       expect(cesiumMock.viewers.length).toBe(0)
     } finally {
       spy.mockRestore()
@@ -307,7 +307,7 @@ describe('GlobeViewer（W3.5 瘦身后）', () => {
     ;(Viewer as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => { throw new Error('boom') })
     render(<GlobeViewer />)
     await flush()
-    expect(screen.getByText(/地球初始化失败/)).toBeInTheDocument()
+    expect(screen.getByTestId('globe-error')).toHaveAttribute('data-message-key', 'runtime.globeInitFailed')
   })
 
   it('__E2E__ 模式跳过 Viewer 创建', async () => {

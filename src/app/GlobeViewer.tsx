@@ -18,9 +18,10 @@ import { createEmptyRuntime } from '../domain/layerRuntime'
 import { fetchUserHome } from '../service/userLocation'
 import type { BottomStatus } from './BottomStatusBar'
 import { hasOwnBasemap } from '../domain/layerAssessment'
+import type { AppMessage } from '../domain/appMessage'
+import { useI18n } from '../i18n'
 
-const WEBGL_UNAVAILABLE_MSG =
-  '当前浏览器无法创建 WebGL，地球无法渲染。请使用开启硬件加速的 Chrome/Edge 访问（Codex内置浏览器 / 无GPU环境不支持）'
+const WEBGL_UNAVAILABLE_MSG: AppMessage = { key: 'runtime.webglUnavailable' }
 
 export function GlobeViewer({ onStatus, onHeading }: { onStatus?: (s: BottomStatus) => void; onHeading?: (heading: number) => void }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -31,8 +32,9 @@ export function GlobeViewer({ onStatus, onHeading }: { onStatus?: (s: BottomStat
   const added = useAppStore((s) => s.added)
   const theme = useAppStore((s) => s.theme)
   const effects = useAppStore((s) => s.effects)
-  const [glError, setGlError] = useState('')
-  const [layerNote, setLayerNote] = useState('')
+  const { tm } = useI18n()
+  const [glError, setGlError] = useState<AppMessage | null>(null)
+  const [layerNote, setLayerNote] = useState<AppMessage | null>(null)
   const noteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const statusCleanupRef = useRef<(() => void) | null>(null)
 
@@ -50,7 +52,7 @@ export function GlobeViewer({ onStatus, onHeading }: { onStatus?: (s: BottomStat
     const facade = new CesiumFacade()
     const ok = facade.create(el, {
       onContextLost: (msg) => setGlError(msg),
-      onContextRestored: () => setGlError(''),
+      onContextRestored: () => setGlError(null),
       onInitError: (msg) => setGlError(msg),
       creditContainer: document.getElementById('cesium-credit-container') ?? undefined,
     })
@@ -86,7 +88,7 @@ export function GlobeViewer({ onStatus, onHeading }: { onStatus?: (s: BottomStat
       setNote: (msg) => {
         setLayerNote(msg)
         if (noteTimerRef.current) clearTimeout(noteTimerRef.current)
-        noteTimerRef.current = window.setTimeout(() => setLayerNote(''), 5000)
+        noteTimerRef.current = window.setTimeout(() => setLayerNote(null), 5000)
       },
       // 区划网格默认开启且不再暴露 UI 开关：恒 true，避免持久化残留/误关影响参考层渲染
       getReferenceVisible: () => true,
@@ -193,16 +195,18 @@ export function GlobeViewer({ onStatus, onHeading }: { onStatus?: (s: BottomStat
   return (
     <div ref={containerRef} style={{ position: 'absolute', inset: 0 }}>
       {glError && (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 14, padding: 24, textAlign: 'center', background: 'rgba(0,0,0,0.6)', zIndex: 10 }}>
-          {glError}
+        <div data-testid="globe-error" data-message-key={glError.key} style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 14, padding: 24, textAlign: 'center', background: 'rgba(0,0,0,0.6)', zIndex: 10 }}>
+          {tm(glError)}
         </div>
       )}
       {layerNote && (
         <div
           className="globe-note"
+          data-testid="globe-status"
+          data-message-key={layerNote.key}
           role="status"
         >
-          {layerNote}
+          {tm(layerNote)}
         </div>
       )}
     </div>
