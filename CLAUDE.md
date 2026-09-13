@@ -367,7 +367,7 @@ stateDiagram-v2
 
 - **单测**：Vitest（jsdom），**589 个用例 / 47 个文件全过**（2026-09-13 `output/test-results.json` 实测）。`npm run test:coverage`
 - **覆盖率门槛**（vitest.config.ts）：★statements ≥90 / lines ≥90 / functions ≥85 / branches ≥70；include **全 src**，exclude 入口壳（`main.tsx` / `App.tsx`）、测试文件与测试基建（`src/testing/**`）、`service/processing/viewportWorker.entry.ts`、`infra/primitive.ts`——真实口径，不玩数字。
-- **覆盖率实测**（2026-09-13）：statements **92.9** / branches **85.3** / functions **94.39** / lines **96.09**。
+- **覆盖率实测**（2026-09-13）：statements **92.9** / branches **85.3** / functions **94.38** / lines **96.09**。
 - **架构门禁**：`npm run check:arch`（scripts/check-arch.mjs，含 lint）——全依赖矩阵（§4.1）：Cesium/MapLibre 仅限 `src/infra/**`（测试豁免）、domain 零外部依赖、app 不被反向导入、未知层目录报错；CI 已跑此步。
 - **E2E**：Playwright **39 项**（app.spec 2 / ui.spec 16 / i18n.spec 2 / integration.spec 19；integration 走真实 ArcGIS，具体以 CI/output/e2e-results.json 为准）。★E2E 轻量模式：`app.spec.ts`、`ui.spec.ts`、`i18n.spec.ts` 注入 `window.__E2E__`，GlobeViewer 跳过 Cesium 创建（CI 无头软件渲染极慢）；「球真实渲染+图层上球」由线上/容器验证覆盖。
 - **语言解耦**：功能测试不得用中文/英文文案、`title` 或 `aria-label` 定位控件；使用稳定 `data-testid` / `data-*` 契约。浏览器语言、切换、持久化和中英文文案只在 `src/i18n/**`、`*.i18n.test.tsx`、`e2e/i18n.spec.ts` 中验证。
