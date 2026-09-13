@@ -28,7 +28,7 @@ describe('AppShell', () => {
 
   it('主题切换更新 favicon 与 store', () => {
     render(<AppShell />)
-    fireEvent.click(screen.getByTitle('切换主题'))
+    fireEvent.click(screen.getByTestId('theme-toggle'))
     expect(useAppStore.getState().theme).toBe('light')
     const link = document.querySelector('link[rel="icon"][type="image/svg+xml"]') as HTMLLinkElement
     expect(link.href.endsWith('/favicon-light.svg')).toBe(true)
@@ -37,26 +37,26 @@ describe('AppShell', () => {
   it('面板折叠时显示展开按钮，点击展开', () => {
     useAppStore.setState({ collapsed: true, collapsedRight: true })
     render(<AppShell />)
-    expect(screen.getByTitle('展开面板').querySelector('svg')).toHaveAttribute('width', '16')
-    expect(screen.getByTitle('展开效果面板').querySelector('svg')).toHaveAttribute('height', '16')
-    fireEvent.click(screen.getByTitle('展开面板'))
+    expect(screen.getByTestId('expand-left-panel').querySelector('svg')).toHaveAttribute('width', '16')
+    expect(screen.getByTestId('expand-right-panel').querySelector('svg')).toHaveAttribute('height', '16')
+    fireEvent.click(screen.getByTestId('expand-left-panel'))
     expect(useAppStore.getState().collapsed).toBe(false)
-    fireEvent.click(screen.getByTitle('展开效果面板'))
+    fireEvent.click(screen.getByTestId('expand-right-panel'))
     expect(useAppStore.getState().collapsedRight).toBe(false)
   })
 
   it('回正/复位按钮存在且可点击（未注册 viewer 不报错）', () => {
     render(<AppShell />)
-    expect(screen.getByTitle('回正视角')).toBeInTheDocument()
-    expect(screen.getByTitle('复位视角')).toBeInTheDocument()
-    fireEvent.click(screen.getByTitle('复位视角'))
-    fireEvent.click(screen.getByTitle('回正视角'))
+    expect(screen.getByTestId('orient-view')).toBeInTheDocument()
+    expect(screen.getByTestId('reset-view')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('reset-view'))
+    fireEvent.click(screen.getByTestId('orient-view'))
   })
 
   it('回正/复位图标：回正为对角 L 对齐、复位为房子图标', () => {
     render(<AppShell />)
-    const orientIcon = screen.getByTitle('回正视角').querySelector('svg')
-    const resetIcon = screen.getByTitle('复位视角').querySelector('svg')
+    const orientIcon = screen.getByTestId('orient-view').querySelector('svg')
+    const resetIcon = screen.getByTestId('reset-view').querySelector('svg')
     expect(orientIcon).toHaveAttribute('width', '17')
     expect(orientIcon).toHaveAttribute('height', '17')
     expect(orientIcon?.querySelector('rect')).toBeNull()
@@ -70,7 +70,7 @@ describe('AppShell', () => {
 
   it('显示 GitHub 导航链接并在新标签页打开', () => {
     render(<AppShell />)
-    const githubLink = screen.getByRole('link', { name: 'GitHub' })
+    const githubLink = screen.getByTestId('github-link')
     expect(githubLink).toHaveAttribute('href', 'https://github.com/gis2all/earth-viewer')
     expect(githubLink).toHaveAttribute('target', '_blank')
     expect(githubLink).toHaveAttribute('rel', 'noreferrer')
@@ -79,9 +79,9 @@ describe('AppShell', () => {
   it('主题、沉浸模式与 GitHub 图标使用 16px 绘制尺寸', () => {
     render(<AppShell />)
     const controls = [
-      screen.getByTitle('切换主题'),
-      screen.getByTitle('进入沉浸模式'),
-      screen.getByRole('link', { name: 'GitHub' }),
+      screen.getByTestId('theme-toggle'),
+      screen.getByTestId('immersive-enter'),
+      screen.getByTestId('github-link'),
     ]
 
     controls.forEach((control) => {
@@ -94,20 +94,20 @@ describe('AppShell', () => {
     render(<AppShell />)
     const app = document.querySelector('.app')
 
-    fireEvent.click(screen.getByTitle('进入沉浸模式'))
+    fireEvent.click(screen.getByTestId('immersive-enter'))
     expect(app).toHaveClass('immersive')
-    expect(screen.getByTitle('退出沉浸模式')).toBeInTheDocument()
+    expect(screen.getByTestId('immersive-exit')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByTitle('退出沉浸模式'))
+    fireEvent.click(screen.getByTestId('immersive-exit'))
     expect(app).not.toHaveClass('immersive')
-    expect(screen.getByTitle('进入沉浸模式')).toBeInTheDocument()
+    expect(screen.getByTestId('immersive-enter')).toBeInTheDocument()
   })
 
   it('沉浸模式支持 Esc 退出', () => {
     render(<AppShell />)
     const app = document.querySelector('.app')
 
-    fireEvent.click(screen.getByTitle('进入沉浸模式'))
+    fireEvent.click(screen.getByTestId('immersive-enter'))
     fireEvent.keyDown(document, { key: 'Escape' })
 
     expect(app).not.toHaveClass('immersive')
