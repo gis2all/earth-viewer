@@ -82,6 +82,22 @@ function viewer() {
   return cesiumMock.viewers[cesiumMock.viewers.length - 1]
 }
 
+function cardAction(cardId: string, action: string): HTMLElement {
+  const element = screen.getByTestId('gallery-card-' + cardId).querySelector<HTMLElement>(
+    '[data-layer-action="' + action + '"]'
+  )
+  if (!element) throw new Error('Missing ' + action + ' action for gallery card ' + cardId)
+  return element
+}
+
+function addedAction(cardId: string, action: string): HTMLElement {
+  const element = screen.getByTestId('added-card-' + cardId).querySelector<HTMLElement>(
+    '[data-layer-action="' + action + '"]'
+  )
+  if (!element) throw new Error('Missing ' + action + ' action for added card ' + cardId)
+  return element
+}
+
 describe('行为链路：搜索 → 添加 → 渲染 → 移除', () => {
   beforeEach(() => {
     resetCesiumMocks()
@@ -110,7 +126,7 @@ describe('行为链路：搜索 → 添加 → 渲染 → 移除', () => {
     // 底图常驻（影像 + 矢量标注）先就位
     await waitFor(() => expect(viewer().imageryLayers.length).toBe(2), { timeout: 8000 })
 
-    fireEvent.click(screen.getByRole('button', { name: '添加 Test Imagery' }))
+    fireEvent.click(cardAction('wm1', 'add'))
 
     await waitFor(() => expect(useAppStore.getState().added.some((l) => l.id === 'wm1')).toBe(true), { timeout: 8000 })
     expect(useAppStore.getState().added[0]).toMatchObject({
@@ -119,7 +135,7 @@ describe('行为链路：搜索 → 添加 → 渲染 → 移除', () => {
       kind: 'webmap',
     })
     // 卡片按钮切换到“已添加”且禁用
-    expect(screen.getByRole('button', { name: '已添加 Test Imagery' })).toBeDisabled()
+    expect(cardAction('wm1', 'add')).toBeDisabled()
     // 已添加列表出现缩略卡（画廊卡 + 已添加卡两张图）
     await waitFor(() => expect(screen.getAllByAltText('Test Imagery').length).toBe(2), { timeout: 8000 })
     // Cesium 收到 webmap 底图图层：影像 + 标注 + webmap 1 层
@@ -138,9 +154,9 @@ describe('行为链路：搜索 → 添加 → 渲染 → 移除', () => {
     await waitFor(() => expect(screen.getByText('Test Imagery')).toBeInTheDocument(), { timeout: 8000 })
     await waitFor(() => expect(viewer().imageryLayers.length).toBe(2), { timeout: 8000 })
 
-    fireEvent.click(screen.getByRole('button', { name: '添加 Test Imagery' }))
+    fireEvent.click(cardAction('wm1', 'add'))
 
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/添加失败/), { timeout: 8000 })
+    await waitFor(() => expect(screen.getByTestId('layer-toast')).toBeInTheDocument(), { timeout: 8000 })
     expect(useAppStore.getState().added).toHaveLength(0)
     expect(viewer().imageryLayers.length).toBe(2)
   }, 20000)
@@ -151,7 +167,7 @@ describe('行为链路：搜索 → 添加 → 渲染 → 移除', () => {
 
     await waitFor(() => expect(screen.getByText('Test Imagery')).toBeInTheDocument(), { timeout: 8000 })
     await waitFor(() => expect(screen.queryByText('Test Imagery')).not.toBeInTheDocument(), { timeout: 8000 })
-    expect(screen.queryByRole('button', { name: /添加/ })).not.toBeInTheDocument()
+    expect(document.querySelector('[data-layer-action="add"]')).not.toBeInTheDocument()
     expect(useAppStore.getState().added).toHaveLength(0)
   }, 20000)
 
@@ -160,11 +176,11 @@ describe('行为链路：搜索 → 添加 → 渲染 → 移除', () => {
     render(<App />)
 
     await waitFor(() => expect(screen.getByText('Test Imagery')).toBeInTheDocument(), { timeout: 8000 })
-    fireEvent.click(screen.getByRole('button', { name: '添加 Test Imagery' }))
+    fireEvent.click(cardAction('wm1', 'add'))
     await waitFor(() => expect(useAppStore.getState().added.some((l) => l.id === 'wm1')).toBe(true), { timeout: 8000 })
     await waitFor(() => expect(viewer().imageryLayers.length).toBe(3), { timeout: 8000 })
 
-    fireEvent.click(screen.getByTitle('移除图层'))
+    fireEvent.click(addedAction('wm1', 'remove'))
 
     await waitFor(() => expect(useAppStore.getState().added).toHaveLength(0), { timeout: 8000 })
     // webmap 图层被移除，回到仅底图
