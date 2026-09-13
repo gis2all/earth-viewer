@@ -1,10 +1,11 @@
 import { useAppStore, type Effects } from './store'
+import { useI18n, type MessageKey } from '../i18n'
 
 type Item =
-  | { key: keyof Effects; label: string; kind: 'switch'; note?: string; disabled?: boolean }
+  | { key: keyof Effects; label: MessageKey; kind: 'switch'; note?: MessageKey; disabled?: boolean }
   | {
       key: keyof Effects
-      label: string
+      label: MessageKey
       kind: 'slider'
       min: number
       max: number
@@ -18,31 +19,31 @@ function FoldIcon({ collapsed }: { collapsed: boolean }) {
   return <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="square" strokeLinejoin="miter" aria-hidden="true"><path d={collapsed ? 'm6 4 4 4-4 4' : 'm10 4-4 4 4 4'} /></svg>
 }
 
-const GROUPS: { name: string; items: Item[] }[] = [
+const GROUPS: { name: MessageKey; items: Item[] }[] = [
   {
-    name: '环境',
+    name: 'effects.environment',
     items: [
-      { key: 'atmosphereRing', label: '大气光晕', kind: 'switch' },
-      { key: 'atmosphere', label: '大气散射', kind: 'switch' },
-      { key: 'stars', label: '星空背景', kind: 'switch' },
-      { key: 'sunMoon', label: '日月', kind: 'switch' },
-      { key: 'sunGlow', label: '太阳光晕', kind: 'slider', min: 0, max: 10, step: 0.5, suffix: '', precision: 1, dependsOn: 'sunMoon' },
-      { key: 'fog', label: '雾效', kind: 'switch' },
-      { key: 'dayNight', label: '昼夜光照', kind: 'switch' },
+      { key: 'atmosphereRing', label: 'effects.atmosphereRing', kind: 'switch' },
+      { key: 'atmosphere', label: 'effects.atmosphere', kind: 'switch' },
+      { key: 'stars', label: 'effects.stars', kind: 'switch' },
+      { key: 'sunMoon', label: 'effects.sunMoon', kind: 'switch' },
+      { key: 'sunGlow', label: 'effects.sunGlow', kind: 'slider', min: 0, max: 10, step: 0.5, suffix: '', precision: 1, dependsOn: 'sunMoon' },
+      { key: 'fog', label: 'effects.fog', kind: 'switch' },
+      { key: 'dayNight', label: 'effects.dayNight', kind: 'switch' },
     ],
   },
   {
-    name: '地形',
+    name: 'effects.terrain',
     items: [
-      { key: 'globeTranslucency', label: '地形透明', kind: 'switch' },
-      { key: 'translucencyAlpha', label: '透明度', kind: 'slider', min: 0.1, max: 1, step: 0.05, suffix: '', precision: 2, dependsOn: 'globeTranslucency' },
-      { key: 'terrainExaggeration', label: '地形夸张', kind: 'slider', min: 1, max: 100, step: 1, suffix: '', precision: 1 },
+      { key: 'globeTranslucency', label: 'effects.globeTranslucency', kind: 'switch' },
+      { key: 'translucencyAlpha', label: 'effects.translucencyAlpha', kind: 'slider', min: 0.1, max: 1, step: 0.05, suffix: '', precision: 2, dependsOn: 'globeTranslucency' },
+      { key: 'terrainExaggeration', label: 'effects.terrainExaggeration', kind: 'slider', min: 1, max: 100, step: 1, suffix: '', precision: 1 },
     ],
   },
   {
-    name: '视图',
+    name: 'effects.view',
     items: [
-      { key: 'autoRotate', label: '自动环绕', kind: 'switch' },
+      { key: 'autoRotate', label: 'effects.autoRotate', kind: 'switch' },
     ],
   },
 ]
@@ -52,45 +53,48 @@ export function EffectsPanel() {
   const toggleCollapsed = useAppStore((s) => s.toggleCollapsedRight)
   const effects = useAppStore((s) => s.effects)
   const setEffect = useAppStore((s) => s.setEffect)
+  const { t } = useI18n()
 
   return (
     <aside className={'panel panel-right' + (collapsed ? ' collapsed' : '')}>
       <div className="side-head">
-        <span className="side-title">效果</span>
-        <button className="fold" onClick={toggleCollapsed} title={collapsed ? '展开效果面板' : '收起效果面板'}>
+        <span className="side-title">{t('effects.title')}</span>
+        <button className="fold" data-testid="effects-panel-toggle" onClick={toggleCollapsed} title={collapsed ? t('effects.expand') : t('effects.collapse')}>
           <FoldIcon collapsed={collapsed} />
         </button>
       </div>
       <div className="panel-inner">
         {GROUPS.map((g) => (
-          <section className="group" key={g.name}>
+          <section className="group" data-group={g.name} key={g.name}>
             <div className="group-head">
-              <span className="group-name">{g.name}</span>
+            <span className="group-name">{t(g.name)}</span>
             </div>
             <div className="fx-list">
               {g.items
                 .filter((it) => !(it.kind === 'slider' && it.dependsOn && !effects[it.dependsOn]))
                 .map((it) =>
                 it.kind === 'switch' ? (
-                  <div className="fx-row" key={it.key}>
+                  <div className="fx-row" data-effect-row={it.key} key={it.key}>
                     <span className={'fx-label' + (it.disabled ? ' fx-off' : '')}>
-                      {it.label}
-                      {it.note ? <em className="fx-note">{it.note}</em> : null}
+                      {t(it.label)}
+                      {it.note ? <em className="fx-note">{t(it.note)}</em> : null}
                     </span>
                     <button
                       className={'fx-sw' + (effects[it.key] ? ' on' : '')}
+                      data-effect={it.key}
                       onClick={() => !it.disabled && setEffect(it.key, !effects[it.key])}
                       disabled={it.disabled}
-                      aria-label={it.label}
+                      aria-label={t(it.label)}
                     />
                   </div>
                                 ) : (
-                  <div className="fx-row" key={it.key}>
+                  <div className="fx-row" data-effect-row={it.key} key={it.key}>
 
-                    <span className="fx-label">{it.label}</span>
+                    <span className="fx-label">{t(it.label)}</span>
                     <div className="fx-slider-group">
                       <input
                         className="fx-slider"
+                        data-effect={it.key}
                         type="range"
                         min={it.min}
                         max={it.max}
