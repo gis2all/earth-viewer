@@ -1,0 +1,60 @@
+name: Bug 报告
+description: 报告程序异常或渲染问题
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢报告问题。请尽量完整填写以下信息，便于快速定位和复现。
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 实际发生了什么？预期应该是什么？
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现步骤
+      description: 从打开页面或应用开始的最小复现路径。
+      placeholder: |
+        1. 打开 …
+        2. 点击 …
+        3. 看到 …
+    validations:
+      required: true
+  - type: dropdown
+    id: environment
+    attributes:
+      label: 运行方式
+      description: 在哪种形态下复现？
+      options:
+        - 本地 dev（npm run dev，127.0.0.1:5173）
+        - Docker
+        - 生产构建 + Node 代理（自托管）
+        - 线上 https://earth.gis2all.top
+        - 其他（请在补充信息里说明）
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: 浏览器与版本
+      description: 例如 Chrome 140 / Edge 140 / Firefox 142
+  - type: input
+    id: node
+    attributes:
+      label: Node 版本
+      description: 本地运行时填写，例如 Node 22.19.0
+  - type: input
+    id: source
+    attributes:
+      label: 触发数据源
+      description: 如与某个 ArcGIS 图层 / Web Map 相关，请附链接。
+  - type: textarea
+    id: logs
+    attributes:
+      label: 截图与报错
+      description: 控制台报错、网络面板信息或截图（可直接粘贴图片）。
