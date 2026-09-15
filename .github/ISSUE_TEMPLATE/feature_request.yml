@@ -1,0 +1,28 @@
+name: 功能建议
+description: 为本项目提一个新功能或改进
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        描述你希望解决的实际问题，而不是直接给出实现方案，便于一起讨论。
+  - type: textarea
+    id: requirement
+    attributes:
+      label: 需求描述
+      description: 你希望增加或改进什么？
+    validations:
+      required: true
+  - type: textarea
+    id: scenario
+    attributes:
+      label: 使用场景
+      description: 在什么情况下需要这个功能？
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 实现建议
+      description: 其他可以考虑的做法或实现思路（可选）。

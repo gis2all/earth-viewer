@@ -4,12 +4,13 @@
 
 ## 测试
 
-<!-- 勾选已通过的验证 -->
+<!-- 勾选已通过的验证，与 CI 门禁一致 -->
 
-- [ ] `npm run lint`
-- [ ] `npm run test:coverage`（覆盖率门槛 ≥ 90%）
+- [ ] `npm run check:arch`（层间依赖矩阵 + ESLint）
+- [ ] `npm run test:coverage`（覆盖率门槛：statements/lines ≥ 90%）
 - [ ] `npm run build`
-- [ ] `npm run test:e2e`（涉及浏览器/图层逻辑时）
+- [ ] `npm run test:e2e`（涉及浏览器 / 图层逻辑时）
+- [ ] 未提交 `dist/`、`coverage/` 等构建产物
 
 ## 关联
 
