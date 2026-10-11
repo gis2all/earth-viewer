@@ -5,10 +5,6 @@
 
 ---
 
-## 图谱优先：主动使用 code-review-graph
-
-凡涉及代码定位/调用链/架构说明/改动影响，先调用 `code-review-graph` MCP：`get_minimal_context_tool` 决定下一步，`get_architecture_overview_tool` / `query_graph_tool` 理解结构，`detect_changes_tool` + `get_review_context_tool` 评审，`get_impact_radius_tool` 判断影响；图缺失/过期先 `build_or_update_graph_tool`。不要默认通读文件或全仓硬搜。
-
 ## 0. 30 秒速览
 
 - **项目**：画廊式 3D 地球图层应用。Cesium 渲染地球 + 接入 ArcGIS Online 公开图层（搜索 → 卡片添加按钮校验 → 叠加），线上 https://earth.gis2all.top
